@@ -1,347 +1,211 @@
-# Pipeline: VIS.1, VIS.2, VIS.3, VIS.4
+# Pipeline: VIS Branch
 
-SCENE.3 이후 선택적 분기. 이미지 생성을 위한 파이프라인.
-
----
-
-## VIS.1 — Semantic Clarification (`semantic_clarification.py`)
-
-### 역할
-
-모호한 서사 표현을 render-safe 표현으로 정규화. LLM 호출.
-
-### 함수 시그니처
-
-```python
-def run_semantic_clarification(
-    validated_log: GroundedSceneModel,   # SCENE.3 출력
-    packet_log: ScenePackets,            # SCENE.1 출력
-    llm_client: Any,
-    doc_id: str,
-    chapter_id: str,
-    on_progress: Optional[Callable[[str], None]] = None,
-    parents: Optional[Dict[str, str]] = None,
-) -> VisualGrounding
-```
-
-### 처리 흐름
-
-```python
-for entry, packet in zip(validated_log.validated, packet_log.packets):
-    scene_index = entry.validated_scene_index
-
-    result = llm_client.extract_semantic_clarification({
-        "scene_id": packet.scene_id,
-        "start_pid": packet.start_pid,
-        "end_pid": packet.end_pid,
-        "scene_text": packet.scene_text_with_pid_markers,
-        "current_places_json": format_json_param(packet.scene_current_places),
-        "environment_json": format_json_param(scene_index.get("environment", [])),
-        "start_state_json": format_json_param(packet.start_state),
-        "onstage_cast_json": format_json_param(scene_index.get("onstage_cast", [])),
-    })
-    packets.append(VisualGroundingPacket(**result))
-```
-
-### LLM 입력 (`vis1_semantic_clarification.txt`)
-
-씬 텍스트, 장소 목록, environment 항목, 시작 상태, onstage cast
-
-### LLM 출력
-
-```json
-{
-  "scene_id": "scene_01",
-  "environment_type": "outdoor",
-  "stage_archetype": "riverbank",
-  "canonical_place_key": "riverbank_001",
-  "ambiguity_resolutions": [
-    {
-      "surface_form": "the bank",
-      "resolved_sense": "riverbank (natural outdoor ground beside a river)",
-      "render_hint": "grassy riverbank",
-      "avoid": ["financial bank", "wall"],
-      "reason": "Context confirms natural setting near water",
-      "confidence": "high"
-    }
-  ],
-  "grounded_scene_description": "Alice sits on a grassy bank beside a slow river on a warm afternoon",
-  "visual_constraints": ["no urban elements", "pastoral setting"],
-  "avoid": ["modern clothing", "fantasy creatures"]
-}
-```
-
-### run_id 패턴
-
-`f"vis1_semantic_clarification__{doc_id}__{chapter_id}"`
+`Story-Visualization` 현재 기준에서 VIS 브랜치는 아직 운영 단계가 아니다.  
+UI와 stage registry에는 자리만 잡혀 있고, 실제 포트는 `VIS.1`~`VIS.4` 모두 미구현 상태다.
 
 ---
 
-## VIS.2 — Stage Blueprint (`image_support.py`)
+## 현재 상태
 
-### 역할
+| Stage | 원본 역할 | 현재 상태 | 비고 |
+|---|---|---|---|
+| VIS.1 | semantic clarification | 미구현 | `PIPELINE_STAGES`에는 등록됨 |
+| VIS.2 | stage blueprint extraction | 미구현 | schema만 존재 |
+| VIS.3 | render package compilation | 미구현 | API route 없음 |
+| VIS.4 | image generation | 미구현 | API route 없음 |
 
-이미지 생성을 위한 Stage Grammar 추출. LLM + 규칙 필터 + L-check 경고.
+현재 프로젝트에서 VIS 관련 실제 UI 표시는 다음 정도만 남아 있다.
 
-### 함수 시그니처
+- `src/types/ui.ts`에서 VIS stage가 `implemented: false`로 표시된다.
+- `PipelineRunner`는 VIS stage를 사이드바에 보여주지만 `Pending` badge와 안내 문구만 출력한다.
+- `ReaderScreen`의 visual block은 현재 VIS 산출물이 아니라 `FINAL.1`이 만든 placeholder / overlay 데이터를 사용한다.
 
-```python
-def run_image_support_extraction(
-    validated_log: GroundedSceneModel,
-    packet_log: ScenePackets,
-    llm_client: Any,
-    doc_id: str,
-    chapter_id: str,
-    on_progress: Optional[Callable[[str], None]] = None,
-    clarification_log: Optional[VisualGrounding] = None,  # VIS.1 출력
-    parents: Optional[Dict[str, str]] = None,
-) -> StageBlueprint
-```
-
-### 처리 3단계
-
-#### 1. LLM 추출
-
-```python
-result = llm_client.extract_image_support({
-    "scene_id": ...,
-    "start_pid": ..., "end_pid": ...,
-    "start_state_json": ..., "end_state_json": ...,
-    "scene_text": ...,
-    "onstage_cast_json": ...,
-    "current_places_json": ..., "mentioned_places_json": ...,
-    "objects_json": ..., "environment_json": ..., "goals_json": ...,
-    "grounded_scene_description": vis1_packet.grounded_scene_description,
-    "ambiguity_resolutions_json": format_json_param(vis1_packet.ambiguity_resolutions),
-})
-```
-
-#### 2. 규칙 필터
-
-```python
-# onstage 아닌 캐릭터 제거
-valid_cast = {c["name"] for c in scene_index.get("onstage_cast", [])}
-packet.characters = [ch for ch in packet.characters if ch.name in valid_cast]
-
-# current가 아닌 장소 플래그
-for ch in packet.characters:
-    if ch.composition_position mentions non-current place: flag_warning
-```
-
-#### 3. L-check (경고만, 실행 차단 안 함)
-
-```python
-# 환경/enclosure 모순 검사
-if geometry.enclosure == "open" and environment_type == "indoor": warning("...")
-
-# 빈 필드 경고
-if not geometry.dominant_geometry: warning("dominant_geometry empty")
-if not zones: warning("no zones defined")
-if not presentation: warning("presentation spec missing")
-
-# 추상적 forbid 경고
-for item in forbid:
-    if len(item) < 4: warning(f"forbid item too abstract: {item}")
-```
-
-### LLM 입력 (`vis2_image_support.txt`)
-
-씬 전체 정보 + VIS.1 결과 (ambiguity_resolutions, grounded_scene_description)
-
-### LLM 출력 (StageBlueprintPacket)
-
-```json
-{
-  "scene_id": "scene_01",
-  "canonical_place_key": "riverbank_001",
-  "environment_type": "outdoor",
-  "stage_archetype": "riverbank",
-  "key_moment": "Alice sitting dreamily on the grassy bank while her sister reads",
-  "setting": {
-    "location": "grassy riverbank", "time_of_day": "afternoon",
-    "atmosphere": "drowsy and peaceful", "lighting": "warm afternoon sunlight"
-  },
-  "characters": [
-    {
-      "name": "Alice", "composition_position": "foreground center",
-      "pose": "sitting with legs tucked", "expression": "bored and dreamy",
-      "gaze_direction": "down", "notable_props": []
-    }
-  ],
-  "structural_elements": ["grass bank", "slow river", "overhanging willow"],
-  "layout_summary": "Wide horizontal riverbank with Alice seated in foreground left",
-  "geometry": {
-    "enclosure": "open", "main_axis": "horizontal",
-    "ground_profile": "flat", "dominant_geometry": "strip",
-    "height_profile": "low", "openness": "wide"
-  },
-  "presentation": {
-    "perspective_mode": "axonometric_2_5d", "section_mode": "none",
-    "frame_mode": "full_bleed", "edge_treatment": "natural_crop",
-    "coverage": "edge_to_edge", "continuity_beyond_frame": true,
-    "support_base_visibility": "hidden", "symmetry_tolerance": "low",
-    "naturalism_bias": "high"
-  },
-  "zones": [
-    {"name": "foreground", "shape": "strip", "position": "center", "scale": "dominant", "priority": "high"}
-  ],
-  "boundaries": ["water edge", "tree line"],
-  "forbid": ["perspective_mode: axonometric_2_5d floating character"],
-  "blueprint_valid": true,
-  "blueprint_warnings": []
-}
-```
-
-### perspective_mode 값
-
-`axonometric_2_5d | vertical_section | oblique_section | plan_oblique`
-
-### run_id 패턴
-
-`f"vis2_stage_blueprint__{doc_id}__{chapter_id}"`
+즉 이 문서는 "현재 구현 설명"보다는 "원본 Story-Decomposition 기준 VIS 브랜치가 무엇을 해야 하는지"를 남기는 참조 문서다.
 
 ---
 
-## VIS.3 — Render Package (`render_package.py`)
+## 참조 흐름
 
-### 역할
+원본 설계에서 VIS 브랜치는 `SCENE.3` 이후 이렇게 분기된다.
 
-StageBlueprintPacket → 이미지 생성용 프롬프트 블록 컴파일. **완전 규칙 기반.**
-
-### 함수 시그니처
-
-```python
-def run_render_package_compilation(
-    image_support_log: StageBlueprint,
-    doc_id: str,
-    chapter_id: str,
-    on_progress: Optional[Callable[[str], None]] = None,
-    parents: Optional[Dict[str, str]] = None,
-) -> RenderPackage
+```text
+SCENE.3
+  -> VIS.1 Semantic Clarification
+  -> VIS.2 Stage Blueprint
+  -> VIS.3 Render Package
+  -> VIS.4 Image Generation
 ```
 
-### 프롬프트 블록 구성
-
-```python
-for packet in image_support_log.packets:
-    # 공통 스타일 블록 (vis3_style_common.txt 템플릿)
-    common_style_block = prompt_loader.load("vis3_style_common", {})
-
-    # 씬 blueprint 블록 (geometry + zones + characters)
-    scene_blueprint_block = _compile_scene_blueprint(packet)  # 규칙 기반 텍스트 변환
-
-    # presentation 블록 (perspective_mode, frame_mode, ...)
-    presentation_block = _compile_presentation(packet.presentation)
-
-    # hard constraints 블록 (forbid + avoid + must_not_show)
-    hard_constraints_block = "\n".join([
-        f"FORBID: {item}" for item in (packet.forbid + packet.avoid + packet.must_not_show)
-    ])
-
-    # failure patch 블록 (재시도 시 채워짐)
-    failure_patch_block = ""
-
-    # 전체 프롬프트 조합
-    full_prompt = "\n\n".join(filter(None, [
-        common_style_block, scene_blueprint_block,
-        presentation_block, hard_constraints_block, failure_patch_block
-    ]))
-
-    items.append(RenderPackageItem(
-        scene_id=packet.scene_id,
-        common_style_block=common_style_block,
-        scene_blueprint_block=scene_blueprint_block,
-        presentation_block=presentation_block,
-        hard_constraints_block=hard_constraints_block,
-        full_prompt=full_prompt,
-        prompt_schema_version="v2",
-    ))
-```
-
-### run_id 패턴
-
-`f"vis3_render_package__{doc_id}__{chapter_id}"`
+핵심 목적은 scene text를 그대로 그리는 것이 아니라,  
+scene-level grounding 결과를 render-safe visual spec으로 바꾸고 이미지 생성까지 연결하는 것이다.
 
 ---
 
-## VIS.4 — Image Generation (`image_generation.py`)
+## VIS.1 - Semantic Clarification
 
-### 역할
+### 원본 역할
 
-RenderPackage → 이미지 생성 (OpenRouter 이미지 API). 실패 시 패치 후 재시도.
+- scene text 안의 모호한 표현을 시각적으로 안전한 의미로 정규화
+- `environment_type`, `stage_archetype`, `canonical_place_key` 추출
+- ambiguity resolution 목록과 `grounded_scene_description` 생성
 
-### 함수 시그니처
+### 원본 입력
 
-```python
-def run_image_generation(
-    image_support_log: Optional[StageBlueprint],
-    model: str,
-    api_key: str,
-    output_dir: Path,
-    doc_id: str,
-    chapter_id: str,
-    render_package_log: Optional[RenderPackage] = None,  # VIS.3 출력 (우선)
-    max_attempts: int = 3,
-    parents: Optional[Dict[str, str]] = None,
-) -> RenderedImages
-```
+- `GroundedSceneModel` from `SCENE.3`
+- `ScenePackets` from `SCENE.1`
 
-### 재시도 루프
+### 원본 출력
 
-```python
-for scene_id in all_scene_ids:
-    failure_history = []
-    for attempt in range(max_attempts):
-        # 프롬프트 컴파일 (VIS.3 있으면 사용, 없으면 VIS.2에서 재컴파일)
-        if attempt == 0 and render_package_log:
-            package = render_package_log.items[scene_id]
-        else:
-            # 실패 패치 적용 후 재컴파일
-            package = _compile_render_package(blueprint_packet, failure_history)
+`VisualGrounding`
 
-        result = _render_image(package, client, model, output_dir)
+핵심 필드:
 
-        if result.success:
-            break
-        else:
-            failure_type = _classify_failure(result.error)
-            failure_history.append(failure_type)
-```
+- `packets[].scene_id`
+- `packets[].environment_type`
+- `packets[].stage_archetype`
+- `packets[].canonical_place_key`
+- `packets[].ambiguity_resolutions`
+- `packets[].grounded_scene_description`
+- `packets[].visual_constraints`
+- `packets[].avoid`
 
-### 실패 분류 및 패치
+### 원본 run_id
 
 ```python
-_FAILURE_PATCHES = {
-    "output_format": "Render exactly ONE image with NO panels, grids, or multiple views.",
-    "content_policy": "Architecture and environment only. No human figures, no characters, no faces.",
-    "api_error": "Clean isometric architectural diagram. Minimal detail. No characters.",
-}
-
-def _classify_failure(error: str) -> str:
-    if "multiple" in error or "panel" in error: return "output_format"
-    if "policy" in error or "content" in error: return "content_policy"
-    return "api_error"
+f"semantic_clarification__{doc_id}__{chapter_id}"
 ```
 
-### 이미지 저장 경로
+---
 
+## VIS.2 - Stage Blueprint
+
+### 원본 역할
+
+scene을 image-generation 친화적인 Stage Grammar로 바꾼다.
+
+- geometry
+- zones
+- presentation
+- characters
+- boundaries / repetition
+- forbid / avoid / must_not_show
+
+### 원본 입력
+
+- `GroundedSceneModel`
+- `ScenePackets`
+- optional `VisualGrounding`
+
+### 원본 후처리
+
+- onstage에 없는 character 제거
+- 현재 장면의 장소가 아닌 mentioned place를 `must_not_show`로 이동
+- warning-only `L-check` 수행
+
+### 원본 출력
+
+`StageBlueprint`
+
+핵심 필드:
+
+- `packets[].geometry`
+- `packets[].presentation`
+- `packets[].zones`
+- `packets[].forbid`
+- `packets[].avoid`
+- `packets[].must_not_show`
+- `packets[].blueprint_valid`
+- `packets[].blueprint_warnings`
+
+### 원본 run_id
+
+```python
+f"image_support__{doc_id}__{chapter_id}"
 ```
-{output_dir}/{doc_id}/{chapter_id}/{scene_id}.png
+
+---
+
+## VIS.3 - Render Package
+
+### 원본 역할
+
+`StageBlueprint`를 실제 이미지 생성 프롬프트 블록으로 컴파일한다.
+
+프롬프트 구성 블록:
+
+- `common_style_block`
+- `scene_blueprint_block`
+- `presentation_block`
+- `hard_constraints_block`
+- `failure_patch_block`
+
+### 원본 출력
+
+`RenderPackage`
+
+추가로 기록되는 필드:
+
+- `items[].full_prompt`
+- `items[].prompt_schema_version`
+- `items[].failure_history`
+
+### 원본 run_id
+
+```python
+f"render_package__{doc_id}__{chapter_id}"
 ```
 
-### LLM 출력 (RenderedImageResult)
+---
 
-```json
-{
-  "scene_id": "scene_01",
-  "image_path": "data/images/my_book/ch01/scene_01.png",
-  "prompt_used": "...",
-  "model": "openai/dall-e-3",
-  "success": true,
-  "error": null
-}
+## VIS.4 - Image Generation
+
+### 원본 역할
+
+`RenderPackage` 또는 `StageBlueprint`를 기반으로 이미지를 생성한다.  
+실패 시 failure taxonomy를 기준으로 repair loop를 돈다.
+
+### 원본 failure 유형
+
+- `output_format`
+- `content_policy`
+- `api_error`
+- `unknown`
+
+### 원본 출력
+
+`RenderedImages`
+
+핵심 필드:
+
+- `results[].scene_id`
+- `results[].image_path`
+- `results[].prompt_used`
+- `results[].model`
+- `results[].success`
+- `results[].error`
+
+### 원본 run_id
+
+```python
+f"image_gen__{doc_id}__{chapter_id}"
 ```
 
-### run_id 패턴
+---
 
-`f"vis4_image_generation__{doc_id}__{chapter_id}"`
+## 포팅 메모
+
+현재 저장소에는 VIS 브랜치 포팅을 위한 타입과 UI 슬롯은 이미 일부 준비돼 있다.
+
+- schema 타입: `src/types/schema.ts`
+- stage registry: `src/types/ui.ts`
+- model config: `src/config/pipeline-models`
+
+하지만 아직 없는 것:
+
+- `src/lib/pipeline/vis1.ts` ~ `vis4.ts`
+- `/api/pipeline/vis1` ~ `/vis4`
+- VIS stage 전용 결과 확인 UI
+- FINAL 단계와 연결되는 실제 image artifact 흐름
+
+그래서 현재 문맥에서 VIS 문서는 "구현 문서"가 아니라 "추후 포팅 기준 문서"로 읽는 것이 맞다.
+

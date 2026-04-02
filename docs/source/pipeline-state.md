@@ -1,5 +1,8 @@
 # Pipeline: STATE.1, STATE.2, STATE.3
 
+`Story-Visualization` 현재 운영 기준에서 STATE 단계는 PRE 이후 실험적/후속 파이프라인에 가깝다.  
+구현 파일과 API route는 존재하지만, 결과 확인 UI는 원본 Streamlit처럼 전용 viewer가 아니라 `PipelineRunner`의 공통 summary + raw JSON 패널을 사용한다.
+
 ---
 
 ## STATE.1 — State Tracking (`state_tracking.py`)

@@ -1,393 +1,279 @@
-# Pipeline: FINAL.1, FINAL.2 + FINAL.3 (UI)
+# Pipeline: FINAL.1, FINAL.2, FINAL.3
+
+이 문서는 `Story-Visualization` 현재 구현 기준으로 FINAL 단계가 어떻게 동작하는지 정리한다.  
+원본 `Story-Decomposition` 설계를 그대로 옮긴 부분과, 아직 축약되거나 미구현인 부분을 분리해서 적는다.
 
 ---
 
-## FINAL.1 — Scene Reader Package Builder (`scene_reader_package.py`)
+## 현재 구현 상태
+
+| Stage | 현재 위치 | 상태 | 비고 |
+|---|---|---|---|
+| FINAL.1 | `src/lib/pipeline/final1.ts` | 구현됨 | 현재 포트는 `blueprint` 중심 조합 단계 |
+| FINAL.2 | `src/lib/pipeline/final2.ts` | 구현됨 | Vision 호출이 없으면 fallback-only 동작 |
+| FINAL.3 | `src/components/ReaderScreen.tsx` | 구현됨 | 별도 artifact 없이 UI 렌더러로만 존재 |
+
+현재 `Story-Visualization`의 FINAL 단계는 원본 Python FINAL 문서를 1:1 복제한 상태는 아니다.
+
+- FINAL.1은 현재 `RenderedImages`, `VisualGrounding`, `SubsceneStates`, `RenderPackage`를 직접 받지 않는다.
+- FINAL.1 visual block은 현재 항상 `mode: "blueprint"`로 구성된다.
+- FINAL.1 chips는 현재 `VIS.1`이 아니라 `SCENE.3 environment + actual_place`만 사용한다.
+- FINAL.3은 refined anchor를 직접 scene 위 absolute overlay로 쓰지만, debug badge나 bbox 표시는 하지 않는다.
+
+---
+
+## FINAL.1 - Scene Reader Package Builder
+
+### 현재 구현 파일
+
+`src/lib/pipeline/final1.ts`
 
 ### 역할
 
-VIS.4 + SUB.3 + SCENE.3 + SCENE.1 → 독자용 SceneReaderPacket 조립.
-**완전 규칙 기반 (새 추론 없음, 모두 업스트림 아티팩트 조합).**
+`SCENE.3`, `SUB.3`, `SCENE.1`, `STATE.3`, `RawChapter`를 조합해서 scene 단위의 `SceneReaderPacket`을 만든다.  
+현재 포트에서는 "이미지 결과를 합치는 단계"라기보다 "reader UI용 scene packet을 조립하는 단계"에 가깝다.
 
-### 함수 시그니처
+### 현재 시그니처
 
-```python
-def run_scene_reader_package(
-    image_log: RenderedImages,              # VIS.4 (필수)
-    sub3_log: ValidatedSubscenes,           # SUB.3 (필수)
-    grounded_log: GroundedSceneModel,       # SCENE.3 (필수, 씬 순서 기준)
-    packet_log: ScenePackets,               # SCENE.1
-    boundary_log: Optional[SceneBoundaries] = None,    # STATE.3 (제목 + pid range용)
-    blueprint_log: Optional[StageBlueprint] = None,    # VIS.2 (캐릭터 위치용)
-    vis1_log: Optional[VisualGrounding] = None,         # VIS.1 (chips용)
-    sub2_log: Optional[SubsceneStates] = None,          # SUB.2 (미사용, 향후)
-    intervention_log: Optional[InterventionPackages] = None, # SUB.4 (character panels용)
-    render_package_log: Optional[RenderPackage] = None,  # VIS.3 (미사용)
-    chapter: Optional[RawChapter] = None,   # 본문 단락
-    doc_id: str = "",
-    chapter_id: str = "",
-    parents: Optional[Dict] = None,
-) -> SceneReaderPackageLog
+```ts
+export function runSceneReaderPackage(
+  groundedLog: GroundedSceneModel,
+  sub3Log: ValidatedSubscenes,
+  packetLog: ScenePackets,
+  boundaryLog: SceneBoundaries,
+  chapter: RawChapter,
+  docId: string,
+  chapterId: string,
+  parents: Record<string, string> = {},
+  blueprintLog?: BlueprintLike,
+  interventionLog?: InterventionPackages,
+): SceneReaderPackageLog
 ```
 
 ### 처리 흐름
 
-```python
-# 전처리
-scene_titles = boundary_log.scene_titles or {}  # {scene_id: title}
-pid_text = {p.pid: p.text for p in chapter.paragraphs}
-scene_pid_range = {span.scene_id: (span.start_pid, span.end_pid) for span in boundary_log.scenes}
-image_map = {r.scene_id: r for r in image_log.results}
-blueprint_scene_ids = {p.scene_id for p in blueprint_log.packets} if blueprint_log else set()
+1. `boundaryLog.scenes`에서 `scene_id -> [start_pid, end_pid]` 범위를 만든다.
+2. `chapter.paragraphs`에서 `pid -> text` 맵을 만든다.
+3. `groundedLog.validated` 순서로 scene을 순회한다.
+4. visual block을 구성한다.
+5. subscene navigation / panel 데이터를 구성한다.
+6. scene body paragraph를 pid 범위 기준으로 슬라이스한다.
+7. `SceneReaderPacket[]`을 묶어 `SceneReaderPackageLog`를 반환한다.
 
-# SCENE.3 순서로 씬 순회
-for entry in grounded_log.validated:
-    scene_id = entry.scene_id
+### visual block 구성
 
-    # 1. Visual Block 구성
-    image_result = image_map.get(scene_id)
-    mode = "image" if (image_result and image_result.success and image_result.image_path) else "blueprint"
-    chips = _build_chips(scene_id, grounded_log, vis1_log)
-    overlay_chars = _build_overlay_characters(scene_id, blueprint_log, grounded_log, packet_log)
-    character_panels = _build_character_panels(scene_id, overlay_chars, intervention_log, sub3_log)
+현재 구현은 다음 규칙을 사용한다.
 
-    # 2. Subscene blocks 구성
-    subscene_nav, subscene_views = _build_subscene_blocks(scene_id, sub3_log, sub2_log, pid_text)
+- `mode`는 현재 항상 `"blueprint"`이다.
+- `fallback_blueprint_available`은 `blueprintLog !== undefined` 여부로만 결정된다.
+- `image_path`는 현재 채우지 않는다.
+- `chips`는 `SCENE.3.environment[*].label`과 `scene_place.actual_place`에서 최대 4개까지 만든다.
+- `overlay_characters`는 `VIS.2 characters -> SCENE.3 onstage_cast -> SCENE.1 scene_cast_union` 우선순위로 만든다.
 
-    # 3. Body paragraphs (STATE.3 pid range 기준)
-    start_pid, end_pid = scene_pid_range.get(scene_id, (0, 0))
-    body_paragraphs = [pid_text[pid] for pid in range(start_pid, end_pid + 1) if pid in pid_text]
+### `_build_overlay_characters`
 
-    packets.append(SceneReaderPacket(
-        scene_id, scene_title=scene_titles.get(scene_id, ""),
-        scene_summary=entry.validated_scene_index.get("scene_summary", ""),
-        body_paragraphs, visual, subscene_nav, subscene_views, character_panels,
-        default_active_subscene_id=subscene_nav[0].subscene_id if subscene_nav else "",
-    ))
-```
+anchor는 9-zone bucket을 사용한다.
 
-### `_build_chips` — 씬 chip 태그 구성
-
-```python
-def _build_chips(scene_id, grounded_log, vis1_log) -> List[str]:
-    chips = []
-    # Priority 1: VIS.1 ambiguity_resolutions[0].render_hint (최대 1개)
-    # Priority 2: SCENE.3 environment labels + actual_place (합쳐서 최대 4개)
-    return chips[:4]
-```
-
-### `_build_overlay_characters` — 캐릭터 overlay 버튼 구성
-
-```python
-# anchor 위치 테이블 (VIS.2 composition_position → x%, y%)
-_ZONE_ANCHOR = {
-    "foreground left":   (15.0, 78.0),
-    "foreground center": (50.0, 78.0),
-    "foreground right":  (85.0, 78.0),
-    "midground left":    (15.0, 52.0),
-    "midground center":  (50.0, 52.0),  # fallback
-    "midground right":   (85.0, 52.0),
-    "background left":   (15.0, 26.0),
-    "background center": (50.0, 26.0),
-    "background right":  (85.0, 26.0),
+```ts
+const ZONE_ANCHOR: Record<string, [number, number]> = {
+  "foreground left":   [15.0, 78.0],
+  "foreground center": [50.0, 78.0],
+  "foreground right":  [85.0, 78.0],
+  "midground left":    [15.0, 52.0],
+  "midground center":  [50.0, 52.0],
+  "midground right":   [85.0, 52.0],
+  "background left":   [15.0, 26.0],
+  "background center": [50.0, 26.0],
+  "background right":  [85.0, 26.0],
 }
-
-def _build_overlay_characters(scene_id, blueprint_log, grounded_log, packet_log):
-    seen = {}  # label → OverlayCharacter
-    # Priority 1: VIS.2 캐릭터 (composition_position 있음)
-    for ch in blueprint.characters:
-        x, y, zone = _resolve_anchor(ch.composition_position)
-        entity_id = f"char_{ch.name.lower().replace(' ', '_')}"
-        seen[ch.name] = OverlayCharacter(
-            character_id=entity_id, label=ch.name,
-            anchor_zone=zone, anchor_x=x, anchor_y=y,
-            anchor_method="zone_bucket",
-            panel_key=f"panel_{entity_id}",
-        )
-
-    # Priority 2: SCENE.3 onstage_cast (midground center fallback)
-    for cast_item in scene_index.get("onstage_cast", []):
-        label = cast_item["name"]
-        if label not in seen: seen[label] = OverlayCharacter(..., anchor_x=50.0, anchor_y=52.0)
-
-    # Priority 3: SCENE.1 scene_cast_union
-    for label in packet.scene_cast_union:
-        if label not in seen: seen[label] = OverlayCharacter(..., anchor_x=50.0, anchor_y=52.0)
-
-    return list(seen.values())
 ```
 
-### `_build_subscene_blocks` — 서브씬 nav/view 구성
+### `_build_subscene_blocks`
 
-```python
-_BUTTON_DEFS = [
-    ("goal",         "local_goal",          "Goal"),
-    ("problem",      "problem_state",       "Problem"),
-    ("what_changed", "causal_result",       "What changed"),
-    ("why_it_matters","narrative_importance","Why it matters"),
-]
+- `SUB.3 validated_subscenes`만 사용한다.
+- nav item은 `subscene_id`, `label`, `headline`, `body_paragraphs`로 구성한다.
+- 버튼은 값이 있는 필드만 만든다.
+- 기본 버튼 매핑은 `goal`, `problem`, `what_changed`, `why_it_matters`다.
+- `key_objects`가 있으면 `object` 버튼을 추가한다.
 
-def _build_subscene_blocks(scene_id, sub3_log, sub2_log, pid_text):
-    nav = []
-    views = {}
-    for sub in validated_subscenes:
-        # nav item: subscene_id, label, headline, body_paragraphs
-        body_paragraphs = [pid_text[pid] for pid in range(sub.start_pid, sub.end_pid + 1) if pid in pid_text]
-        nav.append(SubsceneNavItem(subscene_id=sub.subscene_id, label=sub.label,
-                                   headline=sub.headline or sub.action_summary,
-                                   body_paragraphs=body_paragraphs))
+### `_build_character_panels`
 
-        # view: buttons + panels (필드에 내용이 있는 것만)
-        buttons = []
-        panels = {}
-        for key, field_name, display_label in _BUTTON_DEFS:
-            value = getattr(sub, field_name, "") or ""
-            if value.strip():
-                buttons.append(SubsceneButton(key=key, label=display_label))
-                panels[key] = value
-        # object button: key_objects[0]
-        if sub.key_objects:
-            buttons.append(SubsceneButton(key="object", label=sub.key_objects[0][:24]))
-            panels["object"] = ", ".join(sub.key_objects)
+우선순위는 다음과 같다.
 
-        views[sub.subscene_id] = SubsceneView(headline=sub.headline, buttons=buttons, panels=panels)
-    return nav, views
+1. `SUB.4 cast_buttons.reveal`
+2. `SUB.3` fallback 요약
+
+최종 구조는 다음과 같다.
+
+```ts
+Record<panel_key, Record<subscene_id, string>>
 ```
 
-### `_build_character_panels` — 캐릭터 팝오버 텍스트
+즉 캐릭터 팝오버 텍스트는 scene 전체 공용이 아니라 subscene별로 달라진다.
 
-```python
-def _build_character_panels(scene_id, overlay_chars, intervention_log, sub3_log):
-    # panel_key → {subscene_id → text}
-    # Priority 1: SUB.4 cast_buttons.reveal (subscene별 텍스트)
-    for unit in intervention_log.packets:
-        for cast_button in unit.cast_buttons:
-            panel_key = label_to_panel.get(cast_button.name.lower())
-            text = f"[{unit.title}] {cast_button.role}: {cast_button.reveal}"
-            panel_parts[panel_key][unit.subscene_id].append(text)
+### 출력 핵심
 
-    # Priority 2: SUB.3 fallback (내용 없는 캐릭터만)
-    for subscene in sub3_packets:
-        for cast_name in subscene.active_cast:
-            bits = [f"[{sub.label}]", summary, f"Goal: {goal}", f"Problem: {problem}"]
-            panel_parts[panel_key][subscene.subscene_id] = " ".join(bits)
-
-    return {panel_key: {sid: "\n\n".join(parts)} for ...}
+```ts
+interface SceneReaderPacket {
+  scene_id: string
+  scene_title: string
+  scene_summary: string
+  body_paragraphs: string[]
+  visual: VisualBlock
+  subscene_nav: SubsceneNavItem[]
+  subscene_views: Record<string, SubsceneView>
+  character_panels: Record<string, Record<string, string>>
+  default_active_subscene_id: string
+}
 ```
 
-### run_id 패턴
+### run_id
 
-`f"scene_reader_package__{doc_id}__{chapter_id}"`
+```ts
+const runId = `scene_reader_package__${docId}__${chapterId}`
+```
+
+### 원본 설계와 다른 점
+
+- 원본 Python FINAL.1은 `RenderedImages`, `VisualGrounding`, `SubsceneStates`, `RenderPackage`까지 optional로 받는다.
+- 현재 TS 포트는 그 범위까지 아직 확장되지 않았다.
+- 그래서 현재 문서상 FINAL.1은 "원본 full join 단계"가 아니라 "reader packet 최소 조합 단계"로 보는 것이 맞다.
 
 ---
 
-## FINAL.2 — Overlay Refinement (`overlay_refinement.py`)
+## FINAL.2 - Overlay Refinement
+
+### 현재 구현 파일
+
+`src/lib/pipeline/final2.ts`
 
 ### 역할
 
-FINAL.1의 coarse anchor를 Vision API로 정제.
-이미지 없거나 API 없으면 전체 fallback으로 동작 (결과 반드시 반환).
+FINAL.1의 coarse overlay anchor를 Vision 입력으로 보정한다.  
+Vision 호출이 불가능하거나 이미지가 없으면 coarse anchor를 그대로 유지하는 fallback artifact를 반환한다.
 
-### 함수 시그니처
+### 현재 시그니처
 
-```python
-def run_overlay_refinement(
-    scene_reader_log: SceneReaderPackageLog,   # FINAL.1 출력
-    image_log: Optional[RenderedImages] = None, # VIS.4 출력
-    blueprint_log: Optional[StageBlueprint] = None, # VIS.2 출력
-    model: str = "",        # Vision 모델 (비어 있으면 fallback only)
-    api_key: str = "",
-    api_base: str = "https://openrouter.ai/api/v1",
-    doc_id: str = "",
-    chapter_id: str = "",
-    parents: Optional[Dict[str, str]] = None,
-    on_progress: Optional[Callable[[str], None]] = None,
-) -> OverlayRefinementResult
+```ts
+export async function runOverlayRefinement(
+  sceneReaderLog: SceneReaderPackageLog,
+  docId: string,
+  chapterId: string,
+  parents: Record<string, string> = {},
+  llmClient?: LLMClient,
+  blueprintLog?: { packets: Array<{ scene_id: string; key_moment?: string; setting?: unknown }> },
+  imagePaths?: Map<string, string>,
+  onProgress?: (msg: string) => void,
+): Promise<OverlayRefinementResult>
 ```
 
 ### 처리 흐름
 
-```python
-image_map = {r.scene_id: r.image_path for r in image_log.results if r.image_path}
-use_vision = bool(api_key and model)
-method = "vision+fallback" if use_vision else "fallback_only"
+1. `llmClient`가 있으면 `vision+fallback`, 없으면 `fallback_only` 모드가 된다.
+2. scene별로 `imagePaths.get(scene_id)`에서 이미지 경로를 찾는다.
+3. 이미지가 있고 overlay candidate가 있으면 Vision prompt를 만든다.
+4. raw Vision 응답을 `normalizeResult()`로 정규화한다.
+5. accepted되지 않은 결과는 coarse anchor로 fallback한다.
 
-for packet in scene_reader_log.packets:
-    image_path = packet.visual.image_path or image_map.get(packet.scene_id)
-    image_available = bool(image_path and Path(image_path).exists())
+### accepted 조건
 
-    raw_result = None
-    if use_vision and image_available and packet.visual.overlay_characters:
-        try:
-            raw_result = _vision_refine_scene(client, model, packet, image_path, blueprint_log)
-        except Exception:
-            raw_result = None  # 실패 시 fallback
+다음 조건을 모두 만족해야 refined anchor를 채택한다.
 
-    scenes.append(_normalize_result(packet, raw_result, image_path, image_available))
+```ts
+const accepted =
+  anchorX !== undefined &&
+  anchorY !== undefined &&
+  confidence >= 0.45 &&
+  source !== "coarse_fallback"
 ```
 
-### `_vision_refine_scene` — Vision API 호출
+### fallback 규칙
 
-```python
-def _vision_refine_scene(client, model, packet, image_path, blueprint_log):
-    # 프롬프트 구성
-    prompt = prompt_loader.load("final2_overlay_refinement", {
-        "scene_id": packet.scene_id,
-        "scene_title": packet.scene_title,
-        "scene_summary": packet.scene_summary,
-        "visual_mode": packet.visual.mode,
-        "chips_json": format_json_param(packet.visual.chips),
-        "overlay_candidates_json": format_json_param([
-            {"character_id": ch.character_id, "label": ch.label,
-             "anchor_zone": ch.anchor_zone, "anchor_x": ch.anchor_x, "anchor_y": ch.anchor_y,
-             "anchor_method": ch.anchor_method}
-            for ch in packet.visual.overlay_characters
-        ]),
-        "blueprint_summary": _blueprint_summary(packet.scene_id, blueprint_log),
-        "scene_body_text": "\n\n".join(packet.body_paragraphs),
-    })
-
-    # 이미지를 base64 data URL로 인코딩
-    data_url = f"data:image/png;base64,{base64.b64encode(image_path.read_bytes()).decode()}"
-
-    # multimodal 메시지
-    messages = [
-        {"role": "system", "content": "Return ONLY valid JSON."},
-        {"role": "user", "content": [
-            {"type": "text", "text": prompt},
-            {"type": "image_url", "image_url": {"url": data_url}},
-        ]},
-    ]
-    response = client.chat.completions.create(model=model, temperature=0.0, max_tokens=2000, messages=messages)
-    return parse_json_response(response.choices[0].message.content)
+```ts
+const fallbackVis =
+  confidence >= 0.2 && imageAvailable ? "approximate" : "fallback"
 ```
 
-### Vision API 출력 (raw)
+즉 low-confidence 결과도 `approximate` 상태로 남길 수 있지만, anchor 자체는 coarse 값을 유지한다.
 
-```json
-{
-  "characters": [
-    {
-      "character_id": "char_alice",
-      "label": "Alice",
-      "visibility": "placed",
-      "bbox_norm": {"x": 0.3, "y": 0.4, "w": 0.15, "h": 0.35},
-      "anchor_x": 37.5,
-      "anchor_y": 57.5,
-      "confidence": 0.82,
-      "source": "text_image_guided",
-      "reason": "Alice is clearly visible in the center-left foreground"
-    }
-  ]
+### `visibility` / `source`
+
+스키마상 허용값은 다음과 같다.
+
+- `visibility`: `placed | approximate | fallback | not_visible`
+- `source`: `text_image_guided | blueprint_guided | coarse_fallback`
+
+다만 현재 `runOverlayRefinement()` 정규화 함수는 실제로 `not_visible`을 만들지 않는다.  
+`not_visible`은 UI merge 규칙 호환을 위해 스키마에 남아 있는 값이다.
+
+### 출력 핵심
+
+```ts
+interface OverlayRefinementCharacter {
+  character_id: string
+  label: string
+  visibility: OverlayVisibility
+  bbox_norm?: BBoxNorm
+  anchor_x: number
+  anchor_y: number
+  confidence: number
+  source: OverlaySource
+  reason: string
 }
 ```
 
-### `_normalize_result` — raw 결과 → OverlayRefinementScene
+### run_id
 
-```python
-_MIN_REFINEMENT_CONFIDENCE = 0.45
-
-def _normalize_result(packet, raw_result, image_path, image_available):
-    for coarse in packet.visual.overlay_characters:
-        raw = by_id.get(coarse.character_id) or by_label.get(coarse.label.lower())
-
-        if not raw:
-            # fallback: FINAL.1 coarse anchor 유지
-            characters.append(_coarse_character_result(coarse, "result missing", "fallback"))
-            continue
-
-        confidence = raw.get("confidence", 0.0)
-        source = raw.get("source", "coarse_fallback")
-        accepted = (
-            anchor_x is not None and anchor_y is not None
-            and confidence >= _MIN_REFINEMENT_CONFIDENCE   # 0.45
-            and source != "coarse_fallback"
-        )
-
-        if accepted:
-            # 정제된 anchor 채택
-            characters.append(OverlayRefinementCharacter(
-                anchor_x=anchor_x, anchor_y=anchor_y,
-                bbox_norm=BBoxNorm(...) if bbox else None,
-                visibility="placed", confidence=confidence, source=source,
-            ))
-        else:
-            # fallback
-            fallback_vis = "approximate" if confidence >= 0.2 and image_available else "fallback"
-            characters.append(_coarse_character_result(coarse, reason, fallback_vis, confidence))
+```ts
+const runId = `overlay_refinement__${docId}__${chapterId}`
 ```
-
-### visibility 값
-
-`placed | approximate | fallback`
-
-### source 값
-
-`text_image_guided | blueprint_guided | coarse_fallback`
-
-### run_id 패턴
-
-`f"overlay_refinement__{doc_id}__{chapter_id}"`
 
 ---
 
-## FINAL.3 — Reader Screen (UI 전용, 파이프라인 Stage 없음)
+## FINAL.3 - Reader Screen
+
+### 현재 구현 파일
+
+`src/components/ReaderScreen.tsx`
 
 ### 역할
 
-FINAL.1 + FINAL.2 결과를 합쳐 최종 독자 화면을 렌더링.
-debug 정보(confidence, bbox, source badge) 없이 깔끔하게 표시.
+`SceneReaderPackageLog`와 optional `OverlayRefinementResult`를 합쳐 최종 독자 화면을 렌더링한다.  
+별도 파이프라인 artifact를 만들지 않는 UI 단계다.
 
-### 필요 데이터
+### merge 규칙
 
-- `SceneReaderPackageLog` (FINAL.1) — 필수
-- `OverlayRefinementResult` (FINAL.2) — optional (없으면 coarse anchor 사용)
+`buildMergedOverlay()`는 다음 규칙을 쓴다.
 
-### 캐릭터 필터링 규칙 (`_build_merged_overlay`)
-
-```python
-_VISIBLE_STATES = {"visible", "placed", "approximate"}
-_CONF_THRESHOLD = 0.5  # 이 이상이면 not_visible 신뢰
-
-def _build_merged_overlay(packet, refinement_scene) -> List[Tuple[OverlayCharacter, Optional[OverlayRefinementCharacter]]]:
-    for char in packet.visual.overlay_characters:
-        refined = refinement_map.get(char.character_id)
-        if refined is not None:
-            if refined.visibility == "not_visible" and refined.confidence >= _CONF_THRESHOLD:
-                continue  # 이미지에 없다고 확신 → 버튼 제거
-        merged.append((char, refined))
+```ts
+if (refined?.visibility === "not_visible" && refined.confidence >= 0.5) {
+  continue
+}
+result.push({ coarse: char, refined })
 ```
 
-### 레이아웃 구조
+즉 현재 UI는:
 
-```
-씬 선택 드롭다운
-씬 제목 + 요약
-─────────────────────────────────
-좌측 (1.2)              우측 (1)
-  서브씬 인덱스           chips
-  {n}/{total} · label    이미지
-  body_paragraphs        캐릭터 버튼 (popover)
-  ← dots →              ─────
-                         headline
-                         expander 패널들 (goal/problem/...)
-```
+- `FINAL.2`가 `not_visible`을 높은 confidence로 반환한 경우에만 버튼을 제거한다.
+- 그 외에는 coarse 캐릭터를 남긴다.
+- 버튼 좌표는 `refined?.anchor_x ?? coarse.anchor_x`, `refined?.anchor_y ?? coarse.anchor_y`를 쓴다.
 
-### 서브씬 네비게이션
+### 레이아웃
 
-- `←` / `→` 버튼으로 subscene 이동
-- 현재 위치: `{idx+1}/{n_subs} · {label}`
-- 도트 인디케이터: `● ○ ○`
+- 상단: scene selector
+- 다음: `scene_title`, `scene_summary`
+- 좌측: subscene 네비게이션, 본문 paragraph, prev/next
+- 우측: chips, image/placeholder, character buttons, subscene panels
 
 ### 캐릭터 popover
 
-```tsx
-// FINAL.3에서는 debug 정보 없이 panel_text만 표시
-<Popover trigger={char.label}>
-  {panel_text || "(현재 subscene 기준 정보 없음)"}
-</Popover>
-```
+- 버튼 위치는 scene image 위 absolute position이다.
+- 팝오버 내용은 `packet.character_panels[panel_key][activeSubsceneId]`를 사용한다.
+- 현재 subscene에 텍스트가 없으면 fallback 문구를 보여 준다.
 
-### 구현 위치
+### 현재 제한
 
-`src/components/tabs/TabFinal3.tsx` — 파이프라인 로직 없음, 순수 React 컴포넌트
+- bbox debug 정보는 화면에 노출하지 않는다.
+- overlay collision, safe margin, automatic decluttering은 아직 없다.
+- FINAL.2가 실제 `not_visible`을 거의 만들지 않기 때문에, 현재 UI에서는 대부분 coarse/refined 버튼이 그대로 유지된다.
+

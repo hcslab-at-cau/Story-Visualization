@@ -1,5 +1,8 @@
 # Pipeline: SCENE.1, SCENE.2, SCENE.3
 
+`Story-Visualization` 현재 기준에서 SCENE 단계는 포트돼 있지만, PRE처럼 직접 운영되는 주 경로는 아니다.  
+문서 아래 내용은 원본 scene representation 파이프라인 설명을 유지하되, 실제 결과 검토는 현재 `PipelineRunner`의 공통 JSON viewer 기준으로 이뤄진다.
+
 ---
 
 ## SCENE.1 — Scene Packet Builder (`scene_packet.py`)

@@ -181,6 +181,33 @@ export async function loadRunResults(
   return snap.data() as Record<string, unknown>
 }
 
+export async function forkRunResults(
+  docId: string,
+  chapterId: string,
+  sourceRunId: string,
+  targetRunId: string,
+  stagesToCopy: StageId[],
+): Promise<void> {
+  const db = getDb()
+  const source = await loadRunResults(docId, chapterId, sourceRunId)
+  const nextData: Record<string, unknown> = {
+    forkedFrom: sourceRunId,
+    updatedAt: serverTimestamp(),
+  }
+
+  for (const stageId of stagesToCopy) {
+    const key = stageKey(stageId)
+    if (source[key] !== undefined) {
+      nextData[key] = source[key]
+    }
+  }
+
+  await setDoc(
+    doc(db, "documents", docId, "chapters", chapterId, "runs", targetRunId),
+    nextData,
+  )
+}
+
 /** List runs for a chapter (most recent first). */
 export async function listRuns(
   docId: string,
