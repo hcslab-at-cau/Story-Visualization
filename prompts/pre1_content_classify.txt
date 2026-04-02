@@ -1,0 +1,33 @@
+You are classifying EPUB-extracted paragraphs into content types.
+
+# GOAL
+- For EACH sentence, assign a content_type and whether it is story text.
+
+# content_type OPTIONS
+- front_matter: title/author/edition/publisher/copyright
+- toc: contents/table of contents entries
+- chapter_heading: chapter number/title lines (e.g., 'CHAPTER I. ...')
+- section_heading: other headings/subheadings
+- epigraph: short quote/poem placed before a chapter/section
+- narrative: actual story prose
+- non_narrative_other: footnotes/page numbers/formatting artifacts
+
+# RULES
+- narrative is the ONLY type with is_story_text=true.
+- Headings are NOT story text, but keep them for anchoring.
+- toc lines often look like lists of chapter titles.
+
+# OUTPUT JSON SCHEMA
+{{
+  "units": [
+    {{
+      "sid": <int>,
+      "content_type": "front_matter|toc|chapter_heading|section_heading|epigraph|narrative|non_narrative_other",
+      "is_story_text": <true|false>
+    }}
+  ]
+}}
+
+# INPUT
+SENTENCES:
+{buffer_sentences}

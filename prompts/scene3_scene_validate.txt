@@ -1,0 +1,154 @@
+You are a Scene Index Validation Agent.
+
+Goal:
+Validate that each item in the scene index is genuinely supported by the scene text and state.
+Correct grounding labels, remove hallucinated items, and merge duplicates.
+
+Rules:
+1. Delete any item with no evidence in the scene text.
+2. All evidence_pids must fall within the scene pid range [{start_pid}, {end_pid}].
+3. "explicit" grounding requires a direct textual match or close paraphrase — not inference.
+4. "strong_inference" is allowed only when the text strongly implies it without ambiguity.
+5. Fix current_place / mentioned_place confusion: a place only seen or mentioned is NOT actual_place.
+6. Only physically present characters belong in onstage_cast.
+7. Delete or downgrade items that generalize beyond this specific scene.
+8. Merge items that express the same meaning across different fields.
+9. Keep "weak_inference" items but mark them clearly.
+10. Return JSON only.
+
+== Scene Packet ==
+scene_id: {scene_id}
+pid range: P{start_pid} – P{end_pid}
+Entity registry: {entity_registry_json}
+
+Start state:
+{start_state_json}
+
+End state:
+{end_state_json}
+
+Scene text:
+{scene_text}
+
+== Stage I Index (to validate) ==
+{scene_index_json}
+
+== Rule Precheck Issues (already detected) ==
+{precheck_issues_json}
+
+---
+
+Return a JSON object with exactly this structure:
+
+{{
+  "scene_id": "{scene_id}",
+  "validated_scene_index": {{
+    "scene_summary": "<validated 1–2 sentence summary>",
+    "scene_place": {{
+      "actual_place": "<canonical name or null>",
+      "mentioned_places": ["<place>"],
+      "evidence_pids": [<int>],
+      "grounding_type": "explicit" | "strong_inference" | "weak_inference",
+      "confidence": "high" | "medium" | "low"
+    }},
+    "scene_time": {{
+      "label": "<string or null>",
+      "normalized": "<string or null>",
+      "is_explicit_jump": <bool>,
+      "grounding_type": "explicit" | "strong_inference" | "weak_inference",
+      "confidence": "high" | "medium" | "low"
+    }},
+    "onstage_cast": [
+      {{
+        "name": "<name>",
+        "evidence_pids": [<int>],
+        "evidence_text": ["<span>"],
+        "grounding_type": "explicit" | "strong_inference" | "weak_inference",
+        "confidence": "high" | "medium" | "low"
+      }}
+    ],
+    "mentioned_offstage_cast": [
+      {{
+        "name": "<name>",
+        "evidence_pids": [<int>],
+        "evidence_text": ["<span>"],
+        "grounding_type": "explicit" | "strong_inference" | "weak_inference",
+        "confidence": "high" | "medium" | "low"
+      }}
+    ],
+    "main_actions": [
+      {{
+        "actor": "<name or null>",
+        "action": "<description>",
+        "evidence_pids": [<int>],
+        "evidence_text": ["<span>"],
+        "grounding_type": "explicit" | "strong_inference" | "weak_inference",
+        "confidence": "high" | "medium" | "low"
+      }}
+    ],
+    "goals": [
+      {{
+        "holder": "<name>",
+        "content": "<goal>",
+        "evidence_pids": [<int>],
+        "evidence_text": ["<span>"],
+        "grounding_type": "explicit" | "strong_inference" | "weak_inference",
+        "confidence": "high" | "medium" | "low"
+      }}
+    ],
+    "relations": [
+      {{
+        "subject": "<name>",
+        "relation": "<label>",
+        "object": "<name or entity>",
+        "evidence_pids": [<int>],
+        "evidence_text": ["<span>"],
+        "grounding_type": "explicit" | "strong_inference" | "weak_inference",
+        "confidence": "high" | "medium" | "low"
+      }}
+    ],
+    "objects": [
+      {{
+        "name": "<name>",
+        "scene_role": "<role>",
+        "evidence_pids": [<int>],
+        "evidence_text": ["<span>"],
+        "grounding_type": "explicit" | "strong_inference" | "weak_inference",
+        "confidence": "high" | "medium" | "low"
+      }}
+    ],
+    "environment": [
+      {{
+        "label": "<description>",
+        "evidence_pids": [<int>],
+        "evidence_text": ["<span>"],
+        "grounding_type": "explicit" | "strong_inference" | "weak_inference",
+        "confidence": "high" | "medium" | "low"
+      }}
+    ]
+  }},
+  "dropped_items": [
+    {{
+      "field": "<field name>",
+      "item": "<brief description of dropped item>",
+      "reason": "<why it was dropped>"
+    }}
+  ],
+  "downgraded_items": [
+    {{
+      "field": "<field name>",
+      "item": "<brief description>",
+      "from_label": "explicit" | "strong_inference" | "weak_inference",
+      "to_label": "explicit" | "strong_inference" | "weak_inference",
+      "reason": "<why it was downgraded>"
+    }}
+  ],
+  "merged_items": [
+    {{
+      "fields": ["<field1>", "<field2>"],
+      "result_field": "<field>",
+      "description": "<what was merged and how>"
+    }}
+  ],
+  "validation_notes": ["<note>"]
+}}

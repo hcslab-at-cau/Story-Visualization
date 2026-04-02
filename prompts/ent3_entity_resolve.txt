@@ -1,0 +1,164 @@
+You are an expert at narrative coreference resolution and entity alias merging for fiction.
+
+## Your Task
+
+You must perform **two sub-tasks**:
+1. **Pronoun Resolution** — For each unresolved pronoun mention, determine which known entity it refers to.
+2. **Entity Alias Merging** — Identify entity clusters that clearly refer to the same underlying entity but were split into separate clusters.
+
+Your goal is to improve entity consistency for downstream narrative state tracking.
+
+## Chapter Text
+
+The full chapter text is provided below for context. Each paragraph is prefixed with its ID [P{{n}}].
+
+{chapter_text}
+
+## Known Entities
+
+The following entity clusters were produced by an earlier system. Each entry lists the cluster ID, canonical name, mention type, and all surface spans found in the text.
+
+{entities_json}
+
+## Unresolved Pronoun Mentions
+
+Each entry provides the mention ID, paragraph ID, and surface span. Use the chapter text above to recover the local sentence context.
+
+{unresolved_json}
+
+---
+
+## General Principles
+- Resolve and merge using the actual chapter evidence, not world knowledge.
+- Prefer conservative decisions over speculative ones.
+- Do NOT invent new entities.
+- Use only existing entity_id values or "unknown".
+- A pronoun must never be resolved to a place or time entity.
+- Merge only when the text supports coreference clearly enough for downstream structured state tracking.
+
+---
+
+## Sub-task 1 — Pronoun Resolution Rules
+
+### 1) Find the local context
+- Locate the paragraph by its [Pn] ID.
+- Find the sentence containing the pronoun.
+- Read the immediately surrounding sentence(s), then read backward through the preceding 2–3 sentences or nearby paragraphs as needed.
+
+### 2) Resolve to the most likely existing entity
+Use grammatical agreement, discourse salience, and local narrative continuity.
+
+Basic agreement cues:
+- "she / her / hers / herself" → female or feminine-coded singular cast entity
+- "he / him / his / himself" → male or masculine-coded singular cast entity
+- "they / them / their / theirs / themselves" → plural or gender-neutral cast entity
+- "we / us / our / ours / ourselves" → first-person plural speaker group
+- "I / me / my / mine / myself" → current speaker or point-of-view cast entity when clear
+- "it / its / itself" → non-human singular referent, including animals or anthropomorphized creatures that function as story participants
+
+### 3) Narrative-specific rules
+- In fiction, animals, creatures, and anthropomorphized beings count as cast if they act, speak, perceive, or are treated as story participants.
+- Therefore, pronouns such as "it" or "its" may validly resolve to a cast entity if that entity is an acting creature or character.
+- In direct speech, dialogue, self-talk, or free indirect discourse, first-person pronouns should resolve to the speaking or focal cast entity when the referent is clear.
+- In or immediately around dialogue tags ("she said", "he asked", "replied the Rabbit"), prefer the speaker/addressee supported by the tag.
+- If a new paragraph introduces a newly salient cast entity by name before the pronoun, prefer that entity only if the local sentence actually supports the shift.
+- Prefer the most locally salient compatible entity, not merely the most recent noun.
+
+### 4) Hard constraints
+- Resolve only to an existing cast entity, or "unknown".
+- Never leave a pronoun as its own entity.
+- Never treat a pronoun string such as "it", "its", "he", "she", or "they" as a standalone canonical entity.
+- If the pronoun clearly refers to an existing cast entity, resolve it to that entity.
+- Use "unknown" only when the reference is genuinely ambiguous or unsupported by the context.
+
+### 5) Resolution quality bar
+Use "unknown" when:
+- two or more cast entities are equally plausible,
+- the relevant antecedent is missing from the provided known entities,
+- the pronoun is too underspecified to resolve confidently.
+
+---
+
+## Sub-task 2 — Entity Alias Merging Rules
+
+Your job is to identify known entity clusters that should be merged because they refer to the same underlying entity.
+
+### 1) Core requirement
+Merge only when the text supports that the two clusters are coreferential in this chapter.
+
+### 2) Allowed merge scope
+- Only merge entities with the same mention_type.
+- Valid merges include cast↔cast, place↔place, time↔time.
+- Never merge across different mention types.
+
+### 3) Cast alias patterns
+Common valid cast merge patterns in fiction:
+- Proper name + descriptive label: "Alice" ↔ "the girl"
+- Full name + partial name: "the White Rabbit" ↔ "the Rabbit"
+- Title variants: "the Queen" ↔ "the Queen of Hearts"
+- Stable role references: "the Duchess" used consistently for one character
+- Creature references that clearly denote the same acting participant
+
+For cast merges:
+- Require strong local textual evidence.
+- Same paragraph or adjacent paragraphs are preferred evidence zones.
+- Do not merge on plausibility alone.
+
+### 4) Place alias patterns
+Common valid place merge patterns:
+- Article variation: "a rabbit-hole" ↔ "the rabbit-hole"
+- Adjective drop/addition: "a very deep well" ↔ "the well"
+- Descriptive variant: "the dark hall" ↔ "the hall"
+- Evaluative modifier: "the loveliest garden" ↔ "the lovely garden" ↔ "the garden"
+
+For place merges:
+- Same head noun plus compatible local scene continuity is often sufficient.
+- Place aliases may be merged even if they are not repeated in the exact same paragraph, as long as the chapter context shows they refer to the same grounded location in the same ongoing scene.
+
+### 5) Do NOT merge these
+Do not merge:
+- a place with its subpart, entrance, threshold, boundary, fixture, or contained object
+- container vs contained location
+- whole vs part
+- character vs object associated with that character
+
+Examples of non-merges:
+- "the hall" ≠ "the doorway"
+- "the garden" ≠ "the entrance to the garden"
+- "the room" ≠ "the table"
+- "the rabbit-hole" ≠ "the side of the hole"
+
+### 6) Keep vs absorb
+In each merge pair:
+- keep = the cluster that survives
+- absorb = the cluster dissolved into keep
+
+Prefer to keep:
+- the more specific or proper canonical name,
+- the fuller named form for cast entities,
+- the more neutral base location form for place entities when appropriate.
+
+Examples:
+- keep "the White Rabbit" over "the Rabbit"
+- keep "the rabbit-hole" over a less stable descriptive variant
+- keep "the hall" or the most central stable location label over an embellished surface variant when both clearly denote the same place
+
+### 7) When not to merge
+If the evidence is weak, leave them separate.
+
+---
+
+## Output Format
+
+Return ONLY valid JSON in this exact structure:
+
+{{
+  "resolutions": [
+    {{"mention_id": "ch01_m0012", "entity_id": "cast_001"}},
+    {{"mention_id": "ch01_m0018", "entity_id": "cast_002"}},
+    {{"mention_id": "ch01_m0025", "entity_id": "unknown"}}
+  ],
+  "merges": [
+    {{"keep": "cast_001", "absorb": "cast_003"}}
+  ]
+}}

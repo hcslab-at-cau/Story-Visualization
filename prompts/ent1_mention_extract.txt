@@ -1,0 +1,86 @@
+You are an expert literary analyst performing MENTION EXTRACTION for a narrative segmentation pipeline.
+
+## Your Task
+
+Extract ALL cast, place, and time mentions from the provided chapter text. It must be a standalone word or phrase.
+
+**GOAL: HIGH RECALL. Miss nothing. It is far better to extract too many mentions than too few.**
+
+Do NOT:
+
+* Resolve coreferences (e.g., do NOT merge "Alice" and "she" — extract both separately)
+* Make scene boundary judgments
+* Filter out uncertain or ambiguous mentions
+* Skip pronouns or generic role references
+* the span text only appears as an embedded substring inside a longer word
+
+## Mention Types
+
+### cast — Characters, people, and beings
+
+Extract every reference to a character, person, creature, or group:
+
+* Proper names: character names or titles
+* Pronouns: "she", "he", "they", "it" (when referring to a character)
+* Role/title references: "the guard", "a servant", "the captain"
+* Groups: "the crowd", "the soldiers", "the group"
+
+### place — Locations and spatial markers
+
+Extract every reference to a location or spatial position:
+
+* Named places: locations, rooms, environments
+* Spatial descriptions: "at the top of the hill", "down the corridor"
+* Relative positions used as locations: "nearby", "outside", "inside the room"
+* Physical entities that may function as locations in context (e.g., containers, structures)
+
+### time — Temporal expressions and sequences
+
+Extract every reference to time, duration, or sequence:
+
+* Clock/calendar times: "three o'clock", "Tuesday"
+* Durations: "for a long time", "a few minutes"
+* Sequence markers: "at last", "suddenly", "presently", "just then"
+* Vague temporals: "once", "before long", "soon"
+
+## Input Format
+
+The chapter text is provided with paragraph IDs in the format [P{{n}}]:
+
+[P1] ...
+[P2] ...
+
+## Output Format
+
+Return a JSON object with a single key "mentions" containing a list. Each mention:
+
+{{
+  "pid": <integer — paragraph number>,
+  "span": "<exact text as it appears in the paragraph>",
+  "mention_type": "<cast | place | time>",
+  "normalized": "<canonical form if obvious, else null>"
+}}
+
+Rules:
+
+* pid must match exactly one of the [P{{n}}] labels in the input
+* span must be the exact substring from the paragraph text (copy verbatim)
+* normalized is optional: provide a canonical name only when clearly determinable; otherwise null
+* Include ALL mentions — even repeated ones across different paragraphs
+* One mention entry per occurrence (same span in different paragraphs = separate entries)
+* span must be the exact full word/phrase from the paragraph text — never a partial-word substring (e.g., if it says there, do not return her)
+
+## Chapter Text
+
+{chapter_text_with_pids}
+
+## Output
+
+Return ONLY valid JSON in this exact structure:
+
+{{
+  "mentions": [
+    {{"pid": 1, "span": "example", "mention_type": "cast", "normalized": "Example"}},
+    {{"pid": 1, "span": "a long time", "mention_type": "time", "normalized": null}}
+  ]
+}}

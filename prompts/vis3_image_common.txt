@@ -1,0 +1,59 @@
+Create a clean, readable 2.5D isometric stage base for the scene described below.
+
+This image is not a dramatic story illustration. It is a spatial stage diagram for narrative comprehension and later UI overlay.
+
+Rendering style — choose based on environment_type in Scene data:
+- If environment_type is "indoor": Render as a front-open dollhouse cutaway room. Walls on left and back, floor clearly visible, ceiling omitted or shown as a thin frame. Simplified architectural interior.
+- If environment_type is "outdoor": Render as an open diorama platform. Ground terrain in the foreground, horizon depth in the background, no enclosing walls. Natural features define the space boundaries.
+- If environment_type is "mixed": Show a partial interior opening onto an exterior — one wall open to the outside, with both an indoor floor plane and outdoor ground visible.
+
+Global visual style:
+- clean 2.5D isometric perspective
+- calm, minimal, schematic composition
+- polished modern product-illustration quality
+- soft neutral palette using off-white, light gray, and muted blue-gray tones
+- thin, precise architectural outlines
+- smooth pale surfaces
+- minimal shading with soft ambient shadows only
+- balanced negative space
+- uncluttered floor/ground visibility
+- sparse structural elements only
+- highly readable space boundaries and navigable layout
+- consistent visual language across all scenes
+
+Reference aesthetic:
+a soft, minimal, semi-architectural isometric stage diagram with thin gray outlines, simplified structural elements, pale surfaces, and calm spatial separation.
+The result should resemble a clean service, navigation, or presentation illustration rather than concept art or cinematic scene art.
+
+Visual priorities:
+- prioritize spatial readability over realism
+- prioritize stage structure and circulation over decoration
+- make the environment feel like a simplified stage model for orientation and recall
+- preserve clear empty space for later UI overlays
+- keep the scene visually quiet, orderly, elegant, and schematic
+
+Do not include:
+- people, characters, faces, bodies, silhouettes, portraits, or any human figure
+- text labels, captions, Korean text, English text, numbers, signage, icons, markers, pins, arrows, speech bubbles, or interface elements
+- photorealistic textures or realistic material rendering
+- dramatic lighting, cinematic mood, strong contrast, or emotional atmosphere
+- painterly rendering, watercolor style, oil painting style, comic style, anime style, sketch style, or hand-drawn look
+- excessive furniture, decorative clutter, crowded props, messy composition, or unnecessary ornament
+- fisheye distortion, exaggerated perspective, warped geometry, or chaotic layout
+- any element listed in the avoid field of the Scene data
+
+Scene data:
+{SCENE_JSON}
+
+Field descriptions:
+- scene_id: unique identifier for this scene
+- environment_type: "indoor", "outdoor", or "mixed" — determines rendering style (see above)
+- stage_archetype: the type of space as a descriptive slug (e.g. "riverside_edge", "hallway", "drawing_room")
+- location: specific room or place name
+- time_of_day: lighting context
+- atmosphere: minimal spatial character
+- lighting: neutral lighting description
+- layout_summary: one-sentence description of the overall spatial geometry — use this as the primary spatial guide
+- structural_elements: layout-relevant architectural and terrain features that define the space (walls, floors, terrain, fixed furniture as space-definers)
+- spatial_zones: sub-areas of the stage with name, spatial role, and priority — render high-priority zones prominently
+- avoid: visual elements and interpretations that must be excluded

@@ -1,0 +1,87 @@
+You are an expert literary analyst performing MENTION VALIDATION for a narrative segmentation pipeline.
+
+## Your Task
+
+Stage 1 extracted mention candidates with high recall — it captured everything possible.
+Your job is to **filter out false positives**: mentions that are not genuinely meaningful as cast, place, or time entities in narrative context.
+
+## Validation Criteria
+
+### ⚠️ Universal Pre-check — Reject immediately (all types)
+
+Before applying type-specific criteria, check whether the span is a **standalone word** in the source paragraph text.
+
+**Reject if** the span text only appears as an embedded substring inside a longer word — i.e., every occurrence in the paragraph is surrounded on at least one side by a non-space, non-punctuation character with no word boundary.
+
+Examples of substring false positives to reject:
+- span="her" in paragraph "…there was nothing…" → "her" is only inside "there", not a standalone token → **REJECT**
+- span="here" in paragraph "…therefore she…" → embedded in "therefore" → **REJECT**
+- span="he" in paragraph "…the…" → embedded in "the" → **REJECT**
+- span="her" in paragraph "…she handed her the key…" → "her" is a standalone word → proceed to type check
+
+**How to check:** scan the paragraph for the span text. If every occurrence is flanked on at least one side by a letter (i.e., no occurrence is a whole token), the span is a substring artifact → reject with reason "substring of a word, not a standalone token".
+
+### cast — Keep if:
+- Refers to a specific character, person, creature, or named group that genuinely functions as an actor in the story
+- The character/person/creature is actually present, acting, perceiving, being addressed, or otherwise participating in the current grounded scene
+- Pronouns are valid only if they clearly refer to a character participating in this paragraph
+- Generic role references such as "a servant" or "the crowd" are valid only if they are actually participating in the immediate scene
+
+### cast — Reject if:
+- A pronoun has no clear local referent in the paragraph
+- The reference is metaphorical, figurative, rhetorical, or otherwise non-literal
+- It is part of a title, heading, or label rather than an actual character mention
+- The mention refers only to someone in a remembered, imagined, hypothetical, speculative, quoted, pretend, comparative, joking, or rhetorical context, rather than someone actually present or participating in the current grounded scene
+
+### place — Keep if:
+- Refers to a grounded, scene-level physical location in the current narrative situation
+- Functions as a place where a character is currently located, moving through, entering, or directly perceiving as part of the immediate scene
+- Anchors the scene or the character's current movement/orientation in a narratively meaningful way
+- Is directly visible or perceptually available in the current scene, even if not yet entered
+
+### place — Reject if:
+- It is abstract, figurative, rhetorical, or otherwise not grounded as a real location in the current scene
+- It is a generic noun phrase with spatial wording but does not function as an actual location
+- It refers only to an object, furnishing, fixture, container, tool, decoration, body part, material, measurement, or sub-part of a larger space rather than a scene-level location
+- The mention refers only to a place in memory, imagination, fantasy, speculation, quoted or pretend dialogue, comparison, figurative language, or general world knowledge, rather than a place directly present, perceptually available, or functioning as an occupied or entered location in the immediate scene
+- **It describes a physical surface, substrate, or accumulation of materials on which a character happens to land or rest** — rather than a named, bounded, or persistent scene-level location. A description like "a pile of [materials]" or "a heap of [debris]" that serves as an incidental landing surface is not a narrative place, even if a character physically contacts it.
+  - Keep: named rooms, buildings, outdoor areas, landmarks, bodies of water, roads — places with identity and persistence
+  - Reject: unnamed physical surfaces, piles of loose material, debris patches, ground cover descriptions used only to describe a character's momentary resting point
+
+### time — Keep if:
+- An explicit temporal discontinuity that signals a jump to a different time period — a new day, a different hour, a gap of days/weeks/months (e.g., "the next morning", "three days later", "meanwhile", "that evening")
+- A specific clock or calendar reference that anchors the scene in time (e.g., "at three o'clock", "Tuesday afternoon", "midsummer")
+- A clearly measured duration framing a scene transition (e.g., "an hour passed", "two weeks later", "after a long silence")
+
+### time — Reject if:
+- A narrative sequence adverb that orders events within a continuous scene rather than marking a time jump — this includes words like "suddenly", "presently", "at last", "just then", "afterwards", "at once", "thereupon"
+- An atmospheric or descriptive time reference that sets mood or background rather than marking a temporal transition (e.g., "the hot day", "the cool evening", "a dark night")
+- A vague anaphoric time reference that points back to an already-established moment without adding new temporal information (e.g., "the time", "that moment", "the hour")
+- A purely stylistic or filler temporal expression with no narrative grounding (e.g., "once", "ever", "always")
+
+## Input
+
+### Paragraph Texts
+{paragraphs_json}
+
+### Mention Candidates to Validate
+{mentions_json}
+
+## Output Format
+
+For every mention_id in the input, return a judgement. Return ONLY valid JSON with this exact structure:
+
+{{
+  "validations": [
+    {{"mention_id": "ch01_m0001", "valid": true}},
+    {{"mention_id": "ch01_m0002", "valid": false, "reason": ""}},
+    {{"mention_id": "ch01_m0003", "valid": true}},
+    {{"mention_id": "ch01_m0004", "valid": false, "reason": ""}}
+  ]
+}}
+
+Rules:
+- Every mention_id from the input must appear exactly once
+- reason is required when valid is false; omit or set null when valid is true
+- When uncertain, prefer valid: false unless the mention clearly functions as a grounded narrative entity in this paragraph.
+- Do NOT wrap the output in markdown code blocks.

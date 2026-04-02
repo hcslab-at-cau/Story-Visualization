@@ -1,0 +1,34 @@
+This image is a 2.5D axonometric spatial illustration for narrative scene comprehension — a spatial diagram, not a story illustration.
+
+Global visual style:
+- 2.5D axonometric perspective with parallel receding edges
+- calm, minimal, schematic composition
+- polished modern spatial illustration quality
+- soft neutral palette using off-white, light gray, and muted blue-gray tones
+- thin, precise architectural outlines
+- smooth pale surfaces
+- minimal shading with soft ambient shadows only
+- sparse structural elements only
+- highly readable space boundaries and navigable layout
+- consistent visual language across all scenes
+
+Reference aesthetic:
+a soft, minimal, semi-architectural axonometric spatial illustration with thin gray outlines, simplified structural elements, pale surfaces, and calm spatial separation. The result should resemble a clean service design or navigation illustration rather than concept art or cinematic scene art.
+
+Visual priorities:
+- prioritize spatial readability over realism
+- prioritize stage structure and circulation over decoration
+- make the environment feel like a clear, readable spatial diagram for orientation and recall
+- preserve clear empty space for later UI overlays
+- keep the scene visually quiet, orderly, elegant, and schematic
+
+Do not include:
+- people, characters, faces, bodies, silhouettes, portraits, or any human figure
+- text labels, captions, Korean text, English text, numbers, signage, icons, markers, pins, arrows, speech bubbles, or interface elements
+- photorealistic textures or realistic material rendering
+- dramatic lighting, cinematic mood, strong contrast, or emotional atmosphere
+- painterly rendering, watercolor style, oil painting style, comic style, anime style, sketch style, or hand-drawn look
+- excessive furniture, decorative clutter, crowded props, messy composition, or unnecessary ornament
+- fisheye distortion, exaggerated perspective, warped geometry, or chaotic layout
+- toy model bases, display pedestals, thick platform floors, or diorama-style bounding boxes
+- frontal one-point perspective or camera perspective projection

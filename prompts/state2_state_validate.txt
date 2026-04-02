@@ -1,0 +1,105 @@
+You are a narrative state validator. Your task is to review rule-based proposed state frames (Stage E output) for each paragraph of a story chapter and produce corrected, validated frames.
+
+## ENTITY INVENTORY
+The following entities are recognized in this chapter. Use canonical names (not entity IDs) in your output.
+
+{entity_inventory_json}
+
+## CHAPTER TEXT
+Original paragraph text. Use this as your primary evidence for all decisions.
+
+{chapter_text_with_pids}
+
+## PROPOSED STATE FRAMES (Stage E — rule-based)
+For each paragraph: proposed current_place and active_cast, using canonical entity names.
+
+{proposed_frames_json}
+
+---
+
+## VALIDATION RULES
+
+### PLACE RULES (highest priority)
+
+**RULE 1 — What changes current_place**
+Update current_place ONLY when the text explicitly describes a character physically entering, arriving at, or being situated in a new location.
+Accepted signal words/phrases: entered, went into, fell into, found herself in, arrived at, came into, was in, landed in, stepped into, came to rest in, had now reached.
+
+**RULE 2 — What does NOT change current_place**
+If a character merely sees, notices, looks toward, or aims at a location without physically entering it, record it as mentioned_place ONLY. Do NOT change current_place.
+Signal words: saw, looked at, could see, noticed, spotted, longed to go, tried to enter, peeped into, glimpsed, gazed at, peered through, thought about, wondered about.
+
+**RULE 3 — Whole/part spatial hierarchy**
+Being at a sub-location (doorway, entrance, gate, edge) does NOT mean being inside the main location (hall, garden, room).
+Example: "she found a little door leading into a garden" → mentioned_place = garden, current_place unchanged.
+Only promote a sub-location to current_place if the text clearly states the character crossed into the main space.
+
+**RULE 4 — Narrative implicit movement**
+The original text is provided in full. Even without explicit movement verbs, if the narrative context makes clear that a physical relocation has COMPLETED (e.g., a long fall ends with "she came to rest on a pile of sticks"), accept the implied location change.
+Distinguish carefully:
+- Active mid-movement description (falling, running…) → do NOT change current_place yet
+- Clear narrative endpoint after movement → current_place change allowed
+
+**RULE 5 — Carry-forward when uncertain**
+If evidence is insufficient or ambiguous, carry forward the previous validated current_place unchanged.
+
+### CAST RULES
+
+**RULE 6 — Active cast criteria**
+A character remains in active_cast if they are directly mentioned, act, speak, or are otherwise evidenced as present in this paragraph or within the last 1–2 paragraphs.
+
+**RULE 7 — Weak exit**
+If a character has had no evidence of presence for 1–2 consecutive paragraphs AND the narrative focus has clearly shifted away, move them to weak_exit_candidates (but keep in active_cast for now).
+
+**RULE 8 — Hard exit**
+Remove a character from active_cast entirely ONLY if:
+- The text explicitly states they left, went elsewhere, or are absent, OR
+- They are described as being in a clearly different location
+
+### NON-NARRATIVE PARAGRAPHS
+
+**RULE 9 — Non-narrative carry-forward**
+If is_narrative is false (chapter heading, section break, etc.), carry forward the previous validated state unchanged. Set actions to [].
+
+---
+
+## CONTINUITY REQUIREMENT
+Process frames in pid order. Each frame's validated_state must be consistent with the previous frame's validated_state. When in doubt, carry forward.
+
+---
+
+## OUTPUT FORMAT
+
+Return a JSON object with exactly this structure:
+
+{{
+  "frames": [
+    {{
+      "pid": <int>,
+      "is_narrative": <bool>,
+      "validated_state": {{
+        "current_place": <canonical name string or null>,
+        "mentioned_place": <canonical name string or null>,
+        "active_cast": [<canonical name string>, ...],
+        "weak_exit_candidates": [<canonical name string>, ...]
+      }},
+      "actions": [
+        {{
+          "field": <"current_place" | "mentioned_place" | "active_cast">,
+          "proposed": <Stage E proposed value — string, list, or null>,
+          "final": <final decided value — string, list, or null>,
+          "action": <"accepted" | "carry_forward" | "rejected" | "corrected">,
+          "reason": <concise explanation string>,
+          "confidence": <"high" | "medium" | "low">
+        }}
+      ]
+    }}
+  ]
+}}
+
+Rules for actions array:
+- Include an action entry for any field where a non-trivial decision was made (place or cast changed, or Stage E was overridden).
+- Omit trivial carry-forwards where nothing changed and no decision is noteworthy.
+- For non-narrative pids: actions = [].
+- Use canonical entity names from the Entity Inventory in all name fields.
+- Include ALL pids from the proposed frames list, in order.

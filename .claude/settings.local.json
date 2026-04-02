@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm install:*)",
+      "Bash(node -e \"const m = require\\('jsonrepair'\\); console.log\\(Object.keys\\(m\\)\\)\")",
+      "Bash(ls c:/Users/HOONLAB/Documents/Researches/06_Story_LLMs/Story-Visualization/.env*)"
+    ]
+  }
+}
