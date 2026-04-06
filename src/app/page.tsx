@@ -5,7 +5,7 @@ import EpubUploader from "@/components/EpubUploader"
 import ExistingDocumentsPicker from "@/components/ExistingDocumentsPicker"
 import PipelineRunner from "@/components/PipelineRunner"
 import ReaderScreen from "@/components/ReaderScreen"
-import { deleteRun, listRuns } from "@/lib/firestore"
+import { deleteRun, listRuns, loadStageResult, stageKey } from "@/lib/firestore"
 import { createTimestampRunId } from "@/lib/run-id"
 import type { OverlayRefinementResult, SceneReaderPackageLog } from "@/types/schema"
 import type { ChapterMeta } from "@/types/ui"
@@ -268,17 +268,17 @@ function ReaderView({
       setLoading(true)
       setError(null)
       try {
-        const { getDb } = await import("@/lib/firebase")
-        const { doc, getDoc } = await import("firebase/firestore")
-        const db = getDb()
-        const snap = await getDoc(doc(db, "documents", docId, "chapters", chapterId, "runs", runId))
-        if (!snap.exists()) {
+        const [loadedFinal1, loadedFinal2] = await Promise.all([
+          loadStageResult<SceneReaderPackageLog>(docId, chapterId, runId, stageKey("FINAL.1")),
+          loadStageResult<OverlayRefinementResult>(docId, chapterId, runId, stageKey("FINAL.2")),
+        ])
+
+        if (!loadedFinal1 && !loadedFinal2) {
           throw new Error("Run not found")
         }
 
-        const data = snap.data() as Record<string, unknown>
-        setFinal1((data.final1 as SceneReaderPackageLog) ?? null)
-        setFinal2((data.final2 as OverlayRefinementResult) ?? null)
+        setFinal1(loadedFinal1)
+        setFinal2(loadedFinal2)
       } catch (loadError) {
         setError(String(loadError))
       } finally {

@@ -8,10 +8,13 @@
  *     /chapters/{chapterId}/
  *       raw: RawChapter
  *       /runs/{runId}/
- *         pre1: PreparedChapter
- *         pre2: ContentUnits
- *         ent1: MentionCandidates
+ *         updatedAt: Timestamp
+ *         stageModels: Record<string, string>
  *         ...
+ *         /artifacts/{stageKey}/
+ *           ...stage artifact payload
+ *
+ * Legacy runs may still embed stage payloads directly on /runs/{runId}.
  */
 
 import {
@@ -20,7 +23,6 @@ import {
   getDoc,
   getDocs,
   setDoc,
-  updateDoc,
   addDoc,
   deleteDoc,
   deleteField,
@@ -33,6 +35,36 @@ import {
 import { getDb } from "./firebase"
 import type { RawChapter, PipelineArtifact, StageId } from "@/types/schema"
 import type { StoredSourceFile } from "./storage"
+
+function runDocRef(docId: string, chapterId: string, runId: string) {
+  const db = getDb()
+  return doc(db, "documents", docId, "chapters", chapterId, "runs", runId)
+}
+
+function runArtifactsCollection(docId: string, chapterId: string, runId: string) {
+  const db = getDb()
+  return collection(db, "documents", docId, "chapters", chapterId, "runs", runId, "artifacts")
+}
+
+function runArtifactDocRef(
+  docId: string,
+  chapterId: string,
+  runId: string,
+  stageKeyValue: string,
+) {
+  const db = getDb()
+  return doc(
+    db,
+    "documents",
+    docId,
+    "chapters",
+    chapterId,
+    "runs",
+    runId,
+    "artifacts",
+    stageKeyValue,
+  )
+}
 
 function stripUndefinedDeep(value: unknown): unknown {
   if (value === undefined) return undefined
@@ -164,11 +196,14 @@ export async function saveStageResult(
   stageKey: string,
   artifact: PipelineArtifact,
 ): Promise<void> {
-  const db = getDb()
   const sanitizedArtifact = stripUndefinedDeep(artifact)
   await setDoc(
-    doc(db, "documents", docId, "chapters", chapterId, "runs", runId),
-    { [stageKey]: sanitizedArtifact, updatedAt: serverTimestamp() },
+    runArtifactDocRef(docId, chapterId, runId, stageKey),
+    sanitizedArtifact as Record<string, unknown>,
+  )
+  await setDoc(
+    runDocRef(docId, chapterId, runId),
+    { updatedAt: serverTimestamp() },
     { merge: true },
   )
 }
@@ -180,12 +215,16 @@ export async function loadStageResult<T extends PipelineArtifact>(
   runId: string,
   stageKey: string,
 ): Promise<T | null> {
-  const db = getDb()
-  const snap = await getDoc(
-    doc(db, "documents", docId, "chapters", chapterId, "runs", runId),
+  const artifactSnap = await getDoc(
+    runArtifactDocRef(docId, chapterId, runId, stageKey),
   )
-  if (!snap.exists()) return null
-  const data = snap.data() as DocumentData
+  if (artifactSnap.exists()) {
+    return artifactSnap.data() as T
+  }
+
+  const legacySnap = await getDoc(runDocRef(docId, chapterId, runId))
+  if (!legacySnap.exists()) return null
+  const data = legacySnap.data() as DocumentData
   return (data[stageKey] as T) ?? null
 }
 
@@ -195,12 +234,22 @@ export async function loadRunResults(
   chapterId: string,
   runId: string,
 ): Promise<Record<string, unknown>> {
-  const db = getDb()
-  const snap = await getDoc(
-    doc(db, "documents", docId, "chapters", chapterId, "runs", runId),
-  )
-  if (!snap.exists()) return {}
-  return snap.data() as Record<string, unknown>
+  const [runSnap, artifactsSnap] = await Promise.all([
+    getDoc(runDocRef(docId, chapterId, runId)),
+    getDocs(runArtifactsCollection(docId, chapterId, runId)),
+  ])
+
+  if (!runSnap.exists() && artifactsSnap.empty) return {}
+
+  const merged = runSnap.exists()
+    ? { ...(runSnap.data() as Record<string, unknown>) }
+    : {}
+
+  for (const artifactDoc of artifactsSnap.docs) {
+    merged[artifactDoc.id] = artifactDoc.data()
+  }
+
+  return merged
 }
 
 export async function forkRunResults(
@@ -210,24 +259,27 @@ export async function forkRunResults(
   targetRunId: string,
   stagesToCopy: StageId[],
 ): Promise<void> {
-  const db = getDb()
   const source = await loadRunResults(docId, chapterId, sourceRunId)
   const nextData: Record<string, unknown> = {
     forkedFrom: sourceRunId,
     updatedAt: serverTimestamp(),
   }
 
-  for (const stageId of stagesToCopy) {
-    const key = stageKey(stageId)
-    if (source[key] !== undefined) {
-      nextData[key] = source[key]
-    }
-  }
-
   await setDoc(
-    doc(db, "documents", docId, "chapters", chapterId, "runs", targetRunId),
+    runDocRef(docId, chapterId, targetRunId),
     nextData,
   )
+
+  for (const stageId of stagesToCopy) {
+    const key = stageKey(stageId)
+    const artifact = source[key]
+    if (artifact !== undefined) {
+      await setDoc(
+        runArtifactDocRef(docId, chapterId, targetRunId, key),
+        stripUndefinedDeep(artifact) as Record<string, unknown>,
+      )
+    }
+  }
 }
 
 export async function saveRunStageModels(
@@ -236,7 +288,6 @@ export async function saveRunStageModels(
   runId: string,
   stageModels: Partial<Record<StageId, string>>,
 ): Promise<void> {
-  const db = getDb()
   const serialized = Object.fromEntries(
     Object.entries(stageModels)
       .filter((entry): entry is [StageId, string] => typeof entry[1] === "string")
@@ -244,7 +295,7 @@ export async function saveRunStageModels(
   )
 
   await setDoc(
-    doc(db, "documents", docId, "chapters", chapterId, "runs", runId),
+    runDocRef(docId, chapterId, runId),
     {
       stageModels: serialized,
       updatedAt: serverTimestamp(),
@@ -259,13 +310,15 @@ export async function deleteStageResult(
   runId: string,
   stageId: StageId,
 ): Promise<void> {
-  const db = getDb()
-  await updateDoc(
-    doc(db, "documents", docId, "chapters", chapterId, "runs", runId),
+  const key = stageKey(stageId)
+  await deleteDoc(runArtifactDocRef(docId, chapterId, runId, key))
+  await setDoc(
+    runDocRef(docId, chapterId, runId),
     {
-      [stageKey(stageId)]: deleteField(),
+      [key]: deleteField(),
       updatedAt: serverTimestamp(),
     },
+    { merge: true },
   )
 }
 
@@ -274,10 +327,9 @@ export async function deleteRun(
   chapterId: string,
   runId: string,
 ): Promise<void> {
-  const db = getDb()
-  await deleteDoc(
-    doc(db, "documents", docId, "chapters", chapterId, "runs", runId),
-  )
+  const artifactsSnap = await getDocs(runArtifactsCollection(docId, chapterId, runId))
+  await Promise.all(artifactsSnap.docs.map((artifactDoc) => deleteDoc(artifactDoc.ref)))
+  await deleteDoc(runDocRef(docId, chapterId, runId))
 }
 
 /** List runs for a chapter (most recent first). */
