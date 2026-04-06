@@ -4,6 +4,7 @@
 
 import { getDownloadURL, ref, uploadBytes } from "firebase/storage"
 import { getStorageClient } from "./firebase"
+import { createHash } from "crypto"
 
 export interface StoredSourceFile {
   bucket: string
@@ -76,14 +77,17 @@ export async function uploadGeneratedImage(params: {
     "story-visualization-cb0e2.firebasestorage.app"
   const safeSceneId = sanitizePathSegment(params.sceneId, "scene")
   const fileExtension = (params.fileExtension ?? "png").replace(/^\./, "") || "png"
-  const fileName = `${safeSceneId}__${Date.now()}.${fileExtension}`
+  const contentHash = createHash("sha256")
+    .update(params.buffer)
+    .digest("hex")
+    .slice(0, 16)
+  const fileName = `${safeSceneId}__${contentHash}.${fileExtension}`
   const storagePath = [
     "documents",
     params.docId,
     "chapters",
     params.chapterId,
-    "runs",
-    params.runId,
+    "assets",
     "vis4",
     safeSceneId,
     fileName,

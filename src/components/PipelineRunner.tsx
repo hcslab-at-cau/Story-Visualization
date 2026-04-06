@@ -328,8 +328,16 @@ function summarizeStage(stageId: StageId, artifact: unknown): string[] {
         ? (data.scenes as Array<Record<string, unknown>>)
         : []
       const characters = scenes.reduce((sum, scene) => {
-        const items = Array.isArray(scene.characters) ? scene.characters.length : 0
-        return sum + items
+        const subscenes = Array.isArray(scene.subscenes)
+          ? (scene.subscenes as Array<Record<string, unknown>>)
+          : []
+        return (
+          sum +
+          subscenes.reduce((subSum, subscene) => {
+            const items = Array.isArray(subscene.characters) ? subscene.characters.length : 0
+            return subSum + items
+          }, 0)
+        )
       }, 0)
       return [
         `scenes: ${scenes.length}`,
@@ -7259,6 +7267,25 @@ function Final1StageView({
   const activeView = activeSubscene
     ? activePacket?.subscene_views[activeSubscene.subscene_id]
     : undefined
+  const getSubsceneOverlayCharacters = (
+    packet: SceneReaderPackageLog["packets"][number] | undefined,
+    subsceneId: string | null | undefined,
+  ) => {
+    if (!packet || !subsceneId) return []
+    const view = packet.subscene_views[subsceneId]
+    if (Array.isArray(view?.overlay_characters)) {
+      return view.overlay_characters
+    }
+    return packet.visual.overlay_characters.filter((character) =>
+      Boolean(packet.character_panels[character.panel_key]?.[subsceneId]),
+    )
+  }
+  const getPacketOverlayCharacterCount = (packet: SceneReaderPackageLog["packets"][number]) =>
+    packet.subscene_nav.reduce(
+      (sum, subscene) => sum + getSubsceneOverlayCharacters(packet, subscene.subscene_id).length,
+      0,
+    )
+  const activeOverlayCharacters = getSubsceneOverlayCharacters(activePacket, activeSubscene?.subscene_id)
 
   return (
     <div className="mt-4 grid min-h-0 flex-1 gap-5 overflow-hidden xl:grid-cols-[minmax(0,1.15fr)_minmax(380px,0.85fr)]">
@@ -7345,8 +7372,10 @@ function Final1StageView({
               value={String(artifact.packets.reduce((sum, packet) => sum + packet.subscene_nav.length, 0))}
             />
             <ResultMetaCard
-              label="Characters"
-              value={String(artifact.packets.reduce((sum, packet) => sum + packet.visual.overlay_characters.length, 0))}
+              label="Subscene Cast"
+              value={String(
+                artifact.packets.reduce((sum, packet) => sum + getPacketOverlayCharacterCount(packet), 0),
+              )}
             />
           </div>
         </div>
@@ -7444,7 +7473,7 @@ function Final1StageView({
                     Buttons Under Image
                   </p>
                   <div className="mt-3 flex flex-wrap gap-2">
-                    {activePacket.visual.overlay_characters.map((character) => (
+                    {activeOverlayCharacters.map((character) => (
                       <span
                         key={`${activePacket.scene_id}:char:${character.character_id}`}
                         className="rounded-full bg-blue-600 px-3 py-1.5 text-[13px] font-semibold text-white"
@@ -7470,7 +7499,7 @@ function Final1StageView({
                 </div>
 
                 <div className="mt-5 space-y-3">
-                  {activePacket.visual.overlay_characters.map((character) => {
+                  {activeOverlayCharacters.map((character) => {
                     const text = activePacket.character_panels[character.panel_key]?.[activeSubscene.subscene_id]
                     return (
                       <details
@@ -7486,6 +7515,11 @@ function Final1StageView({
                       </details>
                     )
                   })}
+                  {activeOverlayCharacters.length === 0 && (
+                    <div className="rounded-xl border border-dashed border-zinc-200 px-4 py-4 text-sm text-zinc-400">
+                      No cast buttons for this subscene.
+                    </div>
+                  )}
 
                   {activeView.buttons.map((button) => {
                     const meta = FINAL1_PANEL_META[button.key] ?? {
@@ -7536,8 +7570,12 @@ function Final2StageView({
   scenePacketLog?: ScenePackets
 }) {
   const [activeSceneId, setActiveSceneId] = useState<string | null>(artifact.scenes[0]?.scene_id ?? null)
+  const [activeSubsceneId, setActiveSubsceneId] = useState<string | null>(
+    artifact.scenes[0]?.default_active_subscene_id ?? artifact.scenes[0]?.subscenes[0]?.subscene_id ?? null,
+  )
   const imageFrameRef = useRef<HTMLDivElement | null>(null)
   const [imageMetrics, setImageMetrics] = useState({
+    imageKey: "",
     naturalWidth: 0,
     naturalHeight: 0,
     containerWidth: 0,
@@ -7552,15 +7590,58 @@ function Final2StageView({
     return {
       ...scene,
       imageSrc: scene.image_path || readerPacket?.visual.image_path,
+      readerPacket,
       scenePacket,
+      subscenes: scene.subscenes.map((subscene) => ({
+        ...subscene,
+        nav: readerPacket?.subscene_nav.find((item) => item.subscene_id === subscene.subscene_id),
+        view: readerPacket?.subscene_views[subscene.subscene_id],
+      })),
       parsedSceneText: scenePacket?.scene_text_with_pid_markers
         ? parsePidMarkedText(scenePacket.scene_text_with_pid_markers)
         : readerPacket?.body_paragraphs.map((body) => ({ pid: null, pidLabel: null, body })) ?? [],
     }
   })
 
-  const activeScene = scenes.find((scene) => scene.scene_id === activeSceneId) ?? scenes[0]
-  const containedRect = getContainedImageRect(imageMetrics)
+  const resolvedActiveSceneId = scenes.some((scene) => scene.scene_id === activeSceneId)
+    ? activeSceneId
+    : (scenes[0]?.scene_id ?? null)
+  const activeScene = scenes.find((scene) => scene.scene_id === resolvedActiveSceneId) ?? scenes[0]
+  const resolvedActiveSubsceneId =
+    activeScene?.subscenes.some((subscene) => subscene.subscene_id === activeSubsceneId)
+      ? activeSubsceneId
+      : (activeScene?.default_active_subscene_id ?? activeScene?.subscenes[0]?.subscene_id ?? null)
+  const activeSubscene =
+    activeScene?.subscenes.find((subscene) => subscene.subscene_id === resolvedActiveSubsceneId) ??
+    activeScene?.subscenes[0]
+  const activeImageKey = activeScene?.imageSrc ? `${activeScene.scene_id}:${activeScene.imageSrc}` : ""
+  const metricsForActiveImage =
+    imageMetrics.imageKey === activeImageKey
+      ? imageMetrics
+      : {
+          ...imageMetrics,
+          naturalWidth: 0,
+          naturalHeight: 0,
+        }
+  const containedRect = getContainedImageRect(metricsForActiveImage)
+  const selectedBodySet =
+    activeSubscene?.nav ? new Set(activeSubscene.nav.body_paragraphs) : new Set<string>()
+  const totalPlacements = artifact.scenes.reduce(
+    (sum, scene) =>
+      sum + scene.subscenes.reduce((subSum, subscene) => subSum + subscene.characters.length, 0),
+    0,
+  )
+  const totalPlaced = artifact.scenes.reduce(
+    (sum, scene) =>
+      sum +
+      scene.subscenes.reduce(
+        (subSum, subscene) =>
+          subSum + subscene.characters.filter((item) => item.visibility === "placed").length,
+        0,
+      ),
+    0,
+  )
+  const totalApproxFallback = totalPlacements - totalPlaced
 
   useEffect(() => {
     const element = imageFrameRef.current
@@ -7599,7 +7680,10 @@ function Final2StageView({
             return (
               <article
                 key={scene.scene_id}
-                onClick={() => setActiveSceneId(scene.scene_id)}
+                onClick={() => {
+                  setActiveSceneId(scene.scene_id)
+                  setActiveSubsceneId(scene.default_active_subscene_id || scene.subscenes[0]?.subscene_id || null)
+                }}
                 className={`rounded-xl border border-zinc-200 px-4 py-4 transition-colors ${
                   selected ? "border-zinc-900 bg-white shadow-sm" : "bg-white"
                 }`}
@@ -7614,12 +7698,17 @@ function Final2StageView({
                     </span>
                   )}
                   <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-[11px] text-zinc-600">
-                    {scene.characters.length} markers
+                    {scene.subscenes.length} subscenes
                   </span>
                 </div>
                 <div className="mt-3 space-y-2.5">
                   {scene.parsedSceneText.map((line, index) => (
-                    <div key={`${scene.scene_id}:body:${line.pidLabel ?? index}`} className="rounded-lg px-3 py-2">
+                    <div
+                      key={`${scene.scene_id}:body:${line.pidLabel ?? index}`}
+                      className={`rounded-lg px-3 py-2 ${
+                        selected && selectedBodySet.has(line.body) ? "bg-blue-100/80" : "bg-transparent"
+                      }`}
+                    >
                       {line.pidLabel ? (
                         <div className="mb-1.5">
                           <span className="inline-flex rounded-full border border-zinc-200 bg-white px-2 py-0.5 font-mono text-[11px] text-zinc-400">
@@ -7648,28 +7737,8 @@ function Final2StageView({
           </div>
           <div className="mt-3 grid gap-3 sm:grid-cols-3 xl:grid-cols-1 2xl:grid-cols-3">
             <ResultMetaCard label="Scenes" value={String(artifact.scenes.length)} />
-            <ResultMetaCard
-              label="Placed"
-              value={String(
-                artifact.scenes.reduce(
-                  (sum, scene) => sum + scene.characters.filter((item) => item.visibility === "placed").length,
-                  0,
-                ),
-              )}
-            />
-            <ResultMetaCard
-              label="Approx/Fallback"
-              value={String(
-                artifact.scenes.reduce(
-                  (sum, scene) =>
-                    sum +
-                    scene.characters.filter(
-                      (item) => item.visibility === "approximate" || item.visibility === "fallback",
-                    ).length,
-                  0,
-                ),
-              )}
-            />
+            <ResultMetaCard label="Placed" value={String(totalPlaced)} />
+            <ResultMetaCard label="Approx/Fallback" value={String(totalApproxFallback)} />
           </div>
         </div>
 
@@ -7682,7 +7751,10 @@ function Final2StageView({
                   <button
                     key={`final2-scene:${scene.scene_id}`}
                     type="button"
-                    onClick={() => setActiveSceneId(scene.scene_id)}
+                    onClick={() => {
+                      setActiveSceneId(scene.scene_id)
+                      setActiveSubsceneId(scene.default_active_subscene_id || scene.subscenes[0]?.subscene_id || null)
+                    }}
                     className={`rounded-full border px-3 py-1.5 text-xs transition-colors ${
                       scene.scene_id === activeScene.scene_id
                         ? "border-zinc-900 bg-zinc-900 text-white"
@@ -7696,10 +7768,37 @@ function Final2StageView({
             </div>
 
             <div className="rounded-xl border border-zinc-200 bg-white p-5">
+              <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">Subscene Selector</p>
+              <div className="mt-3 flex flex-wrap gap-2">
+                {activeScene.subscenes.map((subscene) => (
+                  <button
+                    key={`final2-subscene:${subscene.subscene_id}`}
+                    type="button"
+                    onClick={() => setActiveSubsceneId(subscene.subscene_id)}
+                    className={`rounded-full border px-3 py-1.5 text-xs transition-colors ${
+                      subscene.subscene_id === activeSubscene?.subscene_id
+                        ? "border-zinc-900 bg-zinc-900 text-white"
+                        : "border-zinc-200 bg-white text-zinc-600 hover:bg-zinc-50"
+                    }`}
+                  >
+                    {subscene.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="rounded-xl border border-zinc-200 bg-white p-5">
               <div className="flex flex-wrap items-center justify-between gap-3">
-                <h5 className="text-lg font-semibold text-zinc-900">{activeScene.scene_id}</h5>
+                <div>
+                  <h5 className="text-lg font-semibold text-zinc-900">{activeScene.scene_id}</h5>
+                  {activeSubscene && (
+                    <p className="mt-1 text-sm text-zinc-500">
+                      {activeSubscene.label} · {activeSubscene.headline}
+                    </p>
+                  )}
+                </div>
                 <span className="rounded-full bg-zinc-100 px-3 py-1 text-xs text-zinc-600">
-                  {activeScene.characters.length} placements
+                  {activeSubscene?.characters.length ?? 0} placements
                 </span>
               </div>
 
@@ -7708,6 +7807,7 @@ function Final2StageView({
                   <div className="relative flex h-[520px] items-center justify-center bg-zinc-100/70 p-3 2xl:h-[620px]">
                     <div ref={imageFrameRef} className="relative h-full w-full">
                       <img
+                        key={activeImageKey}
                         src={activeScene.imageSrc}
                         alt={`${activeScene.scene_id} overlay`}
                         className="h-full w-full object-contain"
@@ -7715,6 +7815,7 @@ function Final2StageView({
                           const target = event.currentTarget
                           setImageMetrics((prev) => ({
                             ...prev,
+                            imageKey: activeImageKey,
                             naturalWidth: target.naturalWidth,
                             naturalHeight: target.naturalHeight,
                             containerWidth: imageFrameRef.current?.clientWidth ?? prev.containerWidth,
@@ -7723,7 +7824,7 @@ function Final2StageView({
                         }}
                       />
                       <div className="pointer-events-none absolute inset-0">
-                        {activeScene.characters.map((character) => {
+                        {(activeSubscene?.characters ?? []).map((character) => {
                           const meta = FINAL2_VISIBILITY_META[character.visibility] ?? FINAL2_VISIBILITY_META.fallback
                           const left =
                             containedRect.left +
@@ -7780,11 +7881,11 @@ function Final2StageView({
             <div className="rounded-xl border border-zinc-200 bg-white p-5">
               <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">Placement List</p>
               <div className="mt-3 space-y-3">
-                {activeScene.characters.map((character) => {
+                {(activeSubscene?.characters ?? []).map((character) => {
                   const meta = FINAL2_VISIBILITY_META[character.visibility] ?? FINAL2_VISIBILITY_META.fallback
                   return (
                     <div
-                      key={`${activeScene.scene_id}:placement:${character.character_id}`}
+                      key={`${activeScene.scene_id}:${activeSubscene?.subscene_id}:placement:${character.character_id}`}
                       className="rounded-xl border border-zinc-200 px-4 py-3"
                     >
                       <div className="flex flex-wrap items-start justify-between gap-2">
@@ -7810,7 +7911,7 @@ function Final2StageView({
                     </div>
                   )
                 })}
-                {activeScene.characters.length === 0 && (
+                {(activeSubscene?.characters.length ?? 0) === 0 && (
                   <p className="text-sm text-zinc-400">No overlay refinement characters found.</p>
                 )}
               </div>

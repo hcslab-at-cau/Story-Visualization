@@ -174,6 +174,8 @@ function buildSubsceneBlocks(
   sceneId: string,
   sub3Log: ValidatedSubscenes,
   pidText: Map<number, string>,
+  overlayChars: OverlayCharacter[],
+  characterPanels: Record<string, Record<string, string>>,
 ): { nav: SubsceneNavItem[]; views: Record<string, SubsceneView> } {
   const item = sub3Log.packets.find((p) => p.scene_id === sceneId)
   if (!item) return { nav: [], views: {} }
@@ -213,6 +215,9 @@ function buildSubsceneBlocks(
 
     views[sub.subscene_id] = {
       headline: sub.headline,
+      overlay_characters: overlayChars.filter((character) =>
+        Boolean(characterPanels[character.panel_key]?.[sub.subscene_id]),
+      ),
       buttons,
       panels,
     }
@@ -334,7 +339,13 @@ export function runSceneReaderPackage(
       overlay_characters: overlayCharacters,
     }
 
-    const { nav: subsceneNav, views: subsceneViews } = buildSubsceneBlocks(sceneId, sub3Log, pidText)
+    const { nav: subsceneNav, views: subsceneViews } = buildSubsceneBlocks(
+      sceneId,
+      sub3Log,
+      pidText,
+      overlayCharacters,
+      characterPanels,
+    )
 
     const [startPid, endPid] = scenePidRange.get(sceneId) ?? [0, 0]
     const bodyParagraphs: string[] = []

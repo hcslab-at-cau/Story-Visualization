@@ -416,9 +416,13 @@ export class LLMClient {
     scene_summary: string
     visual_mode: string
     chips_json: string
+    subscene_id: string
+    subscene_label: string
+    subscene_headline: string
     overlay_candidates_json: string
     blueprint_summary: string
     scene_body_text: string
+    subscene_body_text: string
     imageDataUrl: string // base64 data URL
   }): Promise<Record<string, unknown>> {
     const { imageDataUrl, ...promptParams } = params

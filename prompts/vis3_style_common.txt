@@ -1,34 +1,38 @@
-This image is a 2.5D axonometric spatial illustration for narrative scene comprehension — a spatial diagram, not a story illustration.
+This image is a simplified place portrait for narrative scene comprehension: calm, low-detail, and spatially clear, but not a boxed stage diagram or dramatic story illustration.
 
 Global visual style:
-- 2.5D axonometric perspective with parallel receding edges
-- calm, minimal, schematic composition
+- restrained camera-like viewpoint with natural perspective
+- calm, minimal, simplified composition
 - polished modern spatial illustration quality
 - soft neutral palette using off-white, light gray, and muted blue-gray tones
 - thin, precise architectural outlines
 - smooth pale surfaces
 - minimal shading with soft ambient shadows only
 - sparse structural elements only
-- highly readable space boundaries and navigable layout
+- highly readable space boundaries and layout
+- the actual place should occupy most of the frame
+- crop close enough to reduce unused surrounding void
 - consistent visual language across all scenes
 
 Reference aesthetic:
-a soft, minimal, semi-architectural axonometric spatial illustration with thin gray outlines, simplified structural elements, pale surfaces, and calm spatial separation. The result should resemble a clean service design or navigation illustration rather than concept art or cinematic scene art.
+a soft, minimal, semi-architectural spatial illustration with thin gray outlines, simplified structural elements, pale surfaces, and calm spatial separation. The result should feel like a carefully framed view of the place itself, with the cleanliness of an editorial or service-design illustration rather than concept art or cinematic scene art.
 
 Visual priorities:
 - prioritize spatial readability over realism
-- prioritize stage structure and circulation over decoration
-- make the environment feel like a clear, readable spatial diagram for orientation and recall
-- preserve clear empty space for later UI overlays
-- keep the scene visually quiet, orderly, elegant, and schematic
+- prioritize core place identity over decoration
+- make the environment feel like a clear, lightly abstracted view of the location for orientation and recall
+- keep only modest breathing room around the main place geometry
+- keep the scene visually quiet, orderly, elegant, and simplified
 
 Do not include:
 - people, characters, faces, bodies, silhouettes, portraits, or any human figure
 - text labels, captions, Korean text, English text, numbers, signage, icons, markers, pins, arrows, speech bubbles, or interface elements
+- any overlaid zone names, map labels, annotations, editorial captions, or floating words on the image
+- if real-world signage exists in the place, either omit it or render it as non-legible marks rather than readable text
 - photorealistic textures or realistic material rendering
 - dramatic lighting, cinematic mood, strong contrast, or emotional atmosphere
 - painterly rendering, watercolor style, oil painting style, comic style, anime style, sketch style, or hand-drawn look
 - excessive furniture, decorative clutter, crowded props, messy composition, or unnecessary ornament
 - fisheye distortion, exaggerated perspective, warped geometry, or chaotic layout
-- toy model bases, display pedestals, thick platform floors, or diorama-style bounding boxes
-- frontal one-point perspective or camera perspective projection
+- dollhouse cutaways, open-face box rooms, sectioned cross-sections, platform slabs, display pedestals, or diorama-style bounding boxes
+- excessive empty margins, large blank surroundings, centered object-on-canvas presentation, or isolated floating stage fragments

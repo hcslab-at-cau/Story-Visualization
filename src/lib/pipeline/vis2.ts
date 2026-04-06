@@ -161,13 +161,17 @@ function normalizeGeometry(value: unknown, warnings: string[]): GeometrySpec | u
   return geometry
 }
 
-function normalizePresentation(value: unknown, warnings: string[]): PresentationSpec | undefined {
+function normalizePresentation(
+  value: unknown,
+  warnings: string[],
+  environmentType: "indoor" | "outdoor" | "mixed",
+): PresentationSpec | undefined {
   const record = asObject(value)
   if (Object.keys(record).length === 0) {
     warnings.push("Missing presentation block; filled with defaults.")
   }
 
-  return {
+  const normalized: PresentationSpec = {
     perspective_mode: asString(record.perspective_mode) || "axonometric_2_5d",
     section_mode: asString(record.section_mode) || "none",
     frame_mode: asString(record.frame_mode) || "full_bleed",
@@ -176,8 +180,37 @@ function normalizePresentation(value: unknown, warnings: string[]): Presentation
     continuity_beyond_frame: asBoolean(record.continuity_beyond_frame, true),
     support_base_visibility: asString(record.support_base_visibility) || "hidden",
     symmetry_tolerance: asString(record.symmetry_tolerance) || "medium",
-    naturalism_bias: asString(record.naturalism_bias) || "medium",
+    naturalism_bias: asString(record.naturalism_bias) || (environmentType === "outdoor" ? "high" : "medium"),
   }
+
+  if (environmentType === "outdoor") {
+    if (normalized.section_mode !== "none") {
+      normalized.section_mode = "none"
+      warnings.push("Adjusted outdoor section_mode to none.")
+    }
+    if (normalized.frame_mode === "platform" || normalized.frame_mode === "cutaway_box" || normalized.frame_mode === "thin_panel") {
+      normalized.frame_mode = "full_bleed"
+      warnings.push("Adjusted outdoor frame_mode away from platform/cutaway presentation.")
+    }
+    if (normalized.edge_treatment === "architectural_cut") {
+      normalized.edge_treatment = "natural_crop"
+      warnings.push("Adjusted outdoor edge_treatment to natural_crop.")
+    }
+    if (normalized.coverage === "centered_object" || normalized.coverage === "balanced_margin") {
+      normalized.coverage = "edge_to_edge"
+      warnings.push("Adjusted outdoor coverage to edge_to_edge.")
+    }
+    if (normalized.support_base_visibility !== "hidden") {
+      normalized.support_base_visibility = "hidden"
+      warnings.push("Adjusted outdoor support_base_visibility to hidden.")
+    }
+  }
+
+  if (normalized.frame_mode === "platform" || normalized.frame_mode === "cutaway_box") {
+    warnings.push(`Presentation requests ${normalized.frame_mode}; prefer full_bleed unless structurally necessary.`)
+  }
+
+  return normalized
 }
 
 function normalizeZones(value: unknown, warnings: string[]): ZoneSpec[] {
@@ -315,6 +348,7 @@ export async function runStageBlueprintExtraction(
     })
 
     const record = asObject(result)
+    const environmentType = inferEnvironmentType(record.environment_type, visualPacket?.environment_type, environment)
     const warnings = asStringArray(record.blueprint_warnings)
     const semanticAvoids = buildSemanticAvoids(visualPacket)
     const zones = normalizeZones(record.zones, warnings)
@@ -327,10 +361,10 @@ export async function runStageBlueprintExtraction(
         scenePlace,
         currentPlaces,
       ),
-      environment_type: inferEnvironmentType(record.environment_type, visualPacket?.environment_type, environment),
+      environment_type: environmentType,
       stage_archetype: inferStageArchetype(record.stage_archetype, visualPacket?.stage_archetype, scenePlace),
       key_moment: asString(record.key_moment) || asString(record.layout_summary) || `Spatial layout for ${packet.scene_id}`,
-      setting: normalizeSetting(record.setting, currentPlaces, inferEnvironmentType(record.environment_type, visualPacket?.environment_type, environment)),
+      setting: normalizeSetting(record.setting, currentPlaces, environmentType),
       characters: [],
       structural_elements: uniqueStrings(asStringArray(record.structural_elements)),
       layout_summary: asString(record.layout_summary) || `Scene ${packet.scene_id} stage layout derived from validated scene packet.`,
@@ -340,7 +374,7 @@ export async function runStageBlueprintExtraction(
       continuity_note: asString(record.continuity_note) || `Keep place and cast continuity aligned with adjacent scenes around ${packet.scene_id}.`,
       uncertainties: uniqueStrings(asStringArray(record.uncertainties)),
       geometry: normalizeGeometry(record.geometry, warnings),
-      presentation: normalizePresentation(record.presentation, warnings),
+      presentation: normalizePresentation(record.presentation, warnings, environmentType),
       zones,
       boundaries: uniqueStrings(asStringArray(record.boundaries)),
       repetition: uniqueStrings(asStringArray(record.repetition)),

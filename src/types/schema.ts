@@ -774,6 +774,7 @@ export interface SubsceneButton {
 
 export interface SubsceneView {
   headline: string;
+  overlay_characters: OverlayCharacter[];
   buttons: SubsceneButton[];
   panels: Record<string, string>;
 }
@@ -837,11 +838,19 @@ export interface OverlayRefinementCharacter {
   reason: string;
 }
 
+export interface OverlayRefinementSubscene {
+  subscene_id: string;
+  label: string;
+  headline: string;
+  characters: OverlayRefinementCharacter[];
+}
+
 export interface OverlayRefinementScene {
   scene_id: string;
   image_path?: string;
   image_available: boolean;
-  characters: OverlayRefinementCharacter[];
+  default_active_subscene_id?: string;
+  subscenes: OverlayRefinementSubscene[];
 }
 
 export interface OverlayRefinementResult extends ArtifactBase {

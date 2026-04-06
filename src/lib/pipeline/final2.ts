@@ -7,6 +7,7 @@ import type {
   SceneReaderPackageLog,
   OverlayRefinementResult,
   OverlayRefinementScene,
+  OverlayRefinementSubscene,
   OverlayRefinementCharacter,
   OverlayVisibility,
   OverlaySource,
@@ -66,18 +67,20 @@ function coarseCharacterResult(
 // Normalize raw Vision API result
 // ---------------------------------------------------------------------------
 
-function normalizeResult(
-  packet: SceneReaderPackageLog["packets"][0],
+function normalizeSubsceneResult(
+  subscene: SceneReaderPackageLog["packets"][0]["subscene_nav"][0],
+  view: SceneReaderPackageLog["packets"][0]["subscene_views"][string] | undefined,
   rawResult: Record<string, unknown> | null,
   imageAvailable: boolean,
-): OverlayRefinementScene {
+): OverlayRefinementSubscene {
   const characters: OverlayRefinementCharacter[] = []
   const rawChars = (rawResult?.characters as Array<Record<string, unknown>>) ?? []
+  const coarseCharacters = view?.overlay_characters ?? []
 
   const byId = new Map(rawChars.map((c) => [c.character_id as string, c]))
   const byLabel = new Map(rawChars.map((c) => [(c.label as string)?.toLowerCase(), c]))
 
-  for (const coarse of packet.visual.overlay_characters) {
+  for (const coarse of coarseCharacters) {
     const raw = byId.get(coarse.character_id) ?? byLabel.get(coarse.label.toLowerCase())
 
     if (!raw) {
@@ -117,8 +120,9 @@ function normalizeResult(
   }
 
   return {
-    scene_id: packet.scene_id,
-    image_available: imageAvailable,
+    subscene_id: subscene.subscene_id,
+    label: subscene.label,
+    headline: view?.headline || subscene.headline,
     characters,
   }
 }
@@ -159,39 +163,62 @@ export async function runOverlayRefinement(
 
     const imageSource = imagePaths?.get(packet.scene_id) ?? packet.visual.image_path
     const imageAvailable = Boolean(imageSource)
-
-    let rawResult: Record<string, unknown> | null = null
-
-    if (useVision && imageAvailable && packet.visual.overlay_characters.length > 0 && imageSource) {
+    let dataUrl: string | null = null
+    if (useVision && imageAvailable && imageSource) {
       try {
-        const dataUrl = await loadImageDataUrl(imageSource)
-
-        rawResult = await llmClient!.refineOverlay({
-          scene_id: packet.scene_id,
-          scene_title: packet.scene_title,
-          scene_summary: packet.scene_summary,
-          visual_mode: packet.visual.mode,
-          chips_json: formatJsonParam(packet.visual.chips),
-          overlay_candidates_json: formatJsonParam(
-            packet.visual.overlay_characters.map((ch) => ({
-              character_id: ch.character_id,
-              label: ch.label,
-              anchor_zone: ch.anchor_zone,
-              anchor_x: ch.anchor_x,
-              anchor_y: ch.anchor_y,
-              anchor_method: ch.anchor_method,
-            })),
-          ),
-          blueprint_summary: blueprintSummary(packet.scene_id, blueprintLog),
-          scene_body_text: packet.body_paragraphs.join("\n\n"),
-          imageDataUrl: dataUrl,
-        })
+        dataUrl = await loadImageDataUrl(imageSource)
       } catch {
-        rawResult = null
+        dataUrl = null
       }
     }
 
-    scenes.push(normalizeResult(packet, rawResult, imageAvailable))
+    const subscenes: OverlayRefinementSubscene[] = []
+    for (const subscene of packet.subscene_nav) {
+      const view = packet.subscene_views[subscene.subscene_id]
+      const candidates = view?.overlay_characters ?? []
+      let rawResult: Record<string, unknown> | null = null
+
+      if (useVision && imageAvailable && dataUrl && candidates.length > 0) {
+        try {
+          rawResult = await llmClient!.refineOverlay({
+            scene_id: packet.scene_id,
+            scene_title: packet.scene_title,
+            scene_summary: packet.scene_summary,
+            visual_mode: packet.visual.mode,
+            chips_json: formatJsonParam(packet.visual.chips),
+            subscene_id: subscene.subscene_id,
+            subscene_label: subscene.label,
+            subscene_headline: view?.headline || subscene.headline,
+            overlay_candidates_json: formatJsonParam(
+              candidates.map((ch) => ({
+                character_id: ch.character_id,
+                label: ch.label,
+                anchor_zone: ch.anchor_zone,
+                anchor_x: ch.anchor_x,
+                anchor_y: ch.anchor_y,
+                anchor_method: ch.anchor_method,
+              })),
+            ),
+            blueprint_summary: blueprintSummary(packet.scene_id, blueprintLog),
+            scene_body_text: packet.body_paragraphs.join("\n\n"),
+            subscene_body_text: subscene.body_paragraphs.join("\n\n"),
+            imageDataUrl: dataUrl,
+          })
+        } catch {
+          rawResult = null
+        }
+      }
+
+      subscenes.push(normalizeSubsceneResult(subscene, view, rawResult, imageAvailable))
+    }
+
+    scenes.push({
+      scene_id: packet.scene_id,
+      image_path: packet.visual.image_path,
+      image_available: imageAvailable,
+      default_active_subscene_id: packet.default_active_subscene_id,
+      subscenes,
+    })
   }
 
   const runId = `overlay_refinement__${docId}__${chapterId}`

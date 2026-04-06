@@ -45,10 +45,16 @@ function inferMimeType(model: string, outputFormat: string): string {
   return "image/png"
 }
 
+function buildFinalPrompt(prompt: string): string {
+  return `${prompt}\n\nFinal rendering reminder:\n- Render no readable text anywhere in the image.\n- Do not place labels, captions, annotations, or floating words on the scene.\n- If a real sign would exist, keep it non-legible unless the text itself is absolutely scene-essential.`
+}
+
 async function generateSingleImage(params: {
   prompt: string
   model: string
-}): Promise<{ buffer: Buffer; contentType: string; outputFormat: string }> {
+}): Promise<{ buffer: Buffer; contentType: string; outputFormat: string; promptUsed: string }> {
+  const finalPrompt = buildFinalPrompt(params.prompt)
+
   const response = await fetch(`${OPENROUTER_BASE_URL}/chat/completions`, {
     method: "POST",
     headers: {
@@ -60,7 +66,7 @@ async function generateSingleImage(params: {
       messages: [
         {
           role: "user",
-          content: params.prompt,
+          content: finalPrompt,
         },
       ],
       modalities: ["image", "text"],
@@ -108,6 +114,7 @@ async function generateSingleImage(params: {
       buffer: decodeBase64Image(b64),
       contentType,
       outputFormat,
+      promptUsed: finalPrompt,
     }
   }
 
@@ -116,6 +123,7 @@ async function generateSingleImage(params: {
     buffer,
     contentType: inferMimeType(params.model, "png"),
     outputFormat: "png",
+    promptUsed: finalPrompt,
   }
 }
 
@@ -131,6 +139,7 @@ export async function runImageGeneration(
   const results: RenderedImageResult[] = []
 
   for (const item of renderPackage.items) {
+    const finalPrompt = buildFinalPrompt(item.full_prompt)
     try {
       const generated = await generateSingleImage({
         prompt: item.full_prompt,
@@ -150,7 +159,7 @@ export async function runImageGeneration(
       results.push({
         scene_id: item.scene_id,
         image_path: stored.downloadUrl,
-        prompt_used: item.full_prompt,
+        prompt_used: generated.promptUsed,
         model,
         success: true,
         storage_path: stored.storagePath,
@@ -162,7 +171,7 @@ export async function runImageGeneration(
     } catch (error) {
       results.push({
         scene_id: item.scene_id,
-        prompt_used: item.full_prompt,
+        prompt_used: finalPrompt,
         model,
         success: false,
         error: error instanceof Error ? error.message : String(error),
