@@ -1,6 +1,6 @@
 import { loadRawChapter, loadStageResult, saveStageResult, stageKey } from "@/lib/firestore"
 import { runMentionExtraction } from "@/lib/pipeline/ent1"
-import { createLLMClient, errorResponse, okResponse, type BaseRequestBody } from "@/lib/api-utils"
+import { attachLLMDebug, createLLMClient, errorResponse, okResponse, type BaseRequestBody } from "@/lib/api-utils"
 import type { ContentUnits } from "@/types/schema"
 
 export const maxDuration = 300
@@ -17,7 +17,10 @@ export async function POST(request: Request): Promise<Response> {
     if (!classifyLog) return errorResponse("PRE.2 result not found — run PRE.2 first", 400)
 
     const llm = createLLMClient(body)
-    const result = await runMentionExtraction(chapter, llm, docId, chapterId, classifyLog, parents)
+    const result = attachLLMDebug(
+      await runMentionExtraction(chapter, llm, docId, chapterId, classifyLog, parents),
+      llm,
+    )
 
     await saveStageResult(docId, chapterId, runId, stageKey("ENT.1"), result)
     return okResponse(result)

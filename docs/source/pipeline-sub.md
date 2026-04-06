@@ -16,6 +16,15 @@
 
 이 브랜치의 출력은 현재 최종적으로 `FINAL.1`과 `ReaderScreen`에서 소비된다.
 
+## 단계별 이전 결과
+
+| Stage | 필요 입력 | 이전 단계 기준 |
+|---|---|---|
+| SUB.1 | `GroundedSceneModel`, `ScenePackets` | SCENE.3, SCENE.1 필요 |
+| SUB.2 | `SubsceneProposals`, `ScenePackets`, `GroundedSceneModel` | SUB.1, SCENE.1, SCENE.3 필요 |
+| SUB.3 | `SubsceneProposals`, `SubsceneStates`, `ScenePackets`, `GroundedSceneModel` | SUB.1, SUB.2, SCENE.1, SCENE.3 필요 |
+| SUB.4 | `ValidatedSubscenes`, `ScenePackets`, `GroundedSceneModel` | SUB.3, SCENE.1, SCENE.3 필요 |
+
 ---
 
 ## 공통 흐름
@@ -202,4 +211,3 @@ const runId = `intervention_packages__${docId}__${chapterId}`
 
 즉 지금 Next.js UI에서는 SUB 단계의 결과를 "별도 검토 화면"으로 보기보다  
 "reader packet을 만들기 위한 중간 구조"로 이해하는 편이 맞다.
-

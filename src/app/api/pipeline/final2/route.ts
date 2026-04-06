@@ -1,6 +1,6 @@
 import { loadStageResult, saveStageResult, stageKey } from "@/lib/firestore"
 import { runOverlayRefinement } from "@/lib/pipeline/final2"
-import { createLLMClient, errorResponse, okResponse, type BaseRequestBody } from "@/lib/api-utils"
+import { attachLLMDebug, createLLMClient, errorResponse, okResponse, type BaseRequestBody } from "@/lib/api-utils"
 import type { SceneReaderPackageLog, StageBlueprint } from "@/types/schema"
 
 export const maxDuration = 300
@@ -15,12 +15,15 @@ export async function POST(request: Request): Promise<Response> {
 
     const blueprintLog = await loadStageResult<StageBlueprint>(docId, chapterId, runId, stageKey("VIS.2"))
 
-    const llm = body.model ? createLLMClient(body) : undefined
+    const llm = createLLMClient(body)
 
-    const result = await runOverlayRefinement(
-      sceneReaderLog, docId, chapterId, parents,
+    const result = attachLLMDebug(
+      await runOverlayRefinement(
+        sceneReaderLog, docId, chapterId, parents,
+        llm,
+        blueprintLog ?? undefined,
+      ),
       llm,
-      blueprintLog ?? undefined,
     )
 
     await saveStageResult(docId, chapterId, runId, stageKey("FINAL.2"), result)

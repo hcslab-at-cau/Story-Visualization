@@ -20,6 +20,14 @@
 - FINAL.1 chips는 현재 `VIS.1`이 아니라 `SCENE.3 environment + actual_place`만 사용한다.
 - FINAL.3은 refined anchor를 직접 scene 위 absolute overlay로 쓰지만, debug badge나 bbox 표시는 하지 않는다.
 
+## 단계별 이전 결과
+
+| Stage | 현재 구현 기준 필요 입력 | 원본 설계 기준 참고 |
+|---|---|---|
+| FINAL.1 | `GroundedSceneModel`, `ValidatedSubscenes`, `ScenePackets`, `SceneBoundaries`, `RawChapter`, optional `StageBlueprint`, optional `InterventionPackages` | 원본은 여기에 `RenderedImages`, `VisualGrounding`, `SubsceneStates`, `RenderPackage`까지 optional로 사용 |
+| FINAL.2 | `SceneReaderPackageLog`, optional image path map, optional blueprint summary | 원본은 `SceneReaderPackageLog`, optional `RenderedImages`, optional `StageBlueprint` |
+| FINAL.3 | `SceneReaderPackageLog`, optional `OverlayRefinementResult` | 동일 |
+
 ---
 
 ## FINAL.1 - Scene Reader Package Builder
@@ -276,4 +284,3 @@ result.push({ coarse: char, refined })
 - bbox debug 정보는 화면에 노출하지 않는다.
 - overlay collision, safe margin, automatic decluttering은 아직 없다.
 - FINAL.2가 실제 `not_visible`을 거의 만들지 않기 때문에, 현재 UI에서는 대부분 coarse/refined 버튼이 그대로 유지된다.
-

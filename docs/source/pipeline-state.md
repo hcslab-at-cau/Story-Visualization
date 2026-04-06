@@ -3,6 +3,14 @@
 `Story-Visualization` 현재 운영 기준에서 STATE 단계는 PRE 이후 실험적/후속 파이프라인에 가깝다.  
 구현 파일과 API route는 존재하지만, 결과 확인 UI는 원본 Streamlit처럼 전용 viewer가 아니라 `PipelineRunner`의 공통 summary + raw JSON 패널을 사용한다.
 
+## 단계별 이전 결과
+
+| Stage | 필요 입력 | 이전 단계 기준 |
+|---|---|---|
+| STATE.1 | `EntityGraph`, `RawChapter` | ENT.3 필요 |
+| STATE.2 | `StateFrames`, `EntityGraph`, `RawChapter`, `ContentUnits` | STATE.1, ENT.3, PRE.2 필요 |
+| STATE.3 | `RefinedStateFrames`, optional `StateFrames` | STATE.2 필요, time signal 보강 시 STATE.1도 사용 |
+
 ---
 
 ## STATE.1 — State Tracking (`state_tracking.py`)

@@ -17,6 +17,16 @@
 
 중요한 점은 현재 PRE.1이 원본 Python의 `epub.py + io.py`를 그대로 다시 수행하는 단계는 아니라는 것이다.
 
+## 단계별 이전 결과
+
+| Stage | 필요 입력 | 이전 단계 기준 |
+|---|---|---|
+| PRE.1 | `RawChapter` | 파이프라인 이전 단계 없음. 업로드/API에서 만들어진 raw chapter 사용 |
+| PRE.2 | `PreparedChapter.raw_chapter` 또는 `RawChapter` | 실질적으로 PRE.1 결과를 사용 |
+| ENT.1 | `RawChapter`, `ContentUnits` | PRE.2 필요 |
+| ENT.2 | `RawChapter`, `MentionCandidates` | ENT.1 필요 |
+| ENT.3 | `FilteredMentions`, `RawChapter` | ENT.2 필요 |
+
 ---
 
 ## PRE.1 - Raw Chapter Preparation
@@ -184,4 +194,3 @@ const runId = `entities_llm__${docId}__${chapterId}`
 - `PipelineRunner`에서 PRE.1은 paragraph preview를 따로 보여 준다.
 - PRE.1 / PRE.2는 현재 업로드 흐름과 가장 자연스럽게 이어진다.
 - ENT 이후 단계는 포트돼 있지만, 결과 확인 화면은 원본 Streamlit처럼 전용 viewer가 아니라 공통 JSON 패널이다.
-

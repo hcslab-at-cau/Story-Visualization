@@ -40,7 +40,7 @@ export interface PipelineStageDef {
   implemented?: boolean
 }
 
-export const PIPELINE_STAGES = [
+export const PIPELINE_STAGES: PipelineStageDef[] = [
   { id: "PRE.1", label: "PRE.1 - EPUB to RawChapter JSON", apiPath: "pre1", group: "pre" },
   { id: "PRE.2", label: "PRE.2 - Content Classification", apiPath: "pre2", group: "pre", usesModel: true, defaultModel: DEFAULT_STAGE_MODELS["PRE.2"], modelPlaceholder: "openai/gpt-4o-mini" },
   { id: "ENT.1", label: "ENT.1 - Mention Extraction", apiPath: "ent1", group: "ent", usesModel: true, defaultModel: DEFAULT_STAGE_MODELS["ENT.1"], modelPlaceholder: "openai/gpt-4o-mini" },
@@ -52,14 +52,14 @@ export const PIPELINE_STAGES = [
   { id: "SCENE.1", label: "SCENE.1 - Scene Packet Builder", apiPath: "scene1", group: "scene" },
   { id: "SCENE.2", label: "SCENE.2 - Scene Index Extraction", apiPath: "scene2", group: "scene", usesModel: true, defaultModel: DEFAULT_STAGE_MODELS["SCENE.2"], modelPlaceholder: "openai/gpt-4o-mini" },
   { id: "SCENE.3", label: "SCENE.3 - Scene Validation", apiPath: "scene3", group: "scene", usesModel: true, defaultModel: DEFAULT_STAGE_MODELS["SCENE.3"], modelPlaceholder: "openai/gpt-4o-mini" },
-  { id: "VIS.1", label: "VIS.1 - Semantic Clarification", apiPath: "vis1", group: "vis", usesModel: true, defaultModel: DEFAULT_STAGE_MODELS["VIS.1"], modelPlaceholder: "openai/gpt-4.1-mini", implemented: false },
-  { id: "VIS.2", label: "VIS.2 - Stage Blueprint", apiPath: "vis2", group: "vis", usesModel: true, defaultModel: DEFAULT_STAGE_MODELS["VIS.2"], modelPlaceholder: "openai/gpt-4.1-mini", implemented: false },
-  { id: "VIS.3", label: "VIS.3 - Render Package", apiPath: "vis3", group: "vis", implemented: false },
-  { id: "VIS.4", label: "VIS.4 - Image Generation", apiPath: "vis4", group: "vis", usesModel: true, defaultModel: DEFAULT_STAGE_MODELS["VIS.4"], modelPlaceholder: "openai/gpt-image-1", implemented: false },
+  { id: "VIS.1", label: "VIS.1 - Semantic Clarification", apiPath: "vis1", group: "vis", usesModel: true, defaultModel: DEFAULT_STAGE_MODELS["VIS.1"], modelPlaceholder: "openai/gpt-4.1-mini" },
+  { id: "VIS.2", label: "VIS.2 - Stage Blueprint", apiPath: "vis2", group: "vis", usesModel: true, defaultModel: DEFAULT_STAGE_MODELS["VIS.2"], modelPlaceholder: "openai/gpt-4.1-mini" },
+  { id: "VIS.3", label: "VIS.3 - Render Package", apiPath: "vis3", group: "vis" },
+  { id: "VIS.4", label: "VIS.4 - Image Generation", apiPath: "vis4", group: "vis", usesModel: true, defaultModel: DEFAULT_STAGE_MODELS["VIS.4"], modelPlaceholder: "openai/gpt-image-1" },
   { id: "SUB.1", label: "SUB.1 - Subscene Proposal", apiPath: "sub1", group: "sub", usesModel: true, defaultModel: DEFAULT_STAGE_MODELS["SUB.1"], modelPlaceholder: "openai/gpt-4o-mini" },
   { id: "SUB.2", label: "SUB.2 - Subscene State", apiPath: "sub2", group: "sub", usesModel: true, defaultModel: DEFAULT_STAGE_MODELS["SUB.2"], modelPlaceholder: "openai/gpt-4o-mini" },
   { id: "SUB.3", label: "SUB.3 - Subscene Validation", apiPath: "sub3", group: "sub", usesModel: true, defaultModel: DEFAULT_STAGE_MODELS["SUB.3"], modelPlaceholder: "openai/gpt-4o-mini" },
   { id: "SUB.4", label: "SUB.4 - Intervention Packaging", apiPath: "sub4", group: "sub", usesModel: true, defaultModel: DEFAULT_STAGE_MODELS["SUB.4"], modelPlaceholder: "openai/gpt-4o-mini" },
   { id: "FINAL.1", label: "FINAL.1 - Scene Reader Package", apiPath: "final1", group: "final" },
   { id: "FINAL.2", label: "FINAL.2 - Overlay Refinement", apiPath: "final2", group: "final", usesModel: true, defaultModel: DEFAULT_STAGE_MODELS["FINAL.2"], modelPlaceholder: "openai/gpt-4o-mini" },
-] satisfies PipelineStageDef[]
+]

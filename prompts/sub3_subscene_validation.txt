@@ -83,7 +83,8 @@ Start state:
 End state:
 {end_state_json}
 
-Onstage cast: {onstage_cast_json}
+Cast (scene-level context only):
+{cast_json}
 
 == Candidate Subscenes (from SUB.1) ==
 {candidates_json}

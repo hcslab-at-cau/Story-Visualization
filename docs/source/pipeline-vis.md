@@ -22,6 +22,15 @@ UI와 stage registry에는 자리만 잡혀 있고, 실제 포트는 `VIS.1`~`VI
 
 즉 이 문서는 "현재 구현 설명"보다는 "원본 Story-Decomposition 기준 VIS 브랜치가 무엇을 해야 하는지"를 남기는 참조 문서다.
 
+## 단계별 이전 결과
+
+| Stage | 필요 입력 | 이전 단계 기준 |
+|---|---|---|
+| VIS.1 | `GroundedSceneModel`, `ScenePackets` | SCENE.3, SCENE.1 필요 |
+| VIS.2 | `GroundedSceneModel`, `ScenePackets`, optional `VisualGrounding` | SCENE.3, SCENE.1 필요, VIS.1 있으면 함께 사용 |
+| VIS.3 | `StageBlueprint` | VIS.2 필요 |
+| VIS.4 | `RenderPackage` 또는 `StageBlueprint` | 기본적으로 VIS.3 필요, repair/fallback용으로 VIS.2도 사용 |
+
 ---
 
 ## 참조 흐름
@@ -208,4 +217,3 @@ f"image_gen__{doc_id}__{chapter_id}"
 - FINAL 단계와 연결되는 실제 image artifact 흐름
 
 그래서 현재 문맥에서 VIS 문서는 "구현 문서"가 아니라 "추후 포팅 기준 문서"로 읽는 것이 맞다.
-

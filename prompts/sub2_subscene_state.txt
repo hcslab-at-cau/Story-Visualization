@@ -78,7 +78,8 @@ Start state:
 End state:
 {end_state_json}
 
-Onstage cast: {onstage_cast_json}
+Cast (scene-level context only; still choose active_cast only from what is locally active in this span):
+{cast_json}
 
 Current places: {current_places_json}
 

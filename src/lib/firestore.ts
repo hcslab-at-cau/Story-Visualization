@@ -20,7 +20,10 @@ import {
   getDoc,
   getDocs,
   setDoc,
+  updateDoc,
   addDoc,
+  deleteDoc,
+  deleteField,
   serverTimestamp,
   query,
   orderBy,
@@ -30,6 +33,24 @@ import {
 import { getDb } from "./firebase"
 import type { RawChapter, PipelineArtifact, StageId } from "@/types/schema"
 import type { StoredSourceFile } from "./storage"
+
+function stripUndefinedDeep(value: unknown): unknown {
+  if (value === undefined) return undefined
+  if (Array.isArray(value)) {
+    return value.flatMap((item) => {
+      const sanitized = stripUndefinedDeep(item)
+      return sanitized === undefined ? [] : [sanitized]
+    })
+  }
+  if (value && typeof value === "object") {
+    const entries = Object.entries(value).flatMap(([key, nestedValue]) => {
+      const sanitized = stripUndefinedDeep(nestedValue)
+      return sanitized === undefined ? [] : [[key, sanitized] as const]
+    })
+    return Object.fromEntries(entries)
+  }
+  return value
+}
 
 // ---------------------------------------------------------------------------
 // Document-level helpers
@@ -144,9 +165,10 @@ export async function saveStageResult(
   artifact: PipelineArtifact,
 ): Promise<void> {
   const db = getDb()
+  const sanitizedArtifact = stripUndefinedDeep(artifact)
   await setDoc(
     doc(db, "documents", docId, "chapters", chapterId, "runs", runId),
-    { [stageKey]: artifact, updatedAt: serverTimestamp() },
+    { [stageKey]: sanitizedArtifact, updatedAt: serverTimestamp() },
     { merge: true },
   )
 }
@@ -205,6 +227,56 @@ export async function forkRunResults(
   await setDoc(
     doc(db, "documents", docId, "chapters", chapterId, "runs", targetRunId),
     nextData,
+  )
+}
+
+export async function saveRunStageModels(
+  docId: string,
+  chapterId: string,
+  runId: string,
+  stageModels: Partial<Record<StageId, string>>,
+): Promise<void> {
+  const db = getDb()
+  const serialized = Object.fromEntries(
+    Object.entries(stageModels)
+      .filter((entry): entry is [StageId, string] => typeof entry[1] === "string")
+      .map(([stageId, model]) => [stageKey(stageId), model]),
+  )
+
+  await setDoc(
+    doc(db, "documents", docId, "chapters", chapterId, "runs", runId),
+    {
+      stageModels: serialized,
+      updatedAt: serverTimestamp(),
+    },
+    { merge: true },
+  )
+}
+
+export async function deleteStageResult(
+  docId: string,
+  chapterId: string,
+  runId: string,
+  stageId: StageId,
+): Promise<void> {
+  const db = getDb()
+  await updateDoc(
+    doc(db, "documents", docId, "chapters", chapterId, "runs", runId),
+    {
+      [stageKey(stageId)]: deleteField(),
+      updatedAt: serverTimestamp(),
+    },
+  )
+}
+
+export async function deleteRun(
+  docId: string,
+  chapterId: string,
+  runId: string,
+): Promise<void> {
+  const db = getDb()
+  await deleteDoc(
+    doc(db, "documents", docId, "chapters", chapterId, "runs", runId),
   )
 }
 

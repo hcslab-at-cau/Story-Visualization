@@ -1,6 +1,6 @@
 import { loadStageResult, saveStageResult, stageKey } from "@/lib/firestore"
 import { runSubsceneProposal } from "@/lib/pipeline/sub1"
-import { createLLMClient, errorResponse, okResponse, type BaseRequestBody } from "@/lib/api-utils"
+import { attachLLMDebug, createLLMClient, errorResponse, okResponse, type BaseRequestBody } from "@/lib/api-utils"
 import type { GroundedSceneModel, ScenePackets } from "@/types/schema"
 
 export const maxDuration = 300
@@ -17,7 +17,10 @@ export async function POST(request: Request): Promise<Response> {
     if (!packetLog) return errorResponse("SCENE.1 result not found", 400)
 
     const llm = createLLMClient(body)
-    const result = await runSubsceneProposal(validatedLog, packetLog, llm, docId, chapterId, parents)
+    const result = attachLLMDebug(
+      await runSubsceneProposal(validatedLog, packetLog, llm, docId, chapterId, parents),
+      llm,
+    )
 
     await saveStageResult(docId, chapterId, runId, stageKey("SUB.1"), result)
     return okResponse(result)

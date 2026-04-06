@@ -1,6 +1,6 @@
 import { loadRawChapter, loadStageResult, saveStageResult, stageKey } from "@/lib/firestore"
 import { runBoundaryDetection } from "@/lib/pipeline/state3"
-import { createLLMClient, errorResponse, okResponse, type BaseRequestBody } from "@/lib/api-utils"
+import { attachLLMDebug, createLLMClient, errorResponse, okResponse, type BaseRequestBody } from "@/lib/api-utils"
 import type { RefinedStateFrames, StateFrames } from "@/types/schema"
 
 export const maxDuration = 120
@@ -25,8 +25,11 @@ export async function POST(request: Request): Promise<Response> {
     const llm = generateTitles ? createLLMClient(body) : undefined
     const paragraphMap = new Map(chapter.paragraphs.map((p) => [p.pid, p.text]))
 
-    const result = await runBoundaryDetection(
-      validatedLog, docId, chapterId, parents, stateLog ?? undefined, llm, paragraphMap,
+    const result = attachLLMDebug(
+      await runBoundaryDetection(
+        validatedLog, docId, chapterId, parents, stateLog ?? undefined, llm, paragraphMap,
+      ),
+      llm,
     )
 
     await saveStageResult(docId, chapterId, runId, stageKey("STATE.3"), result)

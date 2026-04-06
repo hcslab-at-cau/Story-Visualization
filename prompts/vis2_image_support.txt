@@ -33,7 +33,7 @@ Rules:
 9. avoid must include wrong interpretations from VIS.1 if provided, plus layout-level exclusions.
 10. layout_summary is a single sentence describing the stage geometry and circulation — not the story event.
 11. setting.lighting should be neutral and functional, not emotionally descriptive.
-12. Only characters in onstage_cast may appear in the characters list.
+12. Do not return a character list. VIS.2 stores environment/layout only.
 13. Use VIS.1 semantic clarification when provided — apply resolved meanings to all spatial fields.
 14. Return JSON only.
 15. presentation must describe how this scene should be framed and viewed for image rendering.
@@ -168,17 +168,6 @@ Return a JSON object with exactly this structure:
     "lighting": "<neutral lighting description, e.g. 'soft daylight', 'clear afternoon light', 'dim candlelight', 'gentle indoor light'>"
   }},
 
-  "characters": [
-    {{
-      "name": "<canonical character name>",
-      "composition_position": "<one of: foreground left | foreground center | foreground right | midground left | midground center | midground right | background left | background center | background right>",
-      "pose": "<body pose as spatial indicator, e.g. 'seated on the ground', 'standing near the doorway'>",
-      "expression": "<facial expression if relevant>",
-      "gaze_direction": "<where they are looking>",
-      "notable_props": []
-    }}
-  ],
-
   "layout_summary": "<One sentence describing the overall spatial geometry — terrain, boundaries, circulation, scale. e.g. 'An open grassy riverbank sloping toward a narrow river on the right, with a dense tree line across the water and open grass in the foreground.'>",
 
   "structural_elements": [
@@ -194,7 +183,7 @@ Return a JSON object with exactly this structure:
   ],
 
   "must_not_show": [
-    "<element excluded by rule, e.g. 'characters not in onstage cast', 'mentioned place used as current location'>"
+    "<element excluded by rule, e.g. 'mentioned place used as current location', 'portable story props'>"
   ],
 
   "continuity_note": "<What must stay consistent with neighboring scenes for visual continuity>",

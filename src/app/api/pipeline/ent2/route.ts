@@ -1,6 +1,6 @@
 import { loadRawChapter, loadStageResult, saveStageResult, stageKey } from "@/lib/firestore"
 import { runMentionValidation } from "@/lib/pipeline/ent2"
-import { createLLMClient, errorResponse, okResponse, type BaseRequestBody } from "@/lib/api-utils"
+import { attachLLMDebug, createLLMClient, errorResponse, okResponse, type BaseRequestBody } from "@/lib/api-utils"
 import type { MentionCandidates } from "@/types/schema"
 
 export const maxDuration = 300
@@ -17,7 +17,10 @@ export async function POST(request: Request): Promise<Response> {
     if (!mentionLog) return errorResponse("ENT.1 result not found", 400)
 
     const llm = createLLMClient(body)
-    const result = await runMentionValidation(chapter, mentionLog, llm, docId, chapterId, parents)
+    const result = attachLLMDebug(
+      await runMentionValidation(chapter, mentionLog, llm, docId, chapterId, parents),
+      llm,
+    )
 
     await saveStageResult(docId, chapterId, runId, stageKey("ENT.2"), result)
     return okResponse(result)

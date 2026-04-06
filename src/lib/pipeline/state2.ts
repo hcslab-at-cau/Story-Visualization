@@ -12,7 +12,14 @@ import type {
   ValidatedFrame,
 } from "@/types/schema"
 import type { LLMClient } from "@/lib/llm-client"
-import { formatJsonParam, formatParagraphsForLLM } from "@/lib/prompt-loader"
+import { formatJsonParam, formatParagraphsForLLM, normalizePidKey } from "@/lib/prompt-loader"
+
+function resolveContentUnitPid(
+  unit: ContentUnits["units"][number] | undefined,
+  fallbackParagraphPid?: unknown,
+): string {
+  return normalizePidKey(unit?.pid ?? fallbackParagraphPid)
+}
 
 export async function runStateValidation(
   stateLog: StateFrames,
@@ -32,7 +39,9 @@ export async function runStateValidation(
 
   // narrative pid set
   const narrativePids = new Set(
-    classifyLog.units.filter((u) => u.is_story_text).map((u) => u.pid),
+    classifyLog.units
+      .filter((u) => u.is_story_text)
+      .map((u, index) => resolveContentUnitPid(u, chapter.paragraphs[index]?.pid)),
   )
 
   // entity inventory for LLM context
@@ -45,7 +54,7 @@ export async function runStateValidation(
   // Convert STATE.1 frames to canonical names
   const proposedFrames = stateLog.frames.map((f) => ({
     pid: f.pid,
-    is_narrative: narrativePids.has(f.pid),
+    is_narrative: narrativePids.has(normalizePidKey(f.pid)),
     proposed_state: {
       current_place: f.state.primary_place
         ? eidToName.get(f.state.primary_place)

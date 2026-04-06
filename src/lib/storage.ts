@@ -1,8 +1,8 @@
 /**
- * Firebase Storage helpers for original source files.
+ * Firebase Storage helpers for uploaded source files and generated assets.
  */
 
-import { ref, uploadBytes } from "firebase/storage"
+import { getDownloadURL, ref, uploadBytes } from "firebase/storage"
 import { getStorageClient } from "./firebase"
 
 export interface StoredSourceFile {
@@ -12,6 +12,10 @@ export interface StoredSourceFile {
   fileName: string
   contentType: string
   sizeBytes: number
+}
+
+export interface StoredGeneratedImage extends StoredSourceFile {
+  downloadUrl: string
 }
 
 function sanitizeFileName(fileName: string): string {
@@ -45,5 +49,61 @@ export async function uploadSourceEpub(
     fileName,
     contentType,
     sizeBytes: buffer.byteLength,
+  }
+}
+
+function sanitizePathSegment(value: string, fallback: string): string {
+  const cleaned = value
+    .trim()
+    .replace(/[^\w\-]+/g, "_")
+    .replace(/_+/g, "_")
+    .replace(/^_+|_+$/g, "")
+  return cleaned || fallback
+}
+
+export async function uploadGeneratedImage(params: {
+  docId: string
+  chapterId: string
+  runId: string
+  sceneId: string
+  buffer: Buffer
+  contentType?: string
+  fileExtension?: string
+}): Promise<StoredGeneratedImage> {
+  const storage = getStorageClient()
+  const bucket =
+    process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET ??
+    "story-visualization-cb0e2.firebasestorage.app"
+  const safeSceneId = sanitizePathSegment(params.sceneId, "scene")
+  const fileExtension = (params.fileExtension ?? "png").replace(/^\./, "") || "png"
+  const fileName = `${safeSceneId}__${Date.now()}.${fileExtension}`
+  const storagePath = [
+    "documents",
+    params.docId,
+    "chapters",
+    params.chapterId,
+    "runs",
+    params.runId,
+    "vis4",
+    safeSceneId,
+    fileName,
+  ].join("/")
+  const storageRef = ref(storage, storagePath)
+  const contentType = params.contentType ?? "image/png"
+
+  await uploadBytes(storageRef, new Uint8Array(params.buffer), {
+    contentType,
+  })
+
+  const downloadUrl = await getDownloadURL(storageRef)
+
+  return {
+    bucket,
+    storagePath,
+    gsUri: `gs://${bucket}/${storagePath}`,
+    fileName,
+    contentType,
+    sizeBytes: params.buffer.byteLength,
+    downloadUrl,
   }
 }

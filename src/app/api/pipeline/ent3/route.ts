@@ -1,7 +1,7 @@
 import { loadRawChapter, loadStageResult, saveStageResult, stageKey } from "@/lib/firestore"
 import { runEntityResolution } from "@/lib/pipeline/ent3"
 import { toFilteredCandidates } from "@/lib/pipeline/ent2"
-import { createLLMClient, errorResponse, okResponse, type BaseRequestBody } from "@/lib/api-utils"
+import { attachLLMDebug, createLLMClient, errorResponse, okResponse, type BaseRequestBody } from "@/lib/api-utils"
 import type { FilteredMentions } from "@/types/schema"
 
 export const maxDuration = 300
@@ -20,7 +20,10 @@ export async function POST(request: Request): Promise<Response> {
     const mentionLog = toFilteredCandidates(filteredLog)
 
     const llm = createLLMClient(body)
-    const result = await runEntityResolution(chapter, mentionLog, llm, docId, chapterId, parents)
+    const result = attachLLMDebug(
+      await runEntityResolution(chapter, mentionLog, llm, docId, chapterId, parents),
+      llm,
+    )
 
     await saveStageResult(docId, chapterId, runId, stageKey("ENT.3"), result)
     return okResponse(result)

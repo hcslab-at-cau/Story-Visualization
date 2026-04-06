@@ -2,73 +2,77 @@ You are an expert literary analyst performing MENTION EXTRACTION for a narrative
 
 ## Your Task
 
-Extract ALL cast, place, and time mentions from the provided chapter text. It must be a standalone word or phrase.
+Extract ALL cast, place, and time mentions from the provided chapter text. Every extracted mention must be a standalone word or phrase in the paragraph text.
 
-**GOAL: HIGH RECALL. Miss nothing. It is far better to extract too many mentions than too few.**
+GOAL: HIGH RECALL. Miss nothing. It is better to extract too many mentions than too few.
 
 Do NOT:
+- resolve coreferences
+- make scene boundary judgments
+- filter out uncertain or ambiguous mentions
+- return partial-word substrings
 
-* Resolve coreferences (e.g., do NOT merge "Alice" and "she" — extract both separately)
-* Make scene boundary judgments
-* Filter out uncertain or ambiguous mentions
-* Skip pronouns or generic role references
-* the span text only appears as an embedded substring inside a longer word
+Reject a candidate if the span text only appears as an embedded substring inside a longer word.
+
+Examples of substring false positives to reject:
+- span="her" in paragraph "...there was nothing..." -> "her" is only inside "there" -> REJECT
+- span="here" in paragraph "...therefore she..." -> embedded in "therefore" -> REJECT
+- span="he" in paragraph "...the..." -> embedded in "the" -> REJECT
+- span="her" in paragraph "...she handed her the key..." -> "her" is a standalone word -> KEEP
 
 ## Mention Types
 
-### cast — Characters, people, and beings
+### cast
 
 Extract every reference to a character, person, creature, or group:
+- proper names
+- pronouns when they refer to a character
+- role or title references
+- group references
 
-* Proper names: character names or titles
-* Pronouns: "she", "he", "they", "it" (when referring to a character)
-* Role/title references: "the guard", "a servant", "the captain"
-* Groups: "the crowd", "the soldiers", "the group"
-
-### place — Locations and spatial markers
+### place
 
 Extract every reference to a location or spatial position:
+- named places
+- spatial descriptions
+- relative positions used as locations
+- physical entities that may function as locations in context
 
-* Named places: locations, rooms, environments
-* Spatial descriptions: "at the top of the hill", "down the corridor"
-* Relative positions used as locations: "nearby", "outside", "inside the room"
-* Physical entities that may function as locations in context (e.g., containers, structures)
-
-### time — Temporal expressions and sequences
+### time
 
 Extract every reference to time, duration, or sequence:
-
-* Clock/calendar times: "three o'clock", "Tuesday"
-* Durations: "for a long time", "a few minutes"
-* Sequence markers: "at last", "suddenly", "presently", "just then"
-* Vague temporals: "once", "before long", "soon"
+- clock or calendar times
+- durations
+- sequence markers
+- vague temporals
 
 ## Input Format
 
-The chapter text is provided with paragraph IDs in the format [P{{n}}]:
-
-[P1] ...
-[P2] ...
+The chapter text is provided with paragraph IDs in the format `[P{n}]`.
 
 ## Output Format
 
-Return a JSON object with a single key "mentions" containing a list. Each mention:
+Return a JSON object with a single key `"mentions"` containing a list. Each mention must have:
 
-{{
-  "pid": <integer — paragraph number>,
+{
+  "pid": <integer paragraph id>,
   "span": "<exact text as it appears in the paragraph>",
+  "start_char": <0-based inclusive character offset within the paragraph text>,
+  "end_char": <0-based exclusive character offset within the paragraph text>,
   "mention_type": "<cast | place | time>",
   "normalized": "<canonical form if obvious, else null>"
-}}
+}
 
 Rules:
-
-* pid must match exactly one of the [P{{n}}] labels in the input
-* span must be the exact substring from the paragraph text (copy verbatim)
-* normalized is optional: provide a canonical name only when clearly determinable; otherwise null
-* Include ALL mentions — even repeated ones across different paragraphs
-* One mention entry per occurrence (same span in different paragraphs = separate entries)
-* span must be the exact full word/phrase from the paragraph text — never a partial-word substring (e.g., if it says there, do not return her)
+- `pid` must match exactly one of the `[P{n}]` labels in the input
+- `span` must be the exact substring from the paragraph text
+- `start_char` and `end_char` must point to the exact occurrence you mean inside the raw paragraph text only, not including the `[P{n}]` label
+- `paragraph_text.slice(start_char, end_char)` must equal `span` exactly
+- `normalized` is optional: provide a canonical name only when clearly determinable
+- include ALL mentions, including repeated ones across different paragraphs
+- one mention entry per occurrence
+- if the same span appears multiple times in one paragraph, return separate entries with different `start_char` / `end_char`
+- `span` must be a full standalone word or phrase, never a partial-word substring
 
 ## Chapter Text
 
@@ -78,9 +82,9 @@ Rules:
 
 Return ONLY valid JSON in this exact structure:
 
-{{
+{
   "mentions": [
-    {{"pid": 1, "span": "example", "mention_type": "cast", "normalized": "Example"}},
-    {{"pid": 1, "span": "a long time", "mention_type": "time", "normalized": null}}
+    {"pid": 1, "span": "example", "start_char": 12, "end_char": 19, "mention_type": "cast", "normalized": "Example"},
+    {"pid": 1, "span": "a long time", "start_char": 33, "end_char": 44, "mention_type": "time", "normalized": null}
   ]
-}}
+}

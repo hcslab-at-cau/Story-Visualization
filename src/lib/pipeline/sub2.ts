@@ -13,6 +13,26 @@ import type {
 import type { LLMClient } from "@/lib/llm-client"
 import { formatJsonParam } from "@/lib/prompt-loader"
 
+function mergeSceneCast(sceneIndex: Record<string, unknown>): unknown[] {
+  const combined = [
+    ...(((sceneIndex.onstage_cast as unknown[]) ?? [])),
+    ...(((sceneIndex.mentioned_offstage_cast as unknown[]) ?? [])),
+  ]
+  const seen = new Set<string>()
+  const result: unknown[] = []
+
+  for (const item of combined) {
+    const record = item as Record<string, unknown>
+    const name = typeof record.name === "string" ? record.name.trim() : ""
+    const key = name || JSON.stringify(item)
+    if (!key || seen.has(key)) continue
+    seen.add(key)
+    result.push(item)
+  }
+
+  return result
+}
+
 export async function runSubsceneStateExtraction(
   proposalLog: SubsceneProposals,
   packetLog: ScenePackets,
@@ -34,6 +54,7 @@ export async function runSubsceneStateExtraction(
     onProgress?.(`SUB.2: extracting subscene states for ${packet.scene_id}...`)
 
     const sceneIndex = entry.validated_scene_index
+    const mergedCast = mergeSceneCast(sceneIndex as Record<string, unknown>)
 
     const result = await llmClient.extractSubsceneState({
       scene_id: packet.scene_id,
@@ -43,7 +64,7 @@ export async function runSubsceneStateExtraction(
       scene_summary: ((sceneIndex as Record<string, unknown>).scene_summary as string) ?? "",
       start_state_json: formatJsonParam(packet.start_state),
       end_state_json: formatJsonParam(packet.end_state),
-      onstage_cast_json: formatJsonParam((sceneIndex as Record<string, unknown>).onstage_cast ?? []),
+      cast_json: formatJsonParam(mergedCast),
       current_places_json: formatJsonParam(packet.scene_current_places),
       candidates_json: formatJsonParam(proposalItem.candidate_subscenes),
     })

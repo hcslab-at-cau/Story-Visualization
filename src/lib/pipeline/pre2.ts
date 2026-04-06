@@ -22,10 +22,22 @@ export async function runContentClassification(
   )
 
   const result = await llmClient.classifyContent({
-    buffer_sentences: paragraphsJson,
+    paragraphs_json: paragraphsJson,
   })
 
-  const units = (result.units as ContentUnit[]) ?? []
+  const rawUnits = (result.units as Array<Omit<ContentUnit, "pid"> & { pid?: number }>) ?? []
+  const units: ContentUnit[] = rawUnits.map((unit, index) => {
+    const paragraphPid =
+      typeof unit.pid === "number"
+        ? unit.pid
+        : chapter.paragraphs[index]?.pid ?? index
+
+    return {
+      pid: paragraphPid,
+      content_type: unit.content_type,
+      is_story_text: unit.is_story_text,
+    }
+  })
 
   const runId = `classify__${docId}__${chapterId}`
   return {

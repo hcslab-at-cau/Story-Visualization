@@ -46,7 +46,10 @@ export async function runInterventionPackaging(
 
     packets.push({
       scene_id: packet.scene_id,
-      subscene_ui_units: (result.units as InterventionPackageItem["subscene_ui_units"]) ?? [],
+      subscene_ui_units:
+        (result.subscene_ui_units as InterventionPackageItem["subscene_ui_units"]) ??
+        (result.units as InterventionPackageItem["subscene_ui_units"]) ??
+        [],
     })
   }
 

@@ -137,6 +137,8 @@ function runRuleEntityResolution(
         mention_id: m.mention_id,
         pid: m.pid,
         span: m.span,
+        start_char: m.start_char,
+        end_char: m.end_char,
       }))
       entities.push({
         entity_id: entityId,
@@ -160,6 +162,8 @@ function runRuleEntityResolution(
       mention_id: m.mention_id,
       pid: m.pid,
       span: m.span,
+      start_char: m.start_char,
+      end_char: m.end_char,
     })),
   }
 }

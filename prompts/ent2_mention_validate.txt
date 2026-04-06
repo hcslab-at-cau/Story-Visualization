@@ -67,12 +67,18 @@ Examples of substring false positives to reject:
 ### Mention Candidates to Validate
 {mentions_json}
 
+Each mention candidate includes:
+- `mention_id`: stable identifier you must copy back exactly
+- `pid`: paragraph id
+- `span`: exact text span
+- `mention_type`: cast, place, or time
+
 ## Output Format
 
-For every mention_id in the input, return a judgement. Return ONLY valid JSON with this exact structure:
+For every mention_id in the input, return a judgement. Copy each `mention_id` exactly as provided. Return ONLY valid JSON with this exact structure:
 
 {{
-  "validations": [
+  "validated": [
     {{"mention_id": "ch01_m0001", "valid": true}},
     {{"mention_id": "ch01_m0002", "valid": false, "reason": ""}},
     {{"mention_id": "ch01_m0003", "valid": true}},

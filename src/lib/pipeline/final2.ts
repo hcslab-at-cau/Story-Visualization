@@ -17,6 +17,29 @@ import fs from "fs"
 
 const MIN_REFINEMENT_CONFIDENCE = 0.45
 
+async function loadImageDataUrl(imageSource: string): Promise<string> {
+  if (imageSource.startsWith("data:image/")) {
+    return imageSource
+  }
+
+  if (/^https?:\/\//i.test(imageSource)) {
+    const response = await fetch(imageSource)
+    if (!response.ok) {
+      throw new Error(`Failed to fetch scene image: HTTP ${response.status}`)
+    }
+    const contentType = response.headers.get("content-type") || "image/png"
+    const buffer = Buffer.from(await response.arrayBuffer())
+    return `data:${contentType};base64,${buffer.toString("base64")}`
+  }
+
+  if (!fs.existsSync(imageSource)) {
+    throw new Error("Scene image path does not exist")
+  }
+
+  const imageBuffer = fs.readFileSync(imageSource)
+  return `data:image/png;base64,${imageBuffer.toString("base64")}`
+}
+
 // ---------------------------------------------------------------------------
 // Fallback character result
 // ---------------------------------------------------------------------------
@@ -134,15 +157,14 @@ export async function runOverlayRefinement(
   for (const packet of sceneReaderLog.packets) {
     onProgress?.(`FINAL.2: refining overlay for ${packet.scene_id}...`)
 
-    const imagePath = imagePaths?.get(packet.scene_id)
-    const imageAvailable = Boolean(imagePath && fs.existsSync(imagePath))
+    const imageSource = imagePaths?.get(packet.scene_id) ?? packet.visual.image_path
+    const imageAvailable = Boolean(imageSource)
 
     let rawResult: Record<string, unknown> | null = null
 
-    if (useVision && imageAvailable && packet.visual.overlay_characters.length > 0 && imagePath) {
+    if (useVision && imageAvailable && packet.visual.overlay_characters.length > 0 && imageSource) {
       try {
-        const imageBuffer = fs.readFileSync(imagePath)
-        const dataUrl = `data:image/png;base64,${imageBuffer.toString("base64")}`
+        const dataUrl = await loadImageDataUrl(imageSource)
 
         rawResult = await llmClient!.refineOverlay({
           scene_id: packet.scene_id,

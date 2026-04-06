@@ -106,7 +106,7 @@ def _repair_json(content: str) -> str:
 
 | 메서드 | 프롬프트 파라미터 |
 |--------|-----------------|
-| `classify_content` | `buffer_sentences` (JSON) |
+| `classify_content` | `paragraphs_json` (JSON) |
 | `extract_mentions` | `chapter_text_with_pids` |
 | `validate_mentions` | `paragraphs_json`, `mentions_json` |
 | `resolve_entities` | `chapter_text`, `entities_json`, `unresolved_json` |

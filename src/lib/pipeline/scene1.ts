@@ -13,6 +13,7 @@ import type {
   ScenePacket,
   PhaseMarker,
 } from "@/types/schema"
+import { normalizePidKey } from "@/lib/prompt-loader"
 
 export function runScenePacketBuilder(
   boundaryLog: SceneBoundaries,
@@ -25,8 +26,10 @@ export function runScenePacketBuilder(
   parents: Record<string, string> = {},
 ): ScenePackets {
   // Build indexes
-  const pidToFrame = new Map(validatedLog.frames.map((f) => [f.pid, f]))
-  const narrativePids = new Set(validatedLog.frames.filter((f) => f.is_narrative).map((f) => f.pid))
+  const pidToFrame = new Map(validatedLog.frames.map((f) => [normalizePidKey(f.pid), f]))
+  const narrativePids = new Set(
+    validatedLog.frames.filter((f) => f.is_narrative).map((f) => normalizePidKey(f.pid)),
+  )
   const pidToText = new Map(chapter.paragraphs.map((p) => [p.pid, p.text]))
 
   const pidToTimeSignals = new Map<number, string[]>()
@@ -48,14 +51,16 @@ export function runScenePacketBuilder(
     // Narrative pids within this scene's range
     const pids = chapter.paragraphs
       .map((p) => p.pid)
-      .filter((pid) => narrativePids.has(pid) && pid >= scene.start_pid && pid <= scene.end_pid)
+      .filter(
+        (pid) => narrativePids.has(normalizePidKey(pid)) && pid >= scene.start_pid && pid <= scene.end_pid,
+      )
 
     const sceneText = pids
       .map((pid) => `[P${pid}] ${pidToText.get(pid) ?? ""}`)
       .join("\n\n")
 
-    const startFrame = pids.length > 0 ? pidToFrame.get(pids[0]) : undefined
-    const endFrame = pids.length > 0 ? pidToFrame.get(pids[pids.length - 1]) : undefined
+    const startFrame = pids.length > 0 ? pidToFrame.get(normalizePidKey(pids[0])) : undefined
+    const endFrame = pids.length > 0 ? pidToFrame.get(normalizePidKey(pids[pids.length - 1])) : undefined
 
     // Aggregate cast, places, time — in order, deduplicated
     const castSeen = new Set<string>()
@@ -68,7 +73,7 @@ export function runScenePacketBuilder(
     const timeSignals: string[] = []
 
     for (const pid of pids) {
-      const frame = pidToFrame.get(pid)
+      const frame = pidToFrame.get(normalizePidKey(pid))
       if (!frame) continue
       for (const c of frame.validated_state.active_cast) {
         if (!castSeen.has(c)) { castUnion.push(c); castSeen.add(c) }

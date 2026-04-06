@@ -1,6 +1,6 @@
 import { loadRawChapter, loadStageResult, saveStageResult, stageKey } from "@/lib/firestore"
 import { runContentClassification } from "@/lib/pipeline/pre2"
-import { createLLMClient, errorResponse, okResponse, type BaseRequestBody } from "@/lib/api-utils"
+import { attachLLMDebug, createLLMClient, errorResponse, okResponse, type BaseRequestBody } from "@/lib/api-utils"
 import type { PreparedChapter } from "@/types/schema"
 
 export const maxDuration = 300
@@ -17,7 +17,10 @@ export async function POST(request: Request): Promise<Response> {
     if (!chapter) return errorResponse("Chapter not found", 404)
 
     const llm = createLLMClient(body)
-    const result = await runContentClassification(chapter, llm, docId, chapterId, parents)
+    const result = attachLLMDebug(
+      await runContentClassification(chapter, llm, docId, chapterId, parents),
+      llm,
+    )
 
     await saveStageResult(docId, chapterId, runId, stageKey("PRE.2"), result)
     return okResponse(result)

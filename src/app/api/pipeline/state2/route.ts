@@ -1,6 +1,6 @@
 import { loadRawChapter, loadStageResult, saveStageResult, stageKey } from "@/lib/firestore"
 import { runStateValidation } from "@/lib/pipeline/state2"
-import { createLLMClient, errorResponse, okResponse, type BaseRequestBody } from "@/lib/api-utils"
+import { attachLLMDebug, createLLMClient, errorResponse, okResponse, type BaseRequestBody } from "@/lib/api-utils"
 import type { StateFrames, EntityGraph, ContentUnits } from "@/types/schema"
 
 export const maxDuration = 300
@@ -23,7 +23,10 @@ export async function POST(request: Request): Promise<Response> {
     if (!classifyLog) return errorResponse("PRE.2 result not found", 400)
 
     const llm = createLLMClient(body)
-    const result = await runStateValidation(stateLog, entityLog, chapter, classifyLog, llm, docId, chapterId, parents)
+    const result = attachLLMDebug(
+      await runStateValidation(stateLog, entityLog, chapter, classifyLog, llm, docId, chapterId, parents),
+      llm,
+    )
 
     await saveStageResult(docId, chapterId, runId, stageKey("STATE.2"), result)
     return okResponse(result)

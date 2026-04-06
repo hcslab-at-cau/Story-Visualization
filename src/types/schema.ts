@@ -16,11 +16,26 @@
 // Shared base: every artifact has these fields
 // ---------------------------------------------------------------------------
 
+export interface LLMTrialDebug {
+  trial_id: number;
+  template_name?: string;
+  mode: "json" | "multimodal";
+  model: string;
+  prompt: string;
+  raw_response?: string;
+  has_image?: boolean;
+}
+
+export interface LLMRunDebug {
+  trials: LLMTrialDebug[];
+}
+
 export interface ArtifactBase {
   run_id: string;
   doc_id: string;
   chapter_id: string;
   stage_id: string;
+  llm_debug?: LLMRunDebug;
   parents: Record<string, string>; // stage_id → run_id
 }
 
@@ -99,6 +114,8 @@ export interface Mention {
   mention_id: string;
   pid: number;
   span: string;
+  start_char?: number;
+  end_char?: number;
   mention_type: MentionType;
   normalized?: string;
 }
@@ -119,6 +136,8 @@ export interface ValidatedMention {
   mention_id: string;
   pid: number;
   span: string;
+  start_char?: number;
+  end_char?: number;
   mention_type: MentionType;
   normalized?: string;
   valid: boolean;
@@ -141,6 +160,8 @@ export interface EntityMention {
   mention_id: string;
   pid: number;
   span: string;
+  start_char?: number;
+  end_char?: number;
 }
 
 export interface Entity {
@@ -557,6 +578,11 @@ export interface RenderedImageResult {
   prompt_used: string;
   model: string;
   success: boolean;
+  storage_path?: string;
+  gs_uri?: string;
+  download_url?: string;
+  content_type?: string;
+  size_bytes?: number;
   error?: string;
 }
 

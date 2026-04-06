@@ -34,13 +34,25 @@ export function formatJsonParam(obj: unknown): string {
   return JSON.stringify(obj, null, 2)
 }
 
+export function normalizePidKey(value: unknown): string {
+  return String(value ?? "").trim().replace(/^P/i, "")
+}
+
 /** Format paragraphs as [P{pid}] text lines for LLM input. */
 export function formatParagraphsForLLM(
   paragraphs: Array<{ pid: number; text: string }>,
-  narrativePids?: Set<number>,
+  narrativePids?: Set<string | number>,
 ): string {
+  const normalizedNarrativePids = narrativePids
+    ? new Set(Array.from(narrativePids, (pid) => normalizePidKey(pid)))
+    : undefined
+
   return paragraphs
-    .filter((p) => narrativePids === undefined || narrativePids.has(p.pid))
+    .filter(
+      (p) =>
+        normalizedNarrativePids === undefined ||
+        normalizedNarrativePids.has(normalizePidKey(p.pid)),
+    )
     .map((p) => `[P${p.pid}] ${p.text}`)
     .join("\n")
 }

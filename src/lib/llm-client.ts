@@ -5,6 +5,7 @@
 
 import OpenAI from "openai"
 import { jsonrepair as repairJson } from "jsonrepair"
+import type { LLMTrialDebug } from "@/types/schema"
 import { PromptLoader, formatJsonParam } from "./prompt-loader"
 
 const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
@@ -56,6 +57,8 @@ export class LLMClient {
   private model: string
   private maxTokens: number
   private promptLoader: PromptLoader
+  private debugTrials: LLMTrialDebug[] = []
+  private nextTrialId = 1
 
   constructor(
     model: string,
@@ -72,10 +75,31 @@ export class LLMClient {
     this.promptLoader = new PromptLoader()
   }
 
+  getDebugTrials(): LLMTrialDebug[] {
+    return this.debugTrials.map((trial) => ({ ...trial }))
+  }
+
+  private recordTrial(trial: Omit<LLMTrialDebug, "trial_id" | "model">): LLMTrialDebug {
+    const entry: LLMTrialDebug = {
+      trial_id: this.nextTrialId++,
+      model: this.model,
+      ...trial,
+    }
+    this.debugTrials.push(entry)
+    return entry
+  }
+
   private async callJson(
     prompt: string,
     maxRetries = 1,
+    templateName?: string,
   ): Promise<Record<string, unknown>> {
+    const trial = this.recordTrial({
+      template_name: templateName,
+      mode: "json",
+      prompt,
+    })
+
     const params: OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming = {
       model: this.model,
       temperature: 0,
@@ -101,6 +125,7 @@ export class LLMClient {
         const chat = await this.client.chat.completions.create(params)
         let content = (chat.choices[0].message.content ?? "").trim()
         content = stripMarkdownFence(content)
+        trial.raw_response = content
 
         try {
           return JSON.parse(content) as Record<string, unknown>
@@ -121,7 +146,16 @@ export class LLMClient {
   private async callJsonMultimodal(
     messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[],
     maxRetries = 1,
+    prompt?: string,
+    templateName?: string,
   ): Promise<Record<string, unknown>> {
+    const trial = this.recordTrial({
+      template_name: templateName,
+      mode: "multimodal",
+      prompt: prompt ?? "",
+      has_image: true,
+    })
+
     let lastError: unknown
     for (let attempt = 0; attempt < maxRetries; attempt++) {
       if (attempt > 0) {
@@ -136,6 +170,7 @@ export class LLMClient {
         })
         let content = (chat.choices[0].message.content ?? "").trim()
         content = stripMarkdownFence(content)
+        trial.raw_response = content
         try {
           return JSON.parse(content) as Record<string, unknown>
         } catch {
@@ -152,9 +187,9 @@ export class LLMClient {
   // PRE.2 (classification prompt template keeps the original file name)
   // ---------------------------------------------------------------------------
 
-  async classifyContent(params: { buffer_sentences: string }): Promise<Record<string, unknown>> {
+  async classifyContent(params: { paragraphs_json: string }): Promise<Record<string, unknown>> {
     const prompt = this.promptLoader.load("pre1_content_classify", params)
-    return this.callJson(prompt)
+    return this.callJson(prompt, 1, "pre1_content_classify")
   }
 
   // ---------------------------------------------------------------------------
@@ -163,7 +198,7 @@ export class LLMClient {
 
   async extractMentions(params: { chapter_text_with_pids: string }): Promise<Record<string, unknown>> {
     const prompt = this.promptLoader.load("ent1_mention_extract", params)
-    return this.callJson(prompt)
+    return this.callJson(prompt, 1, "ent1_mention_extract")
   }
 
   // ---------------------------------------------------------------------------
@@ -175,7 +210,7 @@ export class LLMClient {
     mentions_json: string
   }): Promise<Record<string, unknown>> {
     const prompt = this.promptLoader.load("ent2_mention_validate", params)
-    return this.callJson(prompt)
+    return this.callJson(prompt, 1, "ent2_mention_validate")
   }
 
   // ---------------------------------------------------------------------------
@@ -188,7 +223,7 @@ export class LLMClient {
     unresolved_json: string
   }): Promise<Record<string, unknown>> {
     const prompt = this.promptLoader.load("ent3_entity_resolve", params)
-    return this.callJson(prompt)
+    return this.callJson(prompt, 1, "ent3_entity_resolve")
   }
 
   // ---------------------------------------------------------------------------
@@ -201,7 +236,7 @@ export class LLMClient {
     proposed_frames_json: string
   }): Promise<Record<string, unknown>> {
     const prompt = this.promptLoader.load("state2_state_validate", params)
-    return this.callJson(prompt)
+    return this.callJson(prompt, 1, "state2_state_validate")
   }
 
   // ---------------------------------------------------------------------------
@@ -210,7 +245,7 @@ export class LLMClient {
 
   async generateSceneTitles(params: { scenes_json: string }): Promise<Record<string, unknown>> {
     const prompt = this.promptLoader.load("state3_scene_titles", params)
-    return this.callJson(prompt)
+    return this.callJson(prompt, 1, "state3_scene_titles")
   }
 
   // ---------------------------------------------------------------------------
@@ -230,7 +265,7 @@ export class LLMClient {
     scene_text: string
   }): Promise<Record<string, unknown>> {
     const prompt = this.promptLoader.load("scene2_scene_index", params)
-    return this.callJson(prompt)
+    return this.callJson(prompt, 1, "scene2_scene_index")
   }
 
   // ---------------------------------------------------------------------------
@@ -249,7 +284,7 @@ export class LLMClient {
     precheck_issues_json: string
   }): Promise<Record<string, unknown>> {
     const prompt = this.promptLoader.load("scene3_scene_validate", params)
-    return this.callJson(prompt)
+    return this.callJson(prompt, 1, "scene3_scene_validate")
   }
 
   // ---------------------------------------------------------------------------
@@ -267,7 +302,7 @@ export class LLMClient {
     onstage_cast_json: string
   }): Promise<Record<string, unknown>> {
     const prompt = this.promptLoader.load("vis1_semantic_clarification", params)
-    return this.callJson(prompt)
+    return this.callJson(prompt, 1, "vis1_semantic_clarification")
   }
 
   // ---------------------------------------------------------------------------
@@ -291,7 +326,7 @@ export class LLMClient {
     ambiguity_resolutions_json: string
   }): Promise<Record<string, unknown>> {
     const prompt = this.promptLoader.load("vis2_image_support", params)
-    return this.callJson(prompt)
+    return this.callJson(prompt, 1, "vis2_image_support")
   }
 
   // ---------------------------------------------------------------------------
@@ -313,7 +348,7 @@ export class LLMClient {
     scene_summary: string
   }): Promise<Record<string, unknown>> {
     const prompt = this.promptLoader.load("sub1_subscene_proposal", params)
-    return this.callJson(prompt)
+    return this.callJson(prompt, 1, "sub1_subscene_proposal")
   }
 
   // ---------------------------------------------------------------------------
@@ -328,12 +363,12 @@ export class LLMClient {
     scene_summary: string
     start_state_json: string
     end_state_json: string
-    onstage_cast_json: string
+    cast_json: string
     current_places_json: string
     candidates_json: string
   }): Promise<Record<string, unknown>> {
     const prompt = this.promptLoader.load("sub2_subscene_state", params)
-    return this.callJson(prompt)
+    return this.callJson(prompt, 1, "sub2_subscene_state")
   }
 
   // ---------------------------------------------------------------------------
@@ -348,12 +383,12 @@ export class LLMClient {
     scene_summary: string
     start_state_json: string
     end_state_json: string
-    onstage_cast_json: string
+    cast_json: string
     candidates_json: string
     state_records_json: string
   }): Promise<Record<string, unknown>> {
     const prompt = this.promptLoader.load("sub3_subscene_validation", params)
-    return this.callJson(prompt)
+    return this.callJson(prompt, 1, "sub3_subscene_validation")
   }
 
   // ---------------------------------------------------------------------------
@@ -368,7 +403,7 @@ export class LLMClient {
     subscenes_json: string
   }): Promise<Record<string, unknown>> {
     const prompt = this.promptLoader.load("sub4_intervention_packaging", params)
-    return this.callJson(prompt)
+    return this.callJson(prompt, 1, "sub4_intervention_packaging")
   }
 
   // ---------------------------------------------------------------------------
@@ -399,7 +434,7 @@ export class LLMClient {
         ],
       },
     ]
-    return this.callJsonMultimodal(messages)
+    return this.callJsonMultimodal(messages, 1, prompt, "final2_overlay_refinement")
   }
 }
 

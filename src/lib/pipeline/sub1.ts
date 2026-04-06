@@ -49,7 +49,10 @@ export async function runSubsceneProposal(
 
     packets.push({
       scene_id: packet.scene_id,
-      candidate_subscenes: (result.candidates as SubsceneProposalItem["candidate_subscenes"]) ?? [],
+      candidate_subscenes:
+        (result.candidate_subscenes as SubsceneProposalItem["candidate_subscenes"]) ??
+        (result.candidates as SubsceneProposalItem["candidate_subscenes"]) ??
+        [],
     })
   }
 

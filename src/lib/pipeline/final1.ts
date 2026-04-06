@@ -5,6 +5,7 @@
 
 import type {
   GroundedSceneModel,
+  RenderedImages,
   ScenePackets,
   SceneBoundaries,
   ValidatedSubscenes,
@@ -83,6 +84,10 @@ interface BlueprintLike {
       composition_position?: string
     }>
   }>
+}
+
+interface RenderedImagesLike {
+  results: RenderedImages["results"]
 }
 
 function buildOverlayCharacters(
@@ -279,8 +284,8 @@ function buildCharacterPanels(
   const result: Record<string, Record<string, string>> = {}
   for (const [panelKey, subMap] of panelParts) {
     result[panelKey] = {}
-    for (const [sid, parts] of subMap) {
-      result[panelKey][sid] = parts.join("\n\n")
+    for (const [subsceneId, parts] of subMap) {
+      result[panelKey][subsceneId] = parts.join("\n\n")
     }
   }
   return result
@@ -301,6 +306,7 @@ export function runSceneReaderPackage(
   parents: Record<string, string> = {},
   blueprintLog?: BlueprintLike,
   interventionLog?: InterventionPackages,
+  renderedImagesLog?: RenderedImagesLike,
 ): SceneReaderPackageLog {
   const pidText = new Map(chapter.paragraphs.map((p) => [p.pid, p.text]))
   const scenePidRange = new Map(
@@ -316,9 +322,13 @@ export function runSceneReaderPackage(
     const chips = buildChips(sceneId, groundedLog)
     const overlayCharacters = buildOverlayCharacters(sceneId, blueprintLog, groundedLog, packetLog)
     const characterPanels = buildCharacterPanels(sceneId, overlayCharacters, interventionLog, sub3Log)
+    const renderedImage = renderedImagesLog?.results.find(
+      (result) => result.scene_id === sceneId && result.success && typeof result.image_path === "string",
+    )
 
     const visual: VisualBlock = {
-      mode: "blueprint",
+      mode: renderedImage?.image_path ? "image" : "blueprint",
+      image_path: renderedImage?.image_path,
       fallback_blueprint_available: blueprintLog !== undefined,
       chips,
       overlay_characters: overlayCharacters,

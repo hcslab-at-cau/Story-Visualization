@@ -5,7 +5,7 @@ import EpubUploader from "@/components/EpubUploader"
 import ExistingDocumentsPicker from "@/components/ExistingDocumentsPicker"
 import PipelineRunner from "@/components/PipelineRunner"
 import ReaderScreen from "@/components/ReaderScreen"
-import { listRuns } from "@/lib/firestore"
+import { deleteRun, listRuns } from "@/lib/firestore"
 import { createTimestampRunId } from "@/lib/run-id"
 import type { OverlayRefinementResult, SceneReaderPackageLog } from "@/types/schema"
 import type { ChapterMeta } from "@/types/ui"
@@ -19,6 +19,7 @@ export default function Home() {
   const [selectedChapterId, setSelectedChapterId] = useState("")
   const [availableRuns, setAvailableRuns] = useState<Array<{ runId: string; updatedAt: unknown }>>([])
   const [loadingRuns, setLoadingRuns] = useState(false)
+  const [deletingRun, setDeletingRun] = useState(false)
   const [runId, setRunId] = useState(() => createTimestampRunId())
 
   useEffect(() => {
@@ -67,6 +68,22 @@ export default function Home() {
     setRunId(createFreshRunId())
   }
 
+  async function handleDeleteRun() {
+    if (!docId || !selectedChapterId || deletingRun) return
+    const confirmed = window.confirm(`Delete run ${runId}? This removes all saved stage results in this run.`)
+    if (!confirmed) return
+
+    setDeletingRun(true)
+    try {
+      await deleteRun(docId, selectedChapterId, runId)
+      const remainingRuns = await listRuns(docId, selectedChapterId)
+      setAvailableRuns(remainingRuns)
+      setRunId(remainingRuns[0]?.runId ?? createTimestampRunId([runId]))
+    } finally {
+      setDeletingRun(false)
+    }
+  }
+
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-zinc-50">
       <header className="flex items-center gap-6 border-b border-zinc-200 bg-white px-6 py-4">
@@ -77,7 +94,7 @@ export default function Home() {
               key={currentView}
               type="button"
               onClick={() => setView(currentView)}
-              className={`rounded-lg px-3 py-2 text-[15px] capitalize transition-colors ${
+              className={`rounded-lg px-3 py-2 text-base capitalize transition-colors ${
                 view === currentView
                   ? "bg-zinc-900 text-white"
                   : "text-zinc-500 hover:text-zinc-700"
@@ -89,7 +106,7 @@ export default function Home() {
         </nav>
       </header>
 
-      <main className="min-h-0 flex-1 overflow-hidden p-6 text-[15px]">
+      <main className="min-h-0 flex-1 overflow-hidden p-6 text-base">
         {view === "upload" && (
           <div className="mx-auto mt-10 grid max-w-6xl gap-6 lg:grid-cols-[minmax(0,1.1fr)_minmax(340px,0.9fr)]">
             <EpubUploader onUploaded={handleUploaded} />
@@ -100,8 +117,8 @@ export default function Home() {
         {view === "pipeline" && docId && (
           <div className="flex h-full min-h-0 w-full flex-col gap-5">
             <div className="space-y-4 rounded-xl border border-zinc-200 bg-white p-5">
-              <div className="flex flex-col gap-4 xl:flex-row xl:items-end">
-                <div className="min-w-[340px] xl:w-[420px]">
+              <div className="grid gap-4 xl:grid-cols-[420px_minmax(0,1fr)_minmax(0,1fr)] xl:items-end">
+                <div className="min-w-[340px]">
                   <label className="mb-1 block text-sm text-zinc-500">Chapter</label>
                   <div className="flex gap-2">
                     <button
@@ -140,7 +157,7 @@ export default function Home() {
                   </div>
                 </div>
 
-                <div className="min-w-0 flex-1">
+                <div className="min-w-[320px] min-w-0">
                   <label className="mb-1 block text-sm text-zinc-500">Run ID</label>
                   <div className="flex gap-2">
                     <input
@@ -158,7 +175,7 @@ export default function Home() {
                   </div>
                 </div>
 
-                <div className="min-w-[240px] xl:w-[320px]">
+                <div className="min-w-[320px] min-w-0">
                   <label className="mb-1 block text-sm text-zinc-500">Saved Runs</label>
                   <div className="flex gap-2">
                     <select
@@ -186,6 +203,14 @@ export default function Home() {
                     >
                       Draft
                     </button>
+                    <button
+                      type="button"
+                      onClick={() => void handleDeleteRun()}
+                      disabled={deletingRun}
+                      className="rounded-lg border border-red-200 px-3 py-2 text-sm text-red-600 hover:bg-red-50 disabled:opacity-40"
+                    >
+                      {deletingRun ? "Deleting..." : "Delete"}
+                    </button>
                   </div>
                 </div>
               </div>
@@ -203,7 +228,7 @@ export default function Home() {
             <button
               type="button"
               onClick={() => setView("reader")}
-              className="text-[15px] text-zinc-500 underline hover:text-zinc-800"
+              className="text-base text-zinc-500 underline hover:text-zinc-800"
             >
               View reader screen
             </button>

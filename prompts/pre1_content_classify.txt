@@ -1,7 +1,7 @@
 You are classifying EPUB-extracted paragraphs into content types.
 
 # GOAL
-- For EACH sentence, assign a content_type and whether it is story text.
+- For EACH paragraph, assign a content_type and whether it is story text.
 
 # content_type OPTIONS
 - front_matter: title/author/edition/publisher/copyright
@@ -21,7 +21,7 @@ You are classifying EPUB-extracted paragraphs into content types.
 {{
   "units": [
     {{
-      "sid": <int>,
+      "pid": <int>,
       "content_type": "front_matter|toc|chapter_heading|section_heading|epigraph|narrative|non_narrative_other",
       "is_story_text": <true|false>
     }}
@@ -29,5 +29,5 @@ You are classifying EPUB-extracted paragraphs into content types.
 }}
 
 # INPUT
-SENTENCES:
-{buffer_sentences}
+PARAGRAPHS:
+{paragraphs_json}

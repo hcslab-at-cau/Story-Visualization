@@ -1,6 +1,6 @@
 import { loadStageResult, saveStageResult, stageKey } from "@/lib/firestore"
 import { runInterventionPackaging } from "@/lib/pipeline/sub4"
-import { createLLMClient, errorResponse, okResponse, type BaseRequestBody } from "@/lib/api-utils"
+import { attachLLMDebug, createLLMClient, errorResponse, okResponse, type BaseRequestBody } from "@/lib/api-utils"
 import type { ValidatedSubscenes, ScenePackets, GroundedSceneModel } from "@/types/schema"
 
 export const maxDuration = 300
@@ -20,7 +20,10 @@ export async function POST(request: Request): Promise<Response> {
     if (!validatedSceneLog) return errorResponse("SCENE.3 result not found", 400)
 
     const llm = createLLMClient(body)
-    const result = await runInterventionPackaging(validationLog, packetLog, validatedSceneLog, llm, docId, chapterId, parents)
+    const result = attachLLMDebug(
+      await runInterventionPackaging(validationLog, packetLog, validatedSceneLog, llm, docId, chapterId, parents),
+      llm,
+    )
 
     await saveStageResult(docId, chapterId, runId, stageKey("SUB.4"), result)
     return okResponse(result)
