@@ -399,6 +399,7 @@ export class LLMClient {
     scene_id: string
     scene_summary: string
     onstage_cast_json: string
+    scene_relations_json: string
     prev_end_state_json: string
     subscenes_json: string
   }): Promise<Record<string, unknown>> {
