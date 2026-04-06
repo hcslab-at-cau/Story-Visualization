@@ -1,39 +1,70 @@
 /**
- * FINAL.1 — Scene Reader Package Builder (fully rule-based)
+ * FINAL.1 - Scene Reader Package Builder (fully rule-based)
  * Port of Story-Decomposition/src/viewer/scene_reader_package.py
  */
 
 import type {
+  CompactHint,
   GroundedSceneModel,
-  RenderedImages,
-  ScenePackets,
-  SceneBoundaries,
-  ValidatedSubscenes,
   InterventionPackages,
+  OverlayCharacter,
   RawChapter,
+  ReaderCharacterView,
+  ReaderGlobalView,
+  ReaderPairView,
+  RenderedImages,
+  SceneBoundaries,
+  ScenePackets,
   SceneReaderPackageLog,
   SceneReaderPacket,
-  VisualBlock,
-  OverlayCharacter,
+  SubsceneButton,
   SubsceneNavItem,
   SubsceneView,
-  SubsceneButton,
+  ValidatedSubscene,
+  ValidatedSubscenes,
+  VisualBlock,
 } from "@/types/schema"
 
-// ---------------------------------------------------------------------------
-// Zone → anchor position table
-// ---------------------------------------------------------------------------
-
 const ZONE_ANCHOR: Record<string, [number, number]> = {
-  "foreground left":   [15.0, 78.0],
+  "foreground left": [15.0, 78.0],
   "foreground center": [50.0, 78.0],
-  "foreground right":  [85.0, 78.0],
-  "midground left":    [15.0, 52.0],
-  "midground center":  [50.0, 52.0],
-  "midground right":   [85.0, 52.0],
-  "background left":   [15.0, 26.0],
+  "foreground right": [85.0, 78.0],
+  "midground left": [15.0, 52.0],
+  "midground center": [50.0, 52.0],
+  "midground right": [85.0, 52.0],
+  "background left": [15.0, 26.0],
   "background center": [50.0, 26.0],
-  "background right":  [85.0, 26.0],
+  "background right": [85.0, 26.0],
+}
+
+const BUTTON_LABELS: Record<string, string> = {
+  goal: "Goal",
+  problem: "Problem",
+  what_changed: "Change",
+  why_it_matters: "Impact",
+  object: "Object",
+  action: "Action",
+  event: "Event",
+}
+
+interface BlueprintLike {
+  packets: Array<{
+    scene_id: string
+    characters: Array<{
+      name: string
+      composition_position?: string
+    }>
+  }>
+}
+
+interface RenderedImagesLike {
+  results: RenderedImages["results"]
+}
+
+function normalizeKey(buttonType: string): string {
+  const raw = buttonType.trim()
+  if (raw === "why_matters") return "why_it_matters"
+  return raw
 }
 
 function resolveAnchor(compositionPosition?: string): [number, number, string] {
@@ -44,15 +75,26 @@ function resolveAnchor(compositionPosition?: string): [number, number, string] {
   return [50.0, 52.0, "midground center"]
 }
 
-// ---------------------------------------------------------------------------
-// Build chips
-// ---------------------------------------------------------------------------
+function pairKeyFromCharacterIds(characterIds: string[]): string {
+  return [...characterIds].sort().join("__")
+}
 
-function buildChips(
-  sceneId: string,
-  groundedLog: GroundedSceneModel,
-  // vis1Log not used in this implementation (excluded per migration scope)
-): string[] {
+function findOverlayCharacterByName(
+  sceneOverlayCharacters: OverlayCharacter[],
+  name: string,
+): OverlayCharacter | undefined {
+  const normalized = name.toLowerCase()
+  return sceneOverlayCharacters.find((character) => {
+    const label = character.label.toLowerCase()
+    return (
+      label === normalized ||
+      label.includes(normalized) ||
+      normalized.includes(label)
+    )
+  })
+}
+
+function buildChips(sceneId: string, groundedLog: GroundedSceneModel): string[] {
   const entry = groundedLog.validated.find((e) => e.scene_id === sceneId)
   if (!entry) return []
   const sceneIndex = entry.validated_scene_index as Record<string, unknown>
@@ -72,24 +114,6 @@ function buildChips(
   return chips.slice(0, 4)
 }
 
-// ---------------------------------------------------------------------------
-// Build overlay characters
-// ---------------------------------------------------------------------------
-
-interface BlueprintLike {
-  packets: Array<{
-    scene_id: string
-    characters: Array<{
-      name: string
-      composition_position?: string
-    }>
-  }>
-}
-
-interface RenderedImagesLike {
-  results: RenderedImages["results"]
-}
-
 function buildOverlayCharacters(
   sceneId: string,
   blueprintLog: BlueprintLike | undefined,
@@ -98,7 +122,6 @@ function buildOverlayCharacters(
 ): OverlayCharacter[] {
   const seen = new Map<string, OverlayCharacter>()
 
-  // Priority 1: VIS.2 blueprint characters (have composition_position)
   const blueprintPacket = blueprintLog?.packets.find((p) => p.scene_id === sceneId)
   if (blueprintPacket) {
     for (const ch of blueprintPacket.characters) {
@@ -116,7 +139,6 @@ function buildOverlayCharacters(
     }
   }
 
-  // Priority 2: SCENE.3 onstage_cast
   const entry = groundedLog.validated.find((e) => e.scene_id === sceneId)
   if (entry) {
     const sceneIndex = entry.validated_scene_index as Record<string, unknown>
@@ -137,7 +159,6 @@ function buildOverlayCharacters(
     }
   }
 
-  // Priority 3: SCENE.1 scene_cast_union
   const packet = packetLog.packets.find((p) => p.scene_id === sceneId)
   if (packet) {
     for (const label of packet.scene_cast_union) {
@@ -159,27 +180,213 @@ function buildOverlayCharacters(
   return [...seen.values()]
 }
 
-// ---------------------------------------------------------------------------
-// Build subscene nav/views
-// ---------------------------------------------------------------------------
+function buildButtonBundle(
+  infoButtons: Array<{ label: string; button_type: string; reveal: string }>,
+): { buttons: SubsceneButton[]; panels: Record<string, string> } {
+  const buttons: SubsceneButton[] = []
+  const panels: Record<string, string> = {}
 
-const BUTTON_DEFS: Array<[string, string, string]> = [
-  ["goal",          "local_goal",           "Goal"],
-  ["problem",       "problem_state",        "Problem"],
-  ["what_changed",  "causal_result",        "What changed"],
-  ["why_it_matters","narrative_importance", "Why it matters"],
-]
+  for (const item of infoButtons) {
+    const key = normalizeKey(item.button_type)
+    if (!key || !item.reveal?.trim()) continue
+    if (!panels[key]) {
+      panels[key] = item.reveal.trim()
+      buttons.push({
+        key,
+        label: item.label?.trim() || BUTTON_LABELS[key] || key,
+      })
+    }
+  }
+
+  return { buttons, panels }
+}
+
+function deriveHintsFromPanels(
+  panels: Record<string, string>,
+  fallbackLabel: string,
+): CompactHint[] {
+  const entries = Object.entries(panels).slice(0, 3)
+  if (entries.length === 0) {
+    return fallbackLabel
+      ? [{ label: fallbackLabel, text: fallbackLabel }]
+      : []
+  }
+
+  return entries.map(([key, text]) => ({
+    label: BUTTON_LABELS[key] || key,
+    text,
+  }))
+}
+
+function buildGlobalView(
+  unit: InterventionPackages["packets"][number]["subscene_ui_units"][number] | undefined,
+  subscene: ValidatedSubscene,
+): ReaderGlobalView {
+  const infoButtons = unit?.global_view?.buttons?.length
+    ? unit.global_view.buttons
+    : (unit?.info_buttons ?? [])
+  const { buttons, panels } = buildButtonBundle(infoButtons)
+  const summaryHint =
+    unit?.global_view?.summary_hint?.trim() ||
+    unit?.one_line_summary?.trim() ||
+    subscene.action_summary
+  const hints =
+    unit?.global_view?.hints?.length
+      ? unit.global_view.hints
+      : deriveHintsFromPanels(panels, summaryHint)
+
+  return {
+    summary_hint: summaryHint,
+    hints,
+    buttons,
+    panels,
+  }
+}
+
+function buildCharacterViews(
+  unit: InterventionPackages["packets"][number]["subscene_ui_units"][number] | undefined,
+  subscene: ValidatedSubscene,
+  sceneOverlayCharacters: OverlayCharacter[],
+): {
+  overlayCharacters: OverlayCharacter[]
+  characterViews: Record<string, ReaderCharacterView>
+} {
+  const characterViews: Record<string, ReaderCharacterView> = {}
+
+  for (const characterUnit of unit?.character_units ?? []) {
+    const overlay = findOverlayCharacterByName(sceneOverlayCharacters, characterUnit.name)
+    if (!overlay) continue
+    const { buttons, panels } = buildButtonBundle(characterUnit.buttons)
+
+    characterViews[overlay.character_id] = {
+      character_id: overlay.character_id,
+      label: overlay.label,
+      role: characterUnit.role,
+      micro_summary: characterUnit.micro_summary,
+      hints: characterUnit.hints.length > 0
+        ? characterUnit.hints
+        : deriveHintsFromPanels(panels, characterUnit.micro_summary),
+      buttons,
+      panels,
+    }
+  }
+
+  for (const castName of subscene.active_cast) {
+    const overlay = findOverlayCharacterByName(sceneOverlayCharacters, castName)
+    if (!overlay || characterViews[overlay.character_id]) continue
+
+    characterViews[overlay.character_id] = {
+      character_id: overlay.character_id,
+      label: overlay.label,
+      role: "present in moment",
+      micro_summary: `${overlay.label} is active in this subscene.`,
+      hints: [
+        {
+          label: "Present",
+          text: `${overlay.label} matters in this local beat.`,
+        },
+      ],
+      buttons: [],
+      panels: {},
+    }
+  }
+
+  const overlayCharacters = sceneOverlayCharacters.filter(
+    (character) => characterViews[character.character_id] !== undefined,
+  )
+
+  return { overlayCharacters, characterViews }
+}
+
+function buildPairViews(
+  unit: InterventionPackages["packets"][number]["subscene_ui_units"][number] | undefined,
+  characterViews: Record<string, ReaderCharacterView>,
+): Record<string, ReaderPairView> {
+  const characterViewList = Object.values(characterViews)
+  const pairViews: Record<string, ReaderPairView> = {}
+
+  for (const pairUnit of unit?.pair_units ?? []) {
+    const characterIds = pairUnit.names
+      .map((name) => {
+        const normalized = name.toLowerCase()
+        return (
+          characterViewList.find((view) => {
+            const label = view.label.toLowerCase()
+            return (
+              label === normalized ||
+              label.includes(normalized) ||
+              normalized.includes(label)
+            )
+          })?.character_id ?? null
+        )
+      })
+      .filter((value): value is string => Boolean(value))
+
+    if (characterIds.length !== 2) continue
+    const { buttons, panels } = buildButtonBundle(pairUnit.buttons)
+    const pairKey = pairKeyFromCharacterIds(characterIds)
+
+    pairViews[pairKey] = {
+      pair_key: pairKey,
+      character_ids: [...characterIds].sort(),
+      labels: pairUnit.names,
+      relation_label: pairUnit.relation_label,
+      micro_summary: pairUnit.micro_summary,
+      hints: pairUnit.hints.length > 0
+        ? pairUnit.hints
+        : deriveHintsFromPanels(panels, pairUnit.micro_summary),
+      buttons,
+      panels,
+    }
+  }
+
+  return pairViews
+}
+
+function buildCharacterPanels(
+  subsceneViews: Record<string, SubsceneView>,
+  sceneOverlayCharacters: OverlayCharacter[],
+): Record<string, Record<string, string>> {
+  const panelMap = new Map<string, Record<string, string>>()
+
+  for (const character of sceneOverlayCharacters) {
+    panelMap.set(character.panel_key, {})
+  }
+
+  for (const [subsceneId, view] of Object.entries(subsceneViews)) {
+    for (const character of view.overlay_characters) {
+      const characterView = view.character_views[character.character_id]
+      if (!characterView) continue
+      const panelEntry = panelMap.get(character.panel_key) ?? {}
+      const hintText = characterView.hints[0]?.text
+      panelEntry[subsceneId] = [characterView.role, characterView.micro_summary, hintText]
+        .filter(Boolean)
+        .join(" · ")
+      panelMap.set(character.panel_key, panelEntry)
+    }
+  }
+
+  return Object.fromEntries(panelMap.entries())
+}
 
 function buildSubsceneBlocks(
   sceneId: string,
   sub3Log: ValidatedSubscenes,
   pidText: Map<number, string>,
-  overlayChars: OverlayCharacter[],
-  characterPanels: Record<string, Record<string, string>>,
-): { nav: SubsceneNavItem[]; views: Record<string, SubsceneView> } {
+  sceneOverlayCharacters: OverlayCharacter[],
+  interventionLog?: InterventionPackages,
+): {
+  nav: SubsceneNavItem[]
+  views: Record<string, SubsceneView>
+  characterPanels: Record<string, Record<string, string>>
+} {
   const item = sub3Log.packets.find((p) => p.scene_id === sceneId)
-  if (!item) return { nav: [], views: {} }
+  const interventionItem = interventionLog?.packets.find((p) => p.scene_id === sceneId)
+  if (!item) return { nav: [], views: {}, characterPanels: {} }
 
+  const unitMap = new Map(
+    (interventionItem?.subscene_ui_units ?? []).map((unit) => [unit.subscene_id, unit]),
+  )
   const nav: SubsceneNavItem[] = []
   const views: Record<string, SubsceneView> = {}
 
@@ -197,108 +404,25 @@ function buildSubsceneBlocks(
       body_paragraphs: bodyParagraphs,
     })
 
-    const buttons: SubsceneButton[] = []
-    const panels: Record<string, string> = {}
-
-    for (const [key, fieldName, displayLabel] of BUTTON_DEFS) {
-      const value = (sub as unknown as Record<string, unknown>)[fieldName] as string | undefined
-      if (value?.trim()) {
-        buttons.push({ key, label: displayLabel })
-        panels[key] = value
-      }
-    }
-
-    if (sub.key_objects.length > 0) {
-      buttons.push({ key: "object", label: sub.key_objects[0].slice(0, 24) })
-      panels["object"] = sub.key_objects.join(", ")
-    }
+    const unit = unitMap.get(sub.subscene_id)
+    const globalView = buildGlobalView(unit, sub)
+    const { overlayCharacters, characterViews } = buildCharacterViews(unit, sub, sceneOverlayCharacters)
+    const pairViews = buildPairViews(unit, characterViews)
 
     views[sub.subscene_id] = {
       headline: sub.headline,
-      overlay_characters: overlayChars.filter((character) =>
-        Boolean(characterPanels[character.panel_key]?.[sub.subscene_id]),
-      ),
-      buttons,
-      panels,
+      overlay_characters: overlayCharacters,
+      global_view: globalView,
+      character_views: characterViews,
+      pair_views: pairViews,
+      buttons: globalView.buttons,
+      panels: globalView.panels,
     }
   }
 
-  return { nav, views }
+  const characterPanels = buildCharacterPanels(views, sceneOverlayCharacters)
+  return { nav, views, characterPanels }
 }
-
-// ---------------------------------------------------------------------------
-// Build character panels
-// ---------------------------------------------------------------------------
-
-function buildCharacterPanels(
-  sceneId: string,
-  overlayChars: OverlayCharacter[],
-  interventionLog: InterventionPackages | undefined,
-  sub3Log: ValidatedSubscenes,
-): Record<string, Record<string, string>> {
-  const panelParts = new Map<string, Map<string, string[]>>()
-
-  for (const ch of overlayChars) {
-    panelParts.set(ch.panel_key, new Map())
-  }
-
-  const labelToPanel = new Map(overlayChars.map((ch) => [ch.label.toLowerCase(), ch.panel_key]))
-
-  // Priority 1: SUB.4 intervention packages
-  if (interventionLog) {
-    const interventionItem = interventionLog.packets.find((p) => p.scene_id === sceneId)
-    if (interventionItem) {
-      for (const unit of interventionItem.subscene_ui_units) {
-        for (const castButton of unit.cast_buttons) {
-          const panelKey = labelToPanel.get(castButton.name.toLowerCase())
-          if (panelKey) {
-            const map = panelParts.get(panelKey) ?? new Map()
-            const existing = map.get(unit.subscene_id) ?? []
-            existing.push(`[${unit.title}] ${castButton.role}: ${castButton.reveal}`)
-            map.set(unit.subscene_id, existing)
-            panelParts.set(panelKey, map)
-          }
-        }
-      }
-    }
-  }
-
-  // Priority 2: SUB.3 fallback
-  const sub3Item = sub3Log.packets.find((p) => p.scene_id === sceneId)
-  if (sub3Item) {
-    for (const sub of sub3Item.validated_subscenes) {
-      for (const castName of sub.active_cast) {
-        const panelKey = labelToPanel.get(castName.toLowerCase())
-        if (!panelKey) continue
-        const map = panelParts.get(panelKey) ?? new Map()
-        if (!map.has(sub.subscene_id)) {
-          const bits = [
-            `[${sub.label}]`,
-            sub.action_summary,
-            sub.local_goal ? `Goal: ${sub.local_goal}` : "",
-            sub.problem_state ? `Problem: ${sub.problem_state}` : "",
-          ].filter(Boolean)
-          map.set(sub.subscene_id, [bits.join(" ")])
-          panelParts.set(panelKey, map)
-        }
-      }
-    }
-  }
-
-  // Convert to final shape
-  const result: Record<string, Record<string, string>> = {}
-  for (const [panelKey, subMap] of panelParts) {
-    result[panelKey] = {}
-    for (const [subsceneId, parts] of subMap) {
-      result[panelKey][subsceneId] = parts.join("\n\n")
-    }
-  }
-  return result
-}
-
-// ---------------------------------------------------------------------------
-// Main
-// ---------------------------------------------------------------------------
 
 export function runSceneReaderPackage(
   groundedLog: GroundedSceneModel,
@@ -326,7 +450,6 @@ export function runSceneReaderPackage(
 
     const chips = buildChips(sceneId, groundedLog)
     const overlayCharacters = buildOverlayCharacters(sceneId, blueprintLog, groundedLog, packetLog)
-    const characterPanels = buildCharacterPanels(sceneId, overlayCharacters, interventionLog, sub3Log)
     const renderedImage = renderedImagesLog?.results.find(
       (result) => result.scene_id === sceneId && result.success && typeof result.image_path === "string",
     )
@@ -339,12 +462,12 @@ export function runSceneReaderPackage(
       overlay_characters: overlayCharacters,
     }
 
-    const { nav: subsceneNav, views: subsceneViews } = buildSubsceneBlocks(
+    const { nav: subsceneNav, views: subsceneViews, characterPanels } = buildSubsceneBlocks(
       sceneId,
       sub3Log,
       pidText,
       overlayCharacters,
-      characterPanels,
+      interventionLog,
     )
 
     const [startPid, endPid] = scenePidRange.get(sceneId) ?? [0, 0]

@@ -8,11 +8,15 @@
 
 import { useEffect, useRef, useState } from "react"
 import type {
-  SceneReaderPackageLog,
-  OverlayRefinementResult,
-  SceneReaderPacket,
+  CompactHint,
   OverlayCharacter,
   OverlayRefinementCharacter,
+  OverlayRefinementResult,
+  ReaderCharacterView,
+  ReaderGlobalView,
+  ReaderPairView,
+  SceneReaderPackageLog,
+  SceneReaderPacket,
 } from "@/types/schema"
 
 const CONF_THRESHOLD = 0.5
@@ -46,6 +50,16 @@ const READER_PANEL_BUTTON_META: Record<
     active: "border-emerald-500 bg-emerald-500 text-white shadow-sm",
     icon: "O",
   },
+  action: {
+    idle: "border-zinc-200 bg-zinc-50 text-zinc-800 hover:bg-zinc-100",
+    active: "border-zinc-800 bg-zinc-800 text-white shadow-sm",
+    icon: "A",
+  },
+  event: {
+    idle: "border-cyan-200 bg-cyan-50 text-cyan-800 hover:bg-cyan-100",
+    active: "border-cyan-500 bg-cyan-500 text-white shadow-sm",
+    icon: "E",
+  },
 }
 
 const READER_PANEL_BUTTON_LABEL: Record<string, string> = {
@@ -54,6 +68,8 @@ const READER_PANEL_BUTTON_LABEL: Record<string, string> = {
   what_changed: "Change",
   why_it_matters: "Impact",
   object: "Object",
+  action: "Action",
+  event: "Event",
 }
 
 const READER_PANEL_BUTTON_ORDER = [
@@ -62,6 +78,8 @@ const READER_PANEL_BUTTON_ORDER = [
   "what_changed",
   "why_it_matters",
   "object",
+  "action",
+  "event",
 ] as const
 
 function getContainedImageRect(params: {
@@ -109,6 +127,10 @@ function getContainedImageRect(params: {
   }
 }
 
+function pairKeyFromIds(characterIds: string[]): string {
+  return [...characterIds].sort().join("__")
+}
+
 function buildMergedOverlay(
   packet: SceneReaderPacket,
   activeSubsceneId: string,
@@ -132,46 +154,185 @@ function buildMergedOverlay(
   return result
 }
 
+function CharacterGlyph({ label }: { label: string }) {
+  const isRabbit = /rabbit/i.test(label)
+
+  if (isRabbit) {
+    return (
+      <svg viewBox="0 0 64 64" className="h-7 w-7 fill-current" aria-hidden="true">
+        <path d="M24 10c0-5 3-8 7-8s7 3 7 8v10c0 3-2 5-4 5h-6c-2 0-4-2-4-5z" />
+        <path d="M12 14c0-4 3-7 7-7 3 0 5 2 5 5v9c0 3-2 5-4 5h-4c-2 0-4-2-4-5z" />
+        <circle cx="32" cy="31" r="12" />
+        <path d="M16 54c2-10 9-15 16-15s14 5 16 15H16z" />
+      </svg>
+    )
+  }
+
+  return (
+    <svg viewBox="0 0 64 64" className="h-7 w-7 fill-current" aria-hidden="true">
+      <circle cx="32" cy="20" r="10" />
+      <path d="M14 56c2-14 10-22 18-22s16 8 18 22H14z" />
+    </svg>
+  )
+}
+
 function CharacterButton({
   coarse,
-  activeSubsceneId,
-  characterPanels,
   left,
   top,
+  selected,
+  onToggle,
 }: {
   coarse: OverlayCharacter
-  activeSubsceneId: string
-  characterPanels: Record<string, Record<string, string>>
   left: number
   top: number
+  selected: boolean
+  onToggle: () => void
 }) {
-  const [open, setOpen] = useState(false)
-  const panelText = characterPanels[coarse.panel_key]?.[activeSubsceneId]
-  const initial = coarse.label.trim().charAt(0).toUpperCase() || "C"
-
   return (
     <div
       className="absolute"
       style={{ left, top, transform: "translate(-50%, -94%)" }}
     >
       <button
-        onClick={() => setOpen((value) => !value)}
-        className="flex flex-col items-center gap-1.5 rounded-2xl bg-white/88 px-2.5 py-2 shadow-md ring-1 ring-zinc-200 backdrop-blur-sm transition-transform hover:-translate-y-0.5 hover:bg-white"
+        type="button"
+        onClick={onToggle}
+        className={`flex flex-col items-center gap-1.5 rounded-2xl px-2.5 py-2 shadow-md ring-1 backdrop-blur-sm transition-all hover:-translate-y-0.5 ${
+          selected
+            ? "bg-zinc-900 text-white ring-zinc-900"
+            : "bg-white/88 text-sky-700 ring-zinc-200 hover:bg-white"
+        }`}
       >
-        <span className="flex h-11 w-11 items-center justify-center rounded-full bg-gradient-to-b from-sky-500 to-blue-700 text-sm font-semibold text-white shadow-sm ring-2 ring-white">
-          {initial}
+        <span
+          className={`flex h-11 w-11 items-center justify-center rounded-full shadow-sm ring-2 ${
+            selected
+              ? "bg-white/15 text-white ring-white/30"
+              : "bg-gradient-to-b from-sky-500 to-blue-700 text-white ring-white"
+          }`}
+        >
+          <CharacterGlyph label={coarse.label} />
         </span>
-        <span className="rounded-full bg-zinc-900 px-2.5 py-0.5 text-[11px] font-medium leading-none text-white">
+        <span
+          className={`rounded-full px-2.5 py-0.5 text-[11px] font-medium leading-none ${
+            selected ? "bg-white/15 text-white" : "bg-zinc-900 text-white"
+          }`}
+        >
           {coarse.label}
         </span>
       </button>
-      {open && (
-        <div className="absolute bottom-full left-1/2 z-10 mb-2 w-64 -translate-x-1/2 rounded-xl border border-zinc-200 bg-white p-3 text-sm leading-6 text-zinc-700 shadow-xl">
-          {panelText ?? "(No subscene note available.)"}
-        </div>
-      )}
     </div>
   )
+}
+
+type ReaderFocusContext =
+  | {
+      mode: "global"
+      title: string
+      subtitle: string
+      summary: string
+      hints: CompactHint[]
+      buttons: SceneReaderPacket["subscene_views"][string]["buttons"]
+      panels: Record<string, string>
+    }
+  | {
+      mode: "character"
+      title: string
+      subtitle: string
+      summary: string
+      hints: CompactHint[]
+      buttons: ReaderCharacterView["buttons"]
+      panels: Record<string, string>
+    }
+  | {
+      mode: "pair"
+      title: string
+      subtitle: string
+      summary: string
+      hints: CompactHint[]
+      buttons: ReaderPairView["buttons"]
+      panels: Record<string, string>
+    }
+
+function resolveFocusContext(params: {
+  packet: SceneReaderPacket
+  activeSubsceneId: string
+  selectedCharacterIds: string[]
+}): ReaderFocusContext {
+  const view = params.packet.subscene_views[params.activeSubsceneId]
+  const headline = view?.headline || "Reader support"
+
+  if (!view) {
+    return {
+      mode: "global",
+      title: headline,
+      subtitle: "Subscene",
+      summary: "No subscene support available.",
+      hints: [],
+      buttons: [],
+      panels: {},
+    }
+  }
+
+  if (params.selectedCharacterIds.length >= 2) {
+    const pairKey = pairKeyFromIds(params.selectedCharacterIds.slice(0, 2))
+    const pairView = view.pair_views[pairKey]
+    if (pairView) {
+      return {
+        mode: "pair",
+        title: pairView.labels.join(" + "),
+        subtitle: pairView.relation_label,
+        summary: pairView.micro_summary,
+        hints: pairView.hints,
+        buttons: pairView.buttons,
+        panels: pairView.panels,
+      }
+    }
+
+    const labels = params.selectedCharacterIds
+      .map((characterId) => view.character_views[characterId]?.label)
+      .filter((label): label is string => Boolean(label))
+
+    return {
+      mode: "pair",
+      title: labels.join(" + ") || "Selected pair",
+      subtitle: "Relation view",
+      summary: "No pair-specific hint was prepared for this combination.",
+      hints: [],
+      buttons: [],
+      panels: {},
+    }
+  }
+
+  if (params.selectedCharacterIds.length === 1) {
+    const characterView = view.character_views[params.selectedCharacterIds[0]]
+    if (characterView) {
+      return {
+        mode: "character",
+        title: characterView.label,
+        subtitle: characterView.role,
+        summary: characterView.micro_summary,
+        hints: characterView.hints,
+        buttons: characterView.buttons,
+        panels: characterView.panels,
+      }
+    }
+  }
+
+  const globalView: ReaderGlobalView = view.global_view ?? {
+    summary_hint: view.headline || "Subscene overview.",
+    hints: [],
+    buttons: view.buttons ?? [],
+    panels: view.panels ?? {},
+  }
+  return {
+    mode: "global",
+    title: headline,
+    subtitle: "Subscene overview",
+    summary: globalView.summary_hint,
+    hints: globalView.hints,
+    buttons: globalView.buttons,
+    panels: globalView.panels,
+  }
 }
 
 interface Props {
@@ -183,6 +344,8 @@ export default function ReaderScreen({ final1, final2 }: Props) {
   const [sceneIdx, setSceneIdx] = useState(0)
   const [subsceneIdx, setSubsceneIdx] = useState(0)
   const [activePanel, setActivePanel] = useState<string | null>(null)
+  const [showSceneSummary, setShowSceneSummary] = useState(false)
+  const [selectedCharacterIds, setSelectedCharacterIds] = useState<string[]>([])
   const imageFrameRef = useRef<HTMLDivElement | null>(null)
   const [imageMetrics, setImageMetrics] = useState({
     imageKey: "",
@@ -199,6 +362,14 @@ export default function ReaderScreen({ final1, final2 }: Props) {
   const activeSubsceneId = subscene?.subscene_id ?? packet?.default_active_subscene_id ?? ""
   const subsceneView = packet?.subscene_views[activeSubsceneId]
   const mergedOverlay = packet ? buildMergedOverlay(packet, activeSubsceneId, refinementScene) : []
+  const availableCharacterIds = new Set(mergedOverlay.map(({ coarse }) => coarse.character_id))
+  const resolvedSelectedCharacterIds = selectedCharacterIds.filter((id) => availableCharacterIds.has(id)).slice(0, 2)
+  const focusContext = resolveFocusContext({
+    packet,
+    activeSubsceneId,
+    selectedCharacterIds: resolvedSelectedCharacterIds,
+  })
+
   const activeImageKey = packet?.visual.image_path ? `${packet.scene_id}:${packet.visual.image_path}` : ""
   const metricsForActiveImage =
     imageMetrics.imageKey === activeImageKey
@@ -214,16 +385,25 @@ export default function ReaderScreen({ final1, final2 }: Props) {
   const hasNext =
     sceneIdx < final1.packets.length - 1 || subsceneIdx < (packet?.subscene_nav.length ?? 0) - 1
 
+  function resetFocusState() {
+    setActivePanel(null)
+    setSelectedCharacterIds([])
+  }
+
   function selectScene(nextSceneIdx: number, nextSubsceneIdx = 0) {
     setSceneIdx(nextSceneIdx)
     setSubsceneIdx(nextSubsceneIdx)
-    setActivePanel(null)
+    resetFocusState()
+  }
+
+  function selectSubscene(nextSubsceneIdx: number) {
+    setSubsceneIdx(nextSubsceneIdx)
+    resetFocusState()
   }
 
   function goPrev() {
     if (subsceneIdx > 0) {
-      setSubsceneIdx((index) => index - 1)
-      setActivePanel(null)
+      selectSubscene(subsceneIdx - 1)
       return
     }
 
@@ -236,14 +416,26 @@ export default function ReaderScreen({ final1, final2 }: Props) {
 
   function goNext() {
     if (subsceneIdx < (packet?.subscene_nav.length ?? 0) - 1) {
-      setSubsceneIdx((index) => index + 1)
-      setActivePanel(null)
+      selectSubscene(subsceneIdx + 1)
       return
     }
 
     if (sceneIdx < final1.packets.length - 1) {
       selectScene(sceneIdx + 1, 0)
     }
+  }
+
+  function toggleCharacterSelection(characterId: string) {
+    setActivePanel(null)
+    setSelectedCharacterIds((prev) => {
+      if (prev.includes(characterId)) {
+        return prev.filter((id) => id !== characterId)
+      }
+      if (prev.length >= 2) {
+        return [prev[1], characterId]
+      }
+      return [...prev, characterId]
+    })
   }
 
   useEffect(() => {
@@ -283,9 +475,34 @@ export default function ReaderScreen({ final1, final2 }: Props) {
         </select>
       </div>
 
-      <div>
-        <h2 className="text-2xl font-semibold text-zinc-900">{packet.scene_title || packet.scene_id}</h2>
-        <p className="mt-1 text-[15px] leading-7 text-zinc-500">{packet.scene_summary}</p>
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <h2 className="text-2xl font-semibold text-zinc-900">
+            {packet.scene_title || packet.scene_id}
+          </h2>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setShowSceneSummary((value) => !value)}
+              className="rounded-full border border-zinc-200 bg-white px-3 py-1.5 text-sm text-zinc-600 hover:bg-zinc-50"
+            >
+              {showSceneSummary ? "Hide Summary" : "Show Summary"}
+            </button>
+            {packet.visual.chips.map((chip) => (
+              <span
+                key={`${packet.scene_id}:chip:${chip}`}
+                className="rounded-full bg-violet-50 px-2.5 py-1 text-[12px] font-medium text-violet-700"
+              >
+                {chip}
+              </span>
+            ))}
+          </div>
+          {showSceneSummary && (
+            <div className="mt-3 max-w-3xl rounded-xl border border-zinc-200 bg-white px-4 py-3 text-[15px] leading-7 text-zinc-600 shadow-sm">
+              {packet.scene_summary}
+            </div>
+          )}
+        </div>
       </div>
 
       <div className="grid gap-7 xl:grid-cols-[minmax(0,1.18fr)_minmax(720px,1.08fr)] 2xl:grid-cols-[minmax(0,1.24fr)_minmax(820px,1.14fr)]">
@@ -301,10 +518,8 @@ export default function ReaderScreen({ final1, final2 }: Props) {
                 {packet.subscene_nav.map((_, index) => (
                   <button
                     key={index}
-                    onClick={() => {
-                      setSubsceneIdx(index)
-                      setActivePanel(null)
-                    }}
+                    type="button"
+                    onClick={() => selectSubscene(index)}
                     className={`h-2 w-2 rounded-full transition-colors ${
                       index === subsceneIdx ? "bg-zinc-700" : "bg-zinc-300"
                     }`}
@@ -377,10 +592,10 @@ export default function ReaderScreen({ final1, final2 }: Props) {
                     <CharacterButton
                       key={coarse.character_id}
                       coarse={coarse}
-                      activeSubsceneId={activeSubsceneId}
-                      characterPanels={packet.character_panels}
                       left={left}
                       top={top}
+                      selected={resolvedSelectedCharacterIds.includes(coarse.character_id)}
+                      onToggle={() => toggleCharacterSelection(coarse.character_id)}
                     />
                   )
                 })}
@@ -392,13 +607,74 @@ export default function ReaderScreen({ final1, final2 }: Props) {
             )}
           </div>
 
+          <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setSelectedCharacterIds([])
+                  setActivePanel(null)
+                }}
+                className={`rounded-full border px-3 py-1.5 text-xs transition-colors ${
+                  resolvedSelectedCharacterIds.length === 0
+                    ? "border-zinc-900 bg-zinc-900 text-white"
+                    : "border-zinc-200 bg-white text-zinc-600 hover:bg-zinc-50"
+                }`}
+              >
+                All Cast
+              </button>
+              {mergedOverlay.map(({ coarse }) => (
+                <button
+                  key={`focus:${coarse.character_id}`}
+                  type="button"
+                  onClick={() => toggleCharacterSelection(coarse.character_id)}
+                  className={`rounded-full border px-3 py-1.5 text-xs transition-colors ${
+                    resolvedSelectedCharacterIds.includes(coarse.character_id)
+                      ? "border-sky-600 bg-sky-600 text-white"
+                      : "border-zinc-200 bg-white text-zinc-600 hover:bg-zinc-50"
+                  }`}
+                >
+                  {coarse.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
           {subsceneView && (
-            <div className="flex flex-col gap-3 rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">
-              <p className="text-base font-medium text-zinc-700">{subsceneView.headline}</p>
+            <div className="flex flex-col gap-4 rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
+                  {focusContext.mode === "global"
+                    ? "Subscene View"
+                    : focusContext.mode === "character"
+                      ? "Character View"
+                      : "Pair View"}
+                </p>
+                <h3 className="mt-2 text-lg font-semibold text-zinc-900">{focusContext.title}</h3>
+                <p className="mt-1 text-sm text-zinc-500">{focusContext.subtitle}</p>
+                <p className="mt-3 text-[15px] leading-7 text-zinc-700">{focusContext.summary}</p>
+              </div>
+
+              {focusContext.hints.length > 0 && (
+                <div className="grid gap-3 sm:grid-cols-2">
+                  {focusContext.hints.map((hint, index) => (
+                    <div
+                      key={`${focusContext.mode}:hint:${hint.label}:${index}`}
+                      className="rounded-xl border border-zinc-200 bg-zinc-50 px-4 py-3"
+                    >
+                      <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
+                        {hint.label}
+                      </p>
+                      <p className="mt-2 text-sm leading-6 text-zinc-700">{hint.text}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
+
               <div className="flex flex-wrap gap-1.5">
                 {READER_PANEL_BUTTON_ORDER.map((buttonKey) => {
-                  const button = subsceneView.buttons.find((item) => item.key === buttonKey)
-                  const enabled = Boolean(subsceneView.panels[buttonKey])
+                  const button = focusContext.buttons.find((item) => item.key === buttonKey)
+                  const enabled = Boolean(focusContext.panels[buttonKey])
                   const active = enabled && activePanel === buttonKey
                   return (
                     <button
@@ -429,9 +705,10 @@ export default function ReaderScreen({ final1, final2 }: Props) {
                   )
                 })}
               </div>
-              {activePanel && subsceneView.panels[activePanel] && (
+
+              {activePanel && focusContext.panels[activePanel] && (
                 <div className="rounded-lg border border-zinc-200 bg-zinc-50 p-3 text-sm leading-7 text-zinc-600">
-                  {subsceneView.panels[activePanel]}
+                  {focusContext.panels[activePanel]}
                 </div>
               )}
             </div>

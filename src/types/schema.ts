@@ -716,6 +716,11 @@ export interface CastButton {
   reveal: string;
 }
 
+export interface CompactHint {
+  label: string;
+  text: string;
+}
+
 export type InfoButtonType =
   | "action"
   | "event"
@@ -731,12 +736,37 @@ export interface InfoButton {
   reveal: string;
 }
 
+export interface GlobalHintView {
+  summary_hint: string;
+  hints: CompactHint[];
+  buttons: InfoButton[];
+}
+
+export interface CharacterHintUnit {
+  name: string;
+  role: string;
+  micro_summary: string;
+  hints: CompactHint[];
+  buttons: InfoButton[];
+}
+
+export interface PairHintUnit {
+  names: string[];
+  relation_label: string;
+  micro_summary: string;
+  hints: CompactHint[];
+  buttons: InfoButton[];
+}
+
 export interface InterventionUnit {
   subscene_id: string;
   title: string;
   one_line_summary: string;
   cast_buttons: CastButton[];
   info_buttons: InfoButton[];
+  global_view?: GlobalHintView;
+  character_units?: CharacterHintUnit[];
+  pair_units?: PairHintUnit[];
   priority: number;
   jump_targets: string[];
 }
@@ -772,9 +802,40 @@ export interface SubsceneButton {
   label: string;
 }
 
+export interface ReaderCharacterView {
+  character_id: string;
+  label: string;
+  role: string;
+  micro_summary: string;
+  hints: CompactHint[];
+  buttons: SubsceneButton[];
+  panels: Record<string, string>;
+}
+
+export interface ReaderPairView {
+  pair_key: string;
+  character_ids: string[];
+  labels: string[];
+  relation_label: string;
+  micro_summary: string;
+  hints: CompactHint[];
+  buttons: SubsceneButton[];
+  panels: Record<string, string>;
+}
+
+export interface ReaderGlobalView {
+  summary_hint: string;
+  hints: CompactHint[];
+  buttons: SubsceneButton[];
+  panels: Record<string, string>;
+}
+
 export interface SubsceneView {
   headline: string;
   overlay_characters: OverlayCharacter[];
+  global_view: ReaderGlobalView;
+  character_views: Record<string, ReaderCharacterView>;
+  pair_views: Record<string, ReaderPairView>;
   buttons: SubsceneButton[];
   panels: Record<string, string>;
 }
