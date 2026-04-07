@@ -197,17 +197,19 @@ function CharacterButton({
       <button
         type="button"
         onClick={onToggle}
-        className={`flex flex-col items-center gap-1.5 rounded-2xl px-2.5 py-2 shadow-md ring-1 backdrop-blur-sm transition-all hover:-translate-y-0.5 ${
+        aria-label={coarse.label}
+        title={coarse.label}
+        className={`flex flex-col items-center gap-1.5 rounded-2xl px-2.5 py-2 shadow-md ring-2 backdrop-blur-sm transition-all hover:-translate-y-0.5 ${
           selected
             ? "bg-zinc-900 text-white ring-zinc-900"
-            : "bg-white/88 text-sky-700 ring-zinc-200 hover:bg-white"
+            : "bg-white/92 text-sky-700 ring-white/85 hover:bg-white"
         }`}
       >
         <span
-          className={`flex h-11 w-11 items-center justify-center rounded-full shadow-sm ring-2 ${
+          className={`flex h-10 w-10 items-center justify-center rounded-full ${
             selected
-              ? "bg-white/15 text-white ring-white/30"
-              : "bg-gradient-to-b from-sky-500 to-blue-700 text-white ring-white"
+              ? "bg-white/15 text-white"
+              : "bg-gradient-to-b from-sky-500 to-blue-700 text-white"
           }`}
         >
           <CharacterGlyph label={coarse.label} />
@@ -348,6 +350,7 @@ export default function ReaderScreen({ final1, final2, topControls }: Props) {
   const [showSceneSummary, setShowSceneSummary] = useState(false)
   const [selectedCharacterIds, setSelectedCharacterIds] = useState<string[]>([])
   const imageFrameRef = useRef<HTMLDivElement | null>(null)
+  const preloadedImageUrlsRef = useRef<Set<string>>(new Set())
   const [imageMetrics, setImageMetrics] = useState({
     imageKey: "",
     naturalWidth: 0,
@@ -380,6 +383,10 @@ export default function ReaderScreen({ final1, final2, topControls }: Props) {
           naturalWidth: 0,
           naturalHeight: 0,
         }
+  const imageAspectRatio =
+    metricsForActiveImage.naturalWidth > 0 && metricsForActiveImage.naturalHeight > 0
+      ? metricsForActiveImage.naturalWidth / metricsForActiveImage.naturalHeight
+      : 4 / 3
   const containedRect = getContainedImageRect(metricsForActiveImage)
 
   const hasPrev = sceneIdx > 0 || subsceneIdx > 0
@@ -457,10 +464,31 @@ export default function ReaderScreen({ final1, final2, topControls }: Props) {
     return () => observer.disconnect()
   }, [packet?.scene_id])
 
+  useEffect(() => {
+    if (typeof window === "undefined") return
+
+    const sceneIndexesToPreload = [
+      sceneIdx,
+      sceneIdx + 1,
+      sceneIdx + 2,
+      sceneIdx - 1,
+    ]
+
+    for (const index of sceneIndexesToPreload) {
+      const imagePath = final1.packets[index]?.visual.image_path
+      if (!imagePath || preloadedImageUrlsRef.current.has(imagePath)) continue
+
+      preloadedImageUrlsRef.current.add(imagePath)
+      const image = new window.Image()
+      image.decoding = "async"
+      image.src = imagePath
+    }
+  }, [final1.packets, sceneIdx])
+
   if (!packet) return <div className="p-8 text-zinc-400">No scenes available.</div>
 
   return (
-    <div className="mx-auto flex w-full max-w-[1920px] flex-col gap-5 p-6">
+    <div className="mx-auto flex w-full max-w-[2080px] flex-col gap-5 p-6">
       <div className="flex flex-wrap items-center gap-3">
         {topControls}
         <div className="flex items-center gap-3">
@@ -509,7 +537,7 @@ export default function ReaderScreen({ final1, final2, topControls }: Props) {
         </div>
       </div>
 
-      <div className="grid gap-7 xl:grid-cols-[minmax(0,1.18fr)_minmax(720px,1.08fr)] 2xl:grid-cols-[minmax(0,1.24fr)_minmax(820px,1.14fr)]">
+      <div className="grid gap-7 xl:grid-cols-[minmax(0,1.12fr)_minmax(740px,1.14fr)] 2xl:grid-cols-[minmax(0,1.16fr)_minmax(860px,1.18fr)]">
         <div className="flex min-w-0 flex-col gap-5">
           {packet.subscene_nav.length > 0 && (
             <div className="flex flex-col gap-1.5 rounded-xl border border-zinc-200 bg-zinc-50 px-4 py-3">
@@ -531,7 +559,7 @@ export default function ReaderScreen({ final1, final2, topControls }: Props) {
             </div>
           )}
 
-          <div className="flex flex-col gap-4 rounded-2xl border border-zinc-200 bg-white px-6 py-5 text-[16px] leading-8 text-zinc-700 shadow-sm">
+          <div className="flex flex-col gap-5 rounded-2xl border border-zinc-200 bg-white px-7 py-6 text-[17px] leading-9 text-zinc-700 shadow-sm xl:text-[18px]">
             {(subscene?.body_paragraphs ?? packet.body_paragraphs).map((paragraph, index) => (
               <p key={index}>{paragraph}</p>
             ))}
@@ -557,8 +585,13 @@ export default function ReaderScreen({ final1, final2, topControls }: Props) {
           )}
         </div>
 
-        <div className="flex min-w-0 flex-col gap-5">
-          <div className="relative min-h-[700px] overflow-hidden rounded-2xl border border-zinc-200 bg-zinc-100 shadow-sm 2xl:min-h-[820px]">
+        <div className="flex min-w-0 flex-col gap-5 xl:sticky xl:top-6 xl:max-h-[calc(100vh-9rem)] xl:self-start xl:overflow-y-auto xl:pr-2">
+          <div
+            className={`relative w-full overflow-hidden rounded-2xl border border-zinc-200 bg-zinc-100 shadow-sm ${
+              packet.visual.image_path ? "" : "min-h-[420px]"
+            }`}
+            style={packet.visual.image_path ? { aspectRatio: imageAspectRatio } : undefined}
+          >
             {packet.visual.image_path ? (
               <div ref={imageFrameRef} className="relative h-full w-full p-4">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -566,6 +599,9 @@ export default function ReaderScreen({ final1, final2, topControls }: Props) {
                   key={`${packet.scene_id}:${packet.visual.image_path}`}
                   src={packet.visual.image_path}
                   alt="scene"
+                  loading="eager"
+                  fetchPriority="high"
+                  decoding="async"
                   className="h-full w-full object-contain"
                   onLoad={(event) => {
                     const target = event.currentTarget

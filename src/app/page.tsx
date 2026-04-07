@@ -19,6 +19,14 @@ import type { ChapterMeta } from "@/types/ui"
 
 type View = "upload" | "pipeline" | "reader"
 
+function getPreferredRunId(runs: RunMeta[]): string {
+  return runs.find((item) => item.favorite)?.runId ?? runs[0]?.runId ?? ""
+}
+
+function getErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
+
 export default function Home() {
   const [view, setView] = useState<View>("upload")
   const [docId, setDocId] = useState("")
@@ -35,6 +43,8 @@ export default function Home() {
   }, [])
 
   useEffect(() => {
+    let cancelled = false
+
     async function loadRuns() {
       if (!docId || !selectedChapterId) {
         setAvailableRuns([])
@@ -44,14 +54,20 @@ export default function Home() {
       setLoadingRuns(true)
       try {
         const runs = await listRuns(docId, selectedChapterId)
+        if (cancelled) return
         setAvailableRuns(runs)
       } finally {
-        setLoadingRuns(false)
+        if (!cancelled) {
+          setLoadingRuns(false)
+        }
       }
     }
 
     void loadRuns()
-  }, [docId, selectedChapterId, runId])
+    return () => {
+      cancelled = true
+    }
+  }, [docId, selectedChapterId])
 
   function createFreshRunId(existing: string[] = []): string {
     return createTimestampRunId([runId, ...existing])
@@ -86,11 +102,10 @@ export default function Home() {
     setRunId("")
   }
 
-  const favoriteRuns = availableRuns.filter((item) => item.favorite)
   const currentRunMeta = availableRuns.find((item) => item.runId === runId)
   const currentRunIsSaved = Boolean(currentRunMeta)
   const currentRunFavorite = currentRunMeta?.favorite === true
-  const preferredReaderRunId = favoriteRuns[0]?.runId ?? availableRuns[0]?.runId ?? ""
+  const preferredReaderRunId = getPreferredRunId(availableRuns)
 
   useEffect(() => {
     if (view !== "reader" || loadingRuns) return
@@ -304,6 +319,7 @@ export default function Home() {
             chapterId={selectedChapterId}
             runId={runId}
             chapters={chapters}
+            loadingRuns={loadingRuns}
             onChapterChange={handleReaderChapterChange}
           />
         )}
@@ -321,19 +337,35 @@ export default function Home() {
 function ReaderChapterControl({
   chapterId,
   chapters,
+  disabled = false,
   onChapterChange,
 }: {
   chapterId: string
   chapters: ChapterMeta[]
+  disabled?: boolean
   onChapterChange: (chapterId: string) => void
 }) {
+  const selectedChapterIndex = chapters.findIndex((chapter) => chapter.chapterId === chapterId)
+
   return (
     <div className="flex items-center gap-2">
       <label className="text-sm font-medium text-zinc-600">Chapter</label>
+      <button
+        type="button"
+        onClick={() => {
+          const prev = chapters[selectedChapterIndex - 1]
+          if (prev) onChapterChange(prev.chapterId)
+        }}
+        disabled={disabled || selectedChapterIndex <= 0}
+        className="rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-sm text-zinc-700 hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-40"
+      >
+        Prev
+      </button>
       <select
         value={chapterId}
         onChange={(event) => onChapterChange(event.target.value)}
-        className="rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-sm"
+        disabled={disabled}
+        className="min-w-[260px] rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-sm disabled:cursor-not-allowed disabled:opacity-60"
       >
         {chapters.map((chapter) => (
           <option key={chapter.chapterId} value={chapter.chapterId}>
@@ -341,6 +373,17 @@ function ReaderChapterControl({
           </option>
         ))}
       </select>
+      <button
+        type="button"
+        onClick={() => {
+          const next = chapters[selectedChapterIndex + 1]
+          if (next) onChapterChange(next.chapterId)
+        }}
+        disabled={disabled || selectedChapterIndex < 0 || selectedChapterIndex >= chapters.length - 1}
+        className="rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-sm text-zinc-700 hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-40"
+      >
+        Next
+      </button>
     </div>
   )
 }
@@ -350,12 +393,14 @@ function ReaderView({
   chapterId,
   runId,
   chapters,
+  loadingRuns,
   onChapterChange,
 }: {
   docId: string
   chapterId: string
   runId: string
   chapters: ChapterMeta[]
+  loadingRuns: boolean
   onChapterChange: (chapterId: string) => void
 }) {
   const [final1, setFinal1] = useState<SceneReaderPackageLog | null>(null)
@@ -374,13 +419,16 @@ function ReaderView({
         ])
 
         if (!loadedFinal1 && !loadedFinal2) {
-          throw new Error("Run not found")
+          setFinal1(null)
+          setFinal2(null)
+          setError(null)
+          return
         }
 
         setFinal1(loadedFinal1)
         setFinal2(loadedFinal2)
-      } catch (loadError) {
-        setError(String(loadError))
+      } catch (loadError: unknown) {
+        setError(getErrorMessage(loadError))
       } finally {
         setLoading(false)
       }
@@ -398,11 +446,35 @@ function ReaderView({
   }, [docId, chapterId, runId])
 
   if (loading) {
-    return <div className="mt-20 text-center text-zinc-400">Loading reader data...</div>
+    return (
+      <div className="mx-auto flex w-full max-w-[1920px] flex-col gap-5 p-6">
+        <ReaderChapterControl
+          chapterId={chapterId}
+          chapters={chapters}
+          disabled={loadingRuns}
+          onChapterChange={onChapterChange}
+        />
+        <div className="rounded-lg border border-dashed border-zinc-300 bg-white px-4 py-3 text-sm text-zinc-500">
+          Loading reader data...
+        </div>
+      </div>
+    )
   }
 
   if (error) {
-    return <div className="mt-20 text-center text-red-400">{error}</div>
+    return (
+      <div className="mx-auto flex w-full max-w-[1920px] flex-col gap-5 p-6">
+        <ReaderChapterControl
+          chapterId={chapterId}
+          chapters={chapters}
+          disabled={loadingRuns}
+          onChapterChange={onChapterChange}
+        />
+        <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">
+          {error}
+        </div>
+      </div>
+    )
   }
 
   if (!runId) {
@@ -411,10 +483,11 @@ function ReaderView({
         <ReaderChapterControl
           chapterId={chapterId}
           chapters={chapters}
+          disabled={loadingRuns}
           onChapterChange={onChapterChange}
         />
         <div className="rounded-lg border border-dashed border-zinc-300 bg-white px-4 py-3 text-sm text-zinc-500">
-          No saved runs for this chapter.
+          {loadingRuns ? "Loading reader data..." : "No saved runs for this chapter."}
         </div>
       </div>
     )
@@ -426,10 +499,11 @@ function ReaderView({
         <ReaderChapterControl
           chapterId={chapterId}
           chapters={chapters}
+          disabled={loadingRuns}
           onChapterChange={onChapterChange}
         />
         <div className="rounded-lg border border-dashed border-zinc-300 bg-white px-4 py-3 text-sm text-zinc-500">
-          Run FINAL.1 first to see the reader.
+          결과가 없습니다. 실행해주세요.
         </div>
       </div>
     )
@@ -443,6 +517,7 @@ function ReaderView({
         <ReaderChapterControl
           chapterId={chapterId}
           chapters={chapters}
+          disabled={loadingRuns}
           onChapterChange={onChapterChange}
         />
       )}

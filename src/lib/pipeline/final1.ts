@@ -373,6 +373,7 @@ function buildSubsceneBlocks(
   sceneId: string,
   sub3Log: ValidatedSubscenes,
   pidText: Map<number, string>,
+  sceneNarrativePids: number[],
   sceneOverlayCharacters: OverlayCharacter[],
   interventionLog?: InterventionPackages,
 ): {
@@ -391,11 +392,10 @@ function buildSubsceneBlocks(
   const views: Record<string, SubsceneView> = {}
 
   for (const sub of item.validated_subscenes) {
-    const bodyParagraphs: string[] = []
-    for (let pid = sub.start_pid; pid <= sub.end_pid; pid++) {
-      const text = pidText.get(pid)
-      if (text) bodyParagraphs.push(text)
-    }
+    const bodyParagraphs = sceneNarrativePids
+      .filter((pid) => pid >= sub.start_pid && pid <= sub.end_pid)
+      .map((pid) => pidText.get(pid))
+      .filter((text): text is string => Boolean(text))
 
     nav.push({
       subscene_id: sub.subscene_id,
@@ -447,6 +447,7 @@ export function runSceneReaderPackage(
   for (const entry of groundedLog.validated) {
     const sceneId = entry.scene_id
     const sceneIndex = entry.validated_scene_index as Record<string, unknown>
+    const scenePacket = packetLog.packets.find((packet) => packet.scene_id === sceneId)
 
     const chips = buildChips(sceneId, groundedLog)
     const overlayCharacters = buildOverlayCharacters(sceneId, blueprintLog, groundedLog, packetLog)
@@ -466,16 +467,16 @@ export function runSceneReaderPackage(
       sceneId,
       sub3Log,
       pidText,
+      scenePacket?.pids ?? [],
       overlayCharacters,
       interventionLog,
     )
 
     const [startPid, endPid] = scenePidRange.get(sceneId) ?? [0, 0]
-    const bodyParagraphs: string[] = []
-    for (let pid = startPid; pid <= endPid; pid++) {
-      const text = pidText.get(pid)
-      if (text) bodyParagraphs.push(text)
-    }
+    const bodyParagraphs = (scenePacket?.pids ?? [])
+      .filter((pid) => pid >= startPid && pid <= endPid)
+      .map((pid) => pidText.get(pid))
+      .filter((text): text is string => Boolean(text))
 
     packets.push({
       scene_id: sceneId,
