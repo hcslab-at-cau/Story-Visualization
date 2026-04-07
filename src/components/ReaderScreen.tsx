@@ -6,7 +6,7 @@
  * and renders the clean reader UI.
  */
 
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useRef, useState, type ReactNode } from "react"
 import type {
   CompactHint,
   OverlayCharacter,
@@ -338,9 +338,10 @@ function resolveFocusContext(params: {
 interface Props {
   final1: SceneReaderPackageLog
   final2?: OverlayRefinementResult
+  topControls?: ReactNode
 }
 
-export default function ReaderScreen({ final1, final2 }: Props) {
+export default function ReaderScreen({ final1, final2, topControls }: Props) {
   const [sceneIdx, setSceneIdx] = useState(0)
   const [subsceneIdx, setSubsceneIdx] = useState(0)
   const [activePanel, setActivePanel] = useState<string | null>(null)
@@ -460,19 +461,22 @@ export default function ReaderScreen({ final1, final2 }: Props) {
 
   return (
     <div className="mx-auto flex w-full max-w-[1920px] flex-col gap-5 p-6">
-      <div className="flex items-center gap-3">
-        <label className="text-sm font-medium text-zinc-600">Scene</label>
-        <select
-          value={sceneIdx}
-          onChange={(event) => selectScene(Number(event.target.value), 0)}
-          className="rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-sm"
-        >
-          {final1.packets.map((scenePacket, index) => (
-            <option key={scenePacket.scene_id} value={index}>
-              {scenePacket.scene_title || scenePacket.scene_id}
-            </option>
-          ))}
-        </select>
+      <div className="flex flex-wrap items-center gap-3">
+        {topControls}
+        <div className="flex items-center gap-3">
+          <label className="text-sm font-medium text-zinc-600">Scene</label>
+          <select
+            value={sceneIdx}
+            onChange={(event) => selectScene(Number(event.target.value), 0)}
+            className="min-w-[220px] rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-sm"
+          >
+            {final1.packets.map((scenePacket, index) => (
+              <option key={scenePacket.scene_id} value={index}>
+                {scenePacket.scene_title || scenePacket.scene_id}
+              </option>
+            ))}
+          </select>
+        </div>
       </div>
 
       <div className="flex flex-wrap items-start justify-between gap-4">
@@ -488,18 +492,18 @@ export default function ReaderScreen({ final1, final2 }: Props) {
             >
               {showSceneSummary ? "Hide Summary" : "Show Summary"}
             </button>
-            {packet.visual.chips.map((chip) => (
-              <span
-                key={`${packet.scene_id}:chip:${chip}`}
-                className="rounded-full bg-violet-50 px-2.5 py-1 text-[12px] font-medium text-violet-700"
-              >
-                {chip}
-              </span>
-            ))}
           </div>
           {showSceneSummary && (
             <div className="mt-3 max-w-3xl rounded-xl border border-zinc-200 bg-white px-4 py-3 text-[15px] leading-7 text-zinc-600 shadow-sm">
-              {packet.scene_summary}
+              <p>{packet.scene_summary}</p>
+              {subscene?.headline && (
+                <div className="mt-3 border-t border-zinc-200 pt-3">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
+                    Subscene
+                  </p>
+                  <p className="mt-1 text-zinc-700">{subscene.headline}</p>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -512,8 +516,6 @@ export default function ReaderScreen({ final1, final2 }: Props) {
               <p className="text-xs font-medium uppercase tracking-wide text-zinc-400">
                 {subsceneIdx + 1} / {packet.subscene_nav.length} · {subscene?.label}
               </p>
-              <p className="text-base font-medium text-zinc-700">{subscene?.headline}</p>
-
               <div className="mt-1 flex gap-1.5">
                 {packet.subscene_nav.map((_, index) => (
                   <button
@@ -605,39 +607,6 @@ export default function ReaderScreen({ final1, final2 }: Props) {
                 {packet.visual.fallback_blueprint_available ? "Blueprint available" : "No image"}
               </div>
             )}
-          </div>
-
-          <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">
-            <div className="flex flex-wrap items-center gap-2">
-              <button
-                type="button"
-                onClick={() => {
-                  setSelectedCharacterIds([])
-                  setActivePanel(null)
-                }}
-                className={`rounded-full border px-3 py-1.5 text-xs transition-colors ${
-                  resolvedSelectedCharacterIds.length === 0
-                    ? "border-zinc-900 bg-zinc-900 text-white"
-                    : "border-zinc-200 bg-white text-zinc-600 hover:bg-zinc-50"
-                }`}
-              >
-                All Cast
-              </button>
-              {mergedOverlay.map(({ coarse }) => (
-                <button
-                  key={`focus:${coarse.character_id}`}
-                  type="button"
-                  onClick={() => toggleCharacterSelection(coarse.character_id)}
-                  className={`rounded-full border px-3 py-1.5 text-xs transition-colors ${
-                    resolvedSelectedCharacterIds.includes(coarse.character_id)
-                      ? "border-sky-600 bg-sky-600 text-white"
-                      : "border-zinc-200 bg-white text-zinc-600 hover:bg-zinc-50"
-                  }`}
-                >
-                  {coarse.label}
-                </button>
-              ))}
-            </div>
           </div>
 
           {subsceneView && (
