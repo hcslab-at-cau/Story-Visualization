@@ -30,6 +30,7 @@ import {
   query,
   orderBy,
   limit,
+  writeBatch,
   type DocumentData,
 } from "firebase/firestore"
 import { getDb } from "./firebase"
@@ -139,6 +140,12 @@ export interface ChapterMeta {
   chapterId: string
   title: string
   index: number
+}
+
+export interface RunMeta {
+  runId: string
+  updatedAt: unknown
+  favorite?: boolean
 }
 
 export async function saveRawChapter(
@@ -332,12 +339,54 @@ export async function deleteRun(
   await deleteDoc(runDocRef(docId, chapterId, runId))
 }
 
+export async function setRunFavorite(
+  docId: string,
+  chapterId: string,
+  runId: string,
+  favorite: boolean,
+): Promise<void> {
+  const db = getDb()
+
+  if (!favorite) {
+    await setDoc(
+      runDocRef(docId, chapterId, runId),
+      {
+        favorite: false,
+        updatedAt: serverTimestamp(),
+      },
+      { merge: true },
+    )
+    return
+  }
+
+  const runsSnap = await getDocs(
+    collection(db, "documents", docId, "chapters", chapterId, "runs"),
+  )
+  const batch = writeBatch(db)
+
+  for (const runDoc of runsSnap.docs) {
+    batch.set(
+      runDoc.ref,
+      { favorite: runDoc.id === runId },
+      { merge: true },
+    )
+  }
+
+  batch.set(
+    runDocRef(docId, chapterId, runId),
+    { favorite: true, updatedAt: serverTimestamp() },
+    { merge: true },
+  )
+
+  await batch.commit()
+}
+
 /** List runs for a chapter (most recent first). */
 export async function listRuns(
   docId: string,
   chapterId: string,
   maxRuns = 20,
-): Promise<Array<{ runId: string; updatedAt: unknown }>> {
+): Promise<RunMeta[]> {
   const db = getDb()
   const snap = await getDocs(
     query(
@@ -349,6 +398,7 @@ export async function listRuns(
   return snap.docs.map((d) => ({
     runId: d.id,
     updatedAt: (d.data() as DocumentData).updatedAt,
+    favorite: (d.data() as DocumentData).favorite === true,
   }))
 }
 

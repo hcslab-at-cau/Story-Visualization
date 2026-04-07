@@ -5,7 +5,14 @@ import EpubUploader from "@/components/EpubUploader"
 import ExistingDocumentsPicker from "@/components/ExistingDocumentsPicker"
 import PipelineRunner from "@/components/PipelineRunner"
 import ReaderScreen from "@/components/ReaderScreen"
-import { deleteRun, listRuns, loadStageResult, stageKey } from "@/lib/firestore"
+import {
+  deleteRun,
+  listRuns,
+  loadStageResult,
+  setRunFavorite,
+  stageKey,
+  type RunMeta,
+} from "@/lib/firestore"
 import { createTimestampRunId } from "@/lib/run-id"
 import type { OverlayRefinementResult, SceneReaderPackageLog } from "@/types/schema"
 import type { ChapterMeta } from "@/types/ui"
@@ -17,10 +24,15 @@ export default function Home() {
   const [docId, setDocId] = useState("")
   const [chapters, setChapters] = useState<ChapterMeta[]>([])
   const [selectedChapterId, setSelectedChapterId] = useState("")
-  const [availableRuns, setAvailableRuns] = useState<Array<{ runId: string; updatedAt: unknown }>>([])
+  const [availableRuns, setAvailableRuns] = useState<RunMeta[]>([])
   const [loadingRuns, setLoadingRuns] = useState(false)
   const [deletingRun, setDeletingRun] = useState(false)
-  const [runId, setRunId] = useState(() => createTimestampRunId())
+  const [togglingFavorite, setTogglingFavorite] = useState(false)
+  const [runId, setRunId] = useState("")
+
+  useEffect(() => {
+    setRunId((current) => current || createTimestampRunId())
+  }, [])
 
   useEffect(() => {
     async function loadRuns() {
@@ -63,10 +75,32 @@ export default function Home() {
 
   const selectedChapterIndex = chapters.findIndex((chapter) => chapter.chapterId === selectedChapterId)
 
-  function handleChapterChange(chapterId: string) {
+  function handlePipelineChapterChange(chapterId: string) {
     setSelectedChapterId(chapterId)
     setRunId(createFreshRunId())
   }
+
+  function handleReaderChapterChange(chapterId: string) {
+    setSelectedChapterId(chapterId)
+    setAvailableRuns([])
+    setRunId("")
+  }
+
+  const favoriteRuns = availableRuns.filter((item) => item.favorite)
+  const currentRunMeta = availableRuns.find((item) => item.runId === runId)
+  const currentRunIsSaved = Boolean(currentRunMeta)
+  const currentRunFavorite = currentRunMeta?.favorite === true
+  const preferredReaderRunId = favoriteRuns[0]?.runId ?? availableRuns[0]?.runId ?? ""
+
+  useEffect(() => {
+    if (view !== "reader" || loadingRuns) return
+    if (!preferredReaderRunId) {
+      if (runId) setRunId("")
+      return
+    }
+    if (runId === preferredReaderRunId) return
+    setRunId(preferredReaderRunId)
+  }, [view, loadingRuns, preferredReaderRunId, runId])
 
   async function handleDeleteRun() {
     if (!docId || !selectedChapterId || deletingRun) return
@@ -81,6 +115,18 @@ export default function Home() {
       setRunId(remainingRuns[0]?.runId ?? createTimestampRunId([runId]))
     } finally {
       setDeletingRun(false)
+    }
+  }
+
+  async function handleToggleFavorite() {
+    if (!docId || !selectedChapterId || !runId || !currentRunIsSaved || togglingFavorite) return
+    setTogglingFavorite(true)
+    try {
+      await setRunFavorite(docId, selectedChapterId, runId, !currentRunFavorite)
+      const runs = await listRuns(docId, selectedChapterId)
+      setAvailableRuns(runs)
+    } finally {
+      setTogglingFavorite(false)
     }
   }
 
@@ -106,7 +152,11 @@ export default function Home() {
         </nav>
       </header>
 
-      <main className="min-h-0 flex-1 overflow-hidden p-6 text-base">
+      <main
+        className={`min-h-0 flex-1 text-base ${
+          view === "reader" ? "overflow-y-auto p-0" : "overflow-hidden p-6"
+        }`}
+      >
         {view === "upload" && (
           <div className="mx-auto mt-10 grid max-w-6xl gap-6 lg:grid-cols-[minmax(0,1.1fr)_minmax(340px,0.9fr)]">
             <EpubUploader onUploaded={handleUploaded} />
@@ -125,7 +175,7 @@ export default function Home() {
                       type="button"
                       onClick={() => {
                         const prev = chapters[selectedChapterIndex - 1]
-                        if (prev) handleChapterChange(prev.chapterId)
+                        if (prev) handlePipelineChapterChange(prev.chapterId)
                       }}
                       disabled={selectedChapterIndex <= 0}
                       className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-700 hover:bg-zinc-50 disabled:opacity-40"
@@ -134,12 +184,12 @@ export default function Home() {
                     </button>
                     <select
                       value={selectedChapterId}
-                      onChange={(event) => handleChapterChange(event.target.value)}
+                      onChange={(event) => handlePipelineChapterChange(event.target.value)}
                       className="min-w-0 flex-1 rounded-lg border border-zinc-200 bg-white px-3 py-2 text-base"
                     >
                       {chapters.map((chapter) => (
                         <option key={chapter.chapterId} value={chapter.chapterId}>
-                          {`Chapter ${chapter.index + 1} · ${chapter.title}`}
+                          {`Chapter ${chapter.index + 1} - ${chapter.title}`}
                         </option>
                       ))}
                     </select>
@@ -147,7 +197,7 @@ export default function Home() {
                       type="button"
                       onClick={() => {
                         const next = chapters[selectedChapterIndex + 1]
-                        if (next) handleChapterChange(next.chapterId)
+                        if (next) handlePipelineChapterChange(next.chapterId)
                       }}
                       disabled={selectedChapterIndex < 0 || selectedChapterIndex >= chapters.length - 1}
                       className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-700 hover:bg-zinc-50 disabled:opacity-40"
@@ -172,6 +222,19 @@ export default function Home() {
                     >
                       New
                     </button>
+                    <button
+                      type="button"
+                      onClick={() => void handleToggleFavorite()}
+                      disabled={!currentRunIsSaved || togglingFavorite}
+                      className={`rounded-lg border px-3 py-2 text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
+                        currentRunFavorite
+                          ? "border-amber-300 bg-amber-50 text-amber-700 hover:bg-amber-100"
+                          : "border-zinc-200 bg-white text-zinc-600 hover:bg-zinc-50"
+                      }`}
+                      title={currentRunIsSaved ? "Toggle favorite for this saved run" : "Save a run first to favorite it"}
+                    >
+                      {currentRunFavorite ? "* Favorite" : "Favorite"}
+                    </button>
                   </div>
                 </div>
 
@@ -192,7 +255,7 @@ export default function Home() {
                       </option>
                       {availableRuns.map((item) => (
                         <option key={item.runId} value={item.runId}>
-                          {item.runId}
+                          {`${item.favorite ? "* " : ""}${item.runId}`}
                         </option>
                       ))}
                     </select>
@@ -236,7 +299,13 @@ export default function Home() {
         )}
 
         {view === "reader" && docId && (
-          <ReaderView docId={docId} chapterId={selectedChapterId} runId={runId} />
+          <ReaderView
+            docId={docId}
+            chapterId={selectedChapterId}
+            runId={runId}
+            chapters={chapters}
+            onChapterChange={handleReaderChapterChange}
+          />
         )}
 
         {view !== "upload" && !docId && (
@@ -249,14 +318,45 @@ export default function Home() {
   )
 }
 
+function ReaderChapterControl({
+  chapterId,
+  chapters,
+  onChapterChange,
+}: {
+  chapterId: string
+  chapters: ChapterMeta[]
+  onChapterChange: (chapterId: string) => void
+}) {
+  return (
+    <div className="flex items-center gap-2">
+      <label className="text-sm font-medium text-zinc-600">Chapter</label>
+      <select
+        value={chapterId}
+        onChange={(event) => onChapterChange(event.target.value)}
+        className="rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-sm"
+      >
+        {chapters.map((chapter) => (
+          <option key={chapter.chapterId} value={chapter.chapterId}>
+            {`Chapter ${chapter.index + 1} - ${chapter.title}`}
+          </option>
+        ))}
+      </select>
+    </div>
+  )
+}
+
 function ReaderView({
   docId,
   chapterId,
   runId,
+  chapters,
+  onChapterChange,
 }: {
   docId: string
   chapterId: string
   runId: string
+  chapters: ChapterMeta[]
+  onChapterChange: (chapterId: string) => void
 }) {
   const [final1, setFinal1] = useState<SceneReaderPackageLog | null>(null)
   const [final2, setFinal2] = useState<OverlayRefinementResult | null>(null)
@@ -288,7 +388,13 @@ function ReaderView({
 
     if (docId && chapterId && runId) {
       void load()
+      return
     }
+
+    setFinal1(null)
+    setFinal2(null)
+    setLoading(false)
+    setError(null)
   }, [docId, chapterId, runId])
 
   if (loading) {
@@ -299,9 +405,47 @@ function ReaderView({
     return <div className="mt-20 text-center text-red-400">{error}</div>
   }
 
-  if (!final1) {
-    return <div className="mt-20 text-center text-zinc-400">Run FINAL.1 first to see the reader.</div>
+  if (!runId) {
+    return (
+      <div className="mx-auto flex w-full max-w-[1920px] flex-col gap-5 p-6">
+        <ReaderChapterControl
+          chapterId={chapterId}
+          chapters={chapters}
+          onChapterChange={onChapterChange}
+        />
+        <div className="rounded-lg border border-dashed border-zinc-300 bg-white px-4 py-3 text-sm text-zinc-500">
+          No saved runs for this chapter.
+        </div>
+      </div>
+    )
   }
 
-  return <ReaderScreen final1={final1} final2={final2 ?? undefined} />
+  if (!final1) {
+    return (
+      <div className="mx-auto flex w-full max-w-[1920px] flex-col gap-5 p-6">
+        <ReaderChapterControl
+          chapterId={chapterId}
+          chapters={chapters}
+          onChapterChange={onChapterChange}
+        />
+        <div className="rounded-lg border border-dashed border-zinc-300 bg-white px-4 py-3 text-sm text-zinc-500">
+          Run FINAL.1 first to see the reader.
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <ReaderScreen
+      final1={final1}
+      final2={final2 ?? undefined}
+      topControls={(
+        <ReaderChapterControl
+          chapterId={chapterId}
+          chapters={chapters}
+          onChapterChange={onChapterChange}
+        />
+      )}
+    />
+  )
 }
