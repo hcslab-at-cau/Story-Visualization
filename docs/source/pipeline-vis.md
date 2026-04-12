@@ -1,219 +1,131 @@
-# Pipeline: VIS Branch
+# Pipeline: VIS Branch (현재 구현 기준)
 
-`Story-Visualization` 현재 기준에서 VIS 브랜치는 아직 운영 단계가 아니다.  
-UI와 stage registry에는 자리만 잡혀 있고, 실제 포트는 `VIS.1`~`VIS.4` 모두 미구현 상태다.
+이 문서는 `Story-Visualization`의 VIS.1 ~ VIS.4가 현재 코드에서 어떻게 동작하는지 정리합니다.
 
----
+## 구현 상태 요약
 
-## 현재 상태
-
-| Stage | 원본 역할 | 현재 상태 | 비고 |
+| Stage | 파일 | 상태 | 설명 |
 |---|---|---|---|
-| VIS.1 | semantic clarification | 미구현 | `PIPELINE_STAGES`에는 등록됨 |
-| VIS.2 | stage blueprint extraction | 미구현 | schema만 존재 |
-| VIS.3 | render package compilation | 미구현 | API route 없음 |
-| VIS.4 | image generation | 미구현 | API route 없음 |
+| VIS.1 | `src/lib/pipeline/vis1.ts` | 구현됨 | scene 의미 명확화(semantic clarification) |
+| VIS.2 | `src/lib/pipeline/vis2.ts` | 구현됨 | stage blueprint 추출 + 규칙 보정 |
+| VIS.3 | `src/lib/pipeline/vis3.ts` | 구현됨 | 이미지 생성용 render prompt 패키지 컴파일 |
+| VIS.4 | `src/lib/pipeline/vis4.ts` | 구현됨 | 이미지 생성 + Firebase Storage 업로드 |
 
-현재 프로젝트에서 VIS 관련 실제 UI 표시는 다음 정도만 남아 있다.
+API route도 모두 존재합니다.
 
-- `src/types/ui.ts`에서 VIS stage가 `implemented: false`로 표시된다.
-- `PipelineRunner`는 VIS stage를 사이드바에 보여주지만 `Pending` badge와 안내 문구만 출력한다.
-- `ReaderScreen`의 visual block은 현재 VIS 산출물이 아니라 `FINAL.1`이 만든 placeholder / overlay 데이터를 사용한다.
-
-즉 이 문서는 "현재 구현 설명"보다는 "원본 Story-Decomposition 기준 VIS 브랜치가 무엇을 해야 하는지"를 남기는 참조 문서다.
-
-## 단계별 이전 결과
-
-| Stage | 필요 입력 | 이전 단계 기준 |
-|---|---|---|
-| VIS.1 | `GroundedSceneModel`, `ScenePackets` | SCENE.3, SCENE.1 필요 |
-| VIS.2 | `GroundedSceneModel`, `ScenePackets`, optional `VisualGrounding` | SCENE.3, SCENE.1 필요, VIS.1 있으면 함께 사용 |
-| VIS.3 | `StageBlueprint` | VIS.2 필요 |
-| VIS.4 | `RenderPackage` 또는 `StageBlueprint` | 기본적으로 VIS.3 필요, repair/fallback용으로 VIS.2도 사용 |
-
----
-
-## 참조 흐름
-
-원본 설계에서 VIS 브랜치는 `SCENE.3` 이후 이렇게 분기된다.
-
-```text
-SCENE.3
-  -> VIS.1 Semantic Clarification
-  -> VIS.2 Stage Blueprint
-  -> VIS.3 Render Package
-  -> VIS.4 Image Generation
-```
-
-핵심 목적은 scene text를 그대로 그리는 것이 아니라,  
-scene-level grounding 결과를 render-safe visual spec으로 바꾸고 이미지 생성까지 연결하는 것이다.
+- `/api/pipeline/vis1`
+- `/api/pipeline/vis2`
+- `/api/pipeline/vis3`
+- `/api/pipeline/vis4`
 
 ---
 
 ## VIS.1 - Semantic Clarification
 
-### 원본 역할
+입력(핵심):
 
-- scene text 안의 모호한 표현을 시각적으로 안전한 의미로 정규화
-- `environment_type`, `stage_archetype`, `canonical_place_key` 추출
-- ambiguity resolution 목록과 `grounded_scene_description` 생성
+- `ScenePackets` (`SCENE.1`)
+- `GroundedSceneModel` (`SCENE.3`)
+- LLM client
 
-### 원본 입력
+출력:
 
-- `GroundedSceneModel` from `SCENE.3`
-- `ScenePackets` from `SCENE.1`
+- `VisualGrounding`
+  - `environment_type`
+  - `stage_archetype`
+  - `canonical_place_key`
+  - `ambiguity_resolutions`
+  - `grounded_scene_description`
+  - `visual_constraints`
+  - `avoid`
 
-### 원본 출력
+특징:
 
-`VisualGrounding`
-
-핵심 필드:
-
-- `packets[].scene_id`
-- `packets[].environment_type`
-- `packets[].stage_archetype`
-- `packets[].canonical_place_key`
-- `packets[].ambiguity_resolutions`
-- `packets[].grounded_scene_description`
-- `packets[].visual_constraints`
-- `packets[].avoid`
-
-### 원본 run_id
-
-```python
-f"semantic_clarification__{doc_id}__{chapter_id}"
-```
+- LLM 응답 누락 필드가 있어도 규칙 기반 fallback으로 보정합니다.
+- run id 형식: `semantic_clarification__{docId}__{chapterId}`
 
 ---
 
 ## VIS.2 - Stage Blueprint
 
-### 원본 역할
+입력(핵심):
 
-scene을 image-generation 친화적인 Stage Grammar로 바꾼다.
+- `ScenePackets` (`SCENE.1`)
+- `GroundedSceneModel` (`SCENE.3`)
+- optional `VisualGrounding` (`VIS.1`)
+- LLM client
 
-- geometry
-- zones
-- presentation
-- characters
-- boundaries / repetition
-- forbid / avoid / must_not_show
+출력:
 
-### 원본 입력
+- `StageBlueprint`
+  - geometry/presentation/zones/characters
+  - boundaries/repetition
+  - forbid/avoid/must_not_show
+  - warnings/uncertainties
 
-- `GroundedSceneModel`
-- `ScenePackets`
-- optional `VisualGrounding`
+특징:
 
-### 원본 후처리
-
-- onstage에 없는 character 제거
-- 현재 장면의 장소가 아닌 mentioned place를 `must_not_show`로 이동
-- warning-only `L-check` 수행
-
-### 원본 출력
-
-`StageBlueprint`
-
-핵심 필드:
-
-- `packets[].geometry`
-- `packets[].presentation`
-- `packets[].zones`
-- `packets[].forbid`
-- `packets[].avoid`
-- `packets[].must_not_show`
-- `packets[].blueprint_valid`
-- `packets[].blueprint_warnings`
-
-### 원본 run_id
-
-```python
-f"image_support__{doc_id}__{chapter_id}"
-```
+- outdoor/indoor 문맥에 따라 presentation 값을 강제 보정합니다.
+- stage blueprint 유효성(`blueprint_valid`)과 warning을 함께 기록합니다.
+- run id 형식: `image_support__{docId}__{chapterId}`
 
 ---
 
 ## VIS.3 - Render Package
 
-### 원본 역할
+입력:
 
-`StageBlueprint`를 실제 이미지 생성 프롬프트 블록으로 컴파일한다.
+- `StageBlueprint` (`VIS.2`)
 
-프롬프트 구성 블록:
+출력:
 
-- `common_style_block`
-- `scene_blueprint_block`
-- `presentation_block`
-- `hard_constraints_block`
-- `failure_patch_block`
+- `RenderPackage`
+  - scene별 `full_prompt`
+  - prompt block(`common_style_block`, `presentation_block`, `hard_constraints_block`, `failure_patch_block`)
+  - schema version
 
-### 원본 출력
+특징:
 
-`RenderPackage`
-
-추가로 기록되는 필드:
-
-- `items[].full_prompt`
-- `items[].prompt_schema_version`
-- `items[].failure_history`
-
-### 원본 run_id
-
-```python
-f"render_package__{doc_id}__{chapter_id}"
-```
+- 프롬프트는 규칙 기반 컴파일 방식이며, 금지 조건(텍스트 렌더링/패널화 등)을 강하게 명시합니다.
+- run id 형식: `render_package__{docId}__{chapterId}`
 
 ---
 
 ## VIS.4 - Image Generation
 
-### 원본 역할
+입력:
 
-`RenderPackage` 또는 `StageBlueprint`를 기반으로 이미지를 생성한다.  
-실패 시 failure taxonomy를 기준으로 repair loop를 돈다.
+- `RenderPackage` (`VIS.3`)
+- OpenRouter API Key (`OPENROUTER_API_KEY`)
 
-### 원본 failure 유형
+출력:
 
-- `output_format`
-- `content_policy`
-- `api_error`
-- `unknown`
+- `RenderedImages`
+  - scene별 성공/실패 결과
+  - 저장 경로(storage path, gs uri, download url)
+  - 실제 사용 프롬프트/모델
 
-### 원본 출력
+특징:
 
-`RenderedImages`
-
-핵심 필드:
-
-- `results[].scene_id`
-- `results[].image_path`
-- `results[].prompt_used`
-- `results[].model`
-- `results[].success`
-- `results[].error`
-
-### 원본 run_id
-
-```python
-f"image_gen__{doc_id}__{chapter_id}"
-```
+- OpenRouter chat completions(image modality)로 생성합니다.
+- 기본 모델: `google/gemini-3.1-flash-image-preview`
+- 생성 이미지를 Firebase Storage에 업로드하고 URL을 artifact에 저장합니다.
+- run id 형식: `image_gen__{docId}__{chapterId}`
 
 ---
 
-## 포팅 메모
+## 파이프라인 연결
 
-현재 저장소에는 VIS 브랜치 포팅을 위한 타입과 UI 슬롯은 이미 일부 준비돼 있다.
+VIS 흐름은 현재 아래 순서로 동작합니다.
 
-- schema 타입: `src/types/schema.ts`
-- stage registry: `src/types/ui.ts`
-- model config: `src/config/pipeline-models`
+```text
+SCENE.3
+  -> VIS.1
+  -> VIS.2
+  -> VIS.3
+  -> VIS.4
+  -> FINAL.1 / FINAL.2
+```
 
-하지만 아직 없는 것:
-
-- `src/lib/pipeline/vis1.ts` ~ `vis4.ts`
-- `/api/pipeline/vis1` ~ `/vis4`
-- VIS stage 전용 결과 확인 UI
-- FINAL 단계와 연결되는 실제 image artifact 흐름
-
-그래서 현재 문맥에서 VIS 문서는 "구현 문서"가 아니라 "추후 포팅 기준 문서"로 읽는 것이 맞다.
+`FINAL.1`은 VIS.2(blueprint) 및 VIS.4(image) 결과를 활용할 수 있고,
+`ReaderScreen`은 FINAL.1 + FINAL.2를 기반으로 최종 검증 화면을 제공합니다.
