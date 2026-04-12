@@ -1,186 +1,113 @@
-# Result Review Screens
+# UI 문서 (현재 구현 기준)
 
-이 문서는 `Story-Visualization`에서 "결과 확인 화면"이 현재 어떻게 되어 있는지 정리한다.  
-원본 `Story-Decomposition`의 Streamlit 탭 UI와 가장 크게 달라진 부분이 여기다.
+이 문서는 현재 `Story-Visualization` UI가 실제 코드에서 어떻게 동작하는지 정리합니다.
 
----
+## 상위 화면 구성
 
-## 현재 결과 확인 화면은 두 종류뿐이다
+메인 화면은 아래 3개 뷰를 탭으로 전환합니다.
 
-현재 저장소에서 결과를 확인하는 화면은 사실상 아래 두 개다.
+1. `upload`
+2. `pipeline`
+3. `reader`
 
-1. `PipelineRunner`의 stage 결과 패널
-2. `ReaderScreen`의 최종 reader 화면
-
-즉 원본처럼 stage별 전용 검토 화면이 따로 있지 않다.
+구현 위치: `src/app/page.tsx`
 
 ---
 
-## 1. PipelineRunner 결과 패널
+## 1) Upload 뷰
 
-### 구현 위치
+구성 컴포넌트:
 
-- `src/components/PipelineRunner.tsx`
-- stage 정의: `src/types/ui.ts`
+- `EpubUploader`: EPUB 파일 드래그앤드롭/선택 업로드
+- `ExistingDocumentsPicker`: 기존 문서 목록 조회 후 재진입
 
-### 화면 구조
+동작 요약:
 
-좌측은 stage 목록, 우측은 선택한 stage의 결과 상세 패널이다.
-
-```text
-left sidebar                 right panel
-stage list                   selected stage header
-status / run button          summary chips
-model input                  optional model input
-pending badge                PRE.1 paragraph preview
-                             raw JSON
-```
-
-### 이 화면에서 실제로 볼 수 있는 것
-
-공통적으로는:
-
-- stage status: `idle | running | done | error`
-- stage별 summary chip
-- 해당 stage raw JSON
-
-PRE.1만 예외적으로:
-
-- `raw_chapter.paragraphs` 앞부분 3개를 `Paragraph Preview`로 따로 보여 준다.
-
-### summary chip가 보여 주는 정도
-
-`summarizeStage()`가 stage별로 아주 짧은 요약만 만든다.
-
-예:
-
-- PRE.1: title, paragraph 수, char 수, source
-- PRE.2: units 수, story/non-story 수
-- ENT.1: mention 수, type 분포
-- ENT.2: accepted / rejected 수
-- ENT.3: entity 수, unresolved 수
-- STATE.3: scenes 수, boundaries 수
-- SCENE.1: packet 수
-- SCENE.3: validated scene 수
-- SUB.1~SUB.4: scene packet 수
-- FINAL.1: reader packet 수
-- FINAL.2: scene 수, character 수
-
-즉 현재 결과 확인은 "전용 시각화"가 아니라 "요약 chip + raw JSON" 조합이다.
+- 새 파일 업로드 시 `/api/epub` 호출
+- 기존 문서 선택 시 `/api/documents`, `/api/chapters` 호출
+- 문서/챕터가 정해지면 pipeline 뷰로 이동
 
 ---
 
-## 2. ReaderScreen
+## 2) Pipeline 뷰
 
-### 구현 위치
+구성 컴포넌트:
 
-- loader: `src/app/page.tsx`의 `ReaderView`
-- renderer: `src/components/ReaderScreen.tsx`
+- `PipelineRunner`
 
-### 언제 보이는가
+핵심 기능:
 
-- `FINAL.1`이 있어야 렌더링된다.
-- `FINAL.2`는 optional이다.
+- 챕터 선택(Prev/Next + select)
+- Run ID 생성/수정
+- 저장된 run 목록 로드
+- run 즐겨찾기 토글 / 삭제
+- stage별 모델 선택
+- stage 단건 실행 + 하위 stage 정리
+- stage 결과 요약 chip + raw JSON inspector
 
-즉 reader 화면은 "중간 stage를 검토하는 화면"이 아니라  
-"FINAL 산출물이 실제 독자 화면에서 어떻게 보이는지 확인하는 화면"이다.
+### stage 상태
 
-### 이 화면에서 확인 가능한 것
+- `idle`
+- `running`
+- `done`
+- `error`
 
-- scene selector
-- subscene navigation
-- body paragraphs
-- chips
-- image 또는 placeholder
-- character overlay button
-- subscene detail panel
+### VIS 브랜치 상태
 
-### 확인 가능한 FINAL 정보
+이제 VIS.1~VIS.4는 실제 구현/실행됩니다.
 
-`FINAL.1` 기준:
-
-- scene title / summary
-- body paragraph slicing
-- subscene nav
-- character panel text
-
-`FINAL.2` 기준:
-
-- refined anchor가 있으면 coarse anchor 대신 사용
-- 단, `not_visible` high-confidence일 때만 button 제거
-
-즉 이 화면은 FINAL 결과물 검토용이지,  
-STATE / SCENE / SUB 내부 아티팩트를 단계별로 뜯어보는 화면은 아니다.
+- VIS.1: semantic clarification
+- VIS.2: stage blueprint
+- VIS.3: render package
+- VIS.4: image generation + storage 업로드
 
 ---
 
-## 원본 Streamlit과 가장 큰 차이
+## 3) Reader 뷰
 
-원본 `Story-Decomposition`에서는 stage마다 거의 전용 탭이 있었다.
+구성 컴포넌트:
 
-예를 들면:
+- `ReaderScreen`
 
-- mention 추출 결과 확인
-- validated mention 비교
-- state frame 확인
-- boundary candidate 확인
-- scene packet 확인
-- scene index / grounded scene 검토
-- FINAL.1 / FINAL.2 / FINAL.3 각각의 전용 탭
+입력 데이터:
 
-현재 `Story-Visualization`에는 이런 전용 결과 화면이 없다.
+- 필수: `FINAL.1` 결과(`SceneReaderPackageLog`)
+- 선택: `FINAL.2` 결과(`OverlayRefinementResult`)
 
-### 현재 없는 결과 확인 화면
+화면 기능:
 
-- mention highlight viewer
-- state transition viewer
-- boundary reviewer
-- scene packet inspector
-- scene grounding inspector
-- subscene proposal/validation 전용 카드 뷰
-- FINAL.1 / FINAL.2 debug 전용 화면
-
-### 현재 남아 있는 결과 확인 방식
-
-- 중간 stage: `PipelineRunner`에서 summary + raw JSON
-- 최종 stage: `ReaderScreen`
-
-그래서 결과 확인 화면이 "전혀 달라 보이는" 것이 맞다.  
-원본 UI를 그대로 옮긴 것이 아니라, stage 공통 inspector와 최종 reader 화면으로 단순화했기 때문이다.
+- scene/subscene 네비게이션
+- 본문 문단 표시
+- 시각 블록(image/placeholder)
+- 캐릭터 오버레이 버튼
+- focus context(global/character/pair) 패널
+- FINAL.2 confidence 기반 overlay 병합
 
 ---
 
-## stage별로 어디서 확인해야 하는가
+## 저장(run) UX 규칙
 
-### PRE
-
-- 주 확인 위치: `PipelineRunner`
-- 추가 표시: PRE.1만 paragraph preview 제공
-
-### ENT / STATE / SCENE / SUB
-
-- 주 확인 위치: `PipelineRunner`
-- 현재는 raw JSON 확인이 사실상 메인
-
-### VIS
-
-- 현재 구현되지 않아서 `PipelineRunner`에서 `Pending`으로만 보임
-
-### FINAL
-
-- 구조 확인: `PipelineRunner` raw JSON
-- 실제 reader 동작 확인: `ReaderScreen`
+- reader 진입 시 챕터의 저장 run 중 `favorite=true`가 우선 선택됩니다.
+- favorite이 없으면 최신 정렬 결과의 첫 run을 선택합니다.
+- run 삭제 후에는 남은 run 첫 항목 또는 새 timestamp run ID로 이동합니다.
 
 ---
 
-## 지금 문서를 읽는 기준
+## API 연결 요약
 
-결과 확인 화면 기준으로 보면 현재 프로젝트는 아래처럼 이해하면 된다.
+- 업로드/문서
+  - `POST /api/epub`
+  - `GET /api/documents`
+  - `GET /api/chapters?docId=...`
+- 파이프라인
+  - `POST /api/pipeline/pre1` ~ `POST /api/pipeline/final2`
 
-- "중간 결과를 자세히 검토하는 전용 화면"은 아직 없다.
-- "각 stage 결과가 저장됐는지 확인하고 JSON을 보는 화면"은 있다.
-- "최종 독자 화면이 어떻게 보이는지 확인하는 화면"은 있다.
+---
 
-즉 현재 UI는 원본 실험용 Streamlit 검토 도구가 아니라  
-Next.js 기반의 간소화된 run inspector + reader preview 쪽에 더 가깝다.
+## 구현 관점 결론
 
+현재 UI는 더 이상 “일부 stage만 동작하는 mock 형태”가 아닙니다.
+
+- PRE/ENT/STATE/SCENE/VIS/SUB/FINAL 전체 파이프라인 실행 가능
+- 중간 산출물은 PipelineRunner에서 요약 + JSON으로 점검
+- 최종 산출물은 ReaderScreen에서 사용자 관점으로 검증
