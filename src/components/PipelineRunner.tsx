@@ -1,14 +1,14 @@
 "use client"
 
 import { useCallback, useEffect, useRef, useState } from "react"
-import { getDescendantStages } from "@/config/pipeline-graph"
+import { getDescendantStages, PIPELINE_STAGE_EDGES } from "@/config/pipeline-graph"
 import {
   deleteStageResult,
   forkRunResults,
   loadRunResults,
   saveRunStageModels,
   stageKey,
-} from "@/lib/firestore"
+} from "@/lib/client-data"
 import { createTimestampRunId } from "@/lib/run-id"
 import type {
   ConfidenceLevel,
@@ -25,12 +25,20 @@ import type {
   PreparedChapter,
   RefinedStateFrames,
   RenderPackage,
+  ReaderSupportPackageLog,
   SceneBoundaries,
   SceneReaderPackageLog,
   SceneIndexDraft,
   ScenePackets,
   StageBlueprint,
   StateFrames,
+  SharedSupportRepresentation,
+  SupportCausalBridges,
+  SupportCharacterRelations,
+  SupportMemoryLog,
+  SupportPolicySelection,
+  SupportReentryReference,
+  SupportSnapshots,
   StageId,
   InterventionPackages,
   SubsceneProposals,
@@ -53,15 +61,21 @@ type StageMap = Record<string, { status: StageStatus; error?: string }>
 type StageResultMap = Partial<Record<StageId, unknown>>
 type StageModelMap = Partial<Record<StageId, string>>
 
+const ACTIVE_PIPELINE_STAGES = PIPELINE_STAGES.filter((stage) => stage.group !== "vis")
+const ACTIVE_STAGE_IDS = new Set<StageId>(ACTIVE_PIPELINE_STAGES.map((stage) => stage.id))
+const ACTIVE_PIPELINE_STAGE_EDGES = PIPELINE_STAGE_EDGES.filter(
+  (edge) => ACTIVE_STAGE_IDS.has(edge.from) && ACTIVE_STAGE_IDS.has(edge.to),
+)
+
 function createInitialStageMap(): StageMap {
   return Object.fromEntries(
-    PIPELINE_STAGES.map((stage) => [stage.id, { status: "idle" }]),
+    ACTIVE_PIPELINE_STAGES.map((stage) => [stage.id, { status: "idle" }]),
   )
 }
 
 function createInitialStageModels(): StageModelMap {
   return Object.fromEntries(
-    PIPELINE_STAGES
+    ACTIVE_PIPELINE_STAGES
       .filter((stage) => stage.usesModel)
       .map((stage) => [
         stage.id,
@@ -143,7 +157,7 @@ function getContainedImageRect(params: {
 
 function normalizeRunResults(raw: Record<string, unknown>): StageResultMap {
   const next: StageResultMap = {}
-  for (const stage of PIPELINE_STAGES) {
+  for (const stage of ACTIVE_PIPELINE_STAGES) {
     const key = stageKey(stage.id)
     if (raw[key] !== undefined) {
       next[stage.id] = raw[key]
@@ -154,7 +168,7 @@ function normalizeRunResults(raw: Record<string, unknown>): StageResultMap {
 
 function buildStageMapFromResults(results: StageResultMap): StageMap {
   const map = createInitialStageMap()
-  for (const stage of PIPELINE_STAGES) {
+  for (const stage of ACTIVE_PIPELINE_STAGES) {
     if (results[stage.id] !== undefined) {
       map[stage.id] = { status: "done" }
     }
@@ -165,7 +179,7 @@ function buildStageMapFromResults(results: StageResultMap): StageMap {
 function extractSavedStageModels(raw: Record<string, unknown>): StageModelMap {
   const data = raw.stageModels
   const map: StageModelMap = {}
-  for (const stage of PIPELINE_STAGES) {
+  for (const stage of ACTIVE_PIPELINE_STAGES) {
     if (!stage.usesModel) continue
     const savedValue =
       data && typeof data === "object"
@@ -187,7 +201,7 @@ function extractSavedStageModels(raw: Record<string, unknown>): StageModelMap {
   return map
 }
 
-function groupLabel(group: "pre" | "ent" | "state" | "scene" | "vis" | "sub" | "final"): string {
+function groupLabel(group: "pre" | "ent" | "state" | "scene" | "vis" | "sub" | "sup" | "final"): string {
   switch (group) {
     case "pre":
       return "PRE"
@@ -201,6 +215,8 @@ function groupLabel(group: "pre" | "ent" | "state" | "scene" | "vis" | "sub" | "
       return "VIS Branch"
     case "sub":
       return "SUB Branch"
+    case "sup":
+      return "SUP Branch"
     case "final":
       return "FINAL"
     default:
@@ -313,6 +329,50 @@ function summarizeStage(stageId: StageId, artifact: unknown): string[] {
     case "SUB.4": {
       const packets = Array.isArray(data.packets) ? data.packets : []
       return [`scene packets: ${packets.length}`]
+    }
+    case "SUP.0": {
+      const memory = data.memory && typeof data.memory === "object"
+        ? (data.memory as Record<string, unknown>)
+        : {}
+      return [
+        `scenes: ${Array.isArray(memory.scenes) ? memory.scenes.length : 0}`,
+        `events: ${Array.isArray(memory.events) ? memory.events.length : 0}`,
+        `edges: ${Array.isArray(memory.edges) ? memory.edges.length : 0}`,
+      ]
+    }
+    case "SUP.1": {
+      const scenes = Array.isArray(data.scenes) ? data.scenes : []
+      return [`contexts: ${scenes.length}`]
+    }
+    case "SUP.2":
+    case "SUP.3":
+    case "SUP.4":
+    case "SUP.5": {
+      const scenes = Array.isArray(data.scenes)
+        ? (data.scenes as Array<Record<string, unknown>>)
+        : []
+      const units = scenes.reduce((sum, scene) => (
+        sum + (Array.isArray(scene.units) ? scene.units.length : 0)
+      ), 0)
+      return [`scenes: ${scenes.length}`, `units: ${units}`]
+    }
+    case "SUP.6": {
+      const scenes = Array.isArray(data.scenes)
+        ? (data.scenes as Array<Record<string, unknown>>)
+        : []
+      const selected = scenes.reduce((sum, scene) => (
+        sum + (Array.isArray(scene.selected_units) ? scene.selected_units.length : 0)
+      ), 0)
+      return [`scenes: ${scenes.length}`, `selected: ${selected}`]
+    }
+    case "SUP.7": {
+      const packets = Array.isArray(data.packets)
+        ? (data.packets as Array<Record<string, unknown>>)
+        : []
+      const primary = packets.reduce((sum, packet) => (
+        sum + (Array.isArray(packet.primary_units) ? packet.primary_units.length : 0)
+      ), 0)
+      return [`packets: ${packets.length}`, `primary units: ${primary}`]
     }
     case "FINAL.1": {
       const packets = Array.isArray(data.packets)
@@ -534,6 +594,134 @@ function ResultMetaCard({
     <div className="rounded-xl border border-zinc-200 bg-zinc-50 p-4">
       <p className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">{label}</p>
       <p className="mt-2 text-sm font-medium text-zinc-900">{value}</p>
+    </div>
+  )
+}
+
+const STAGE_GRAPH_COLUMNS: Array<{ title: string; stageIds: StageId[] }> = [
+  { title: "Prep", stageIds: ["PRE.1", "PRE.2"] },
+  { title: "Entities", stageIds: ["ENT.1", "ENT.2", "ENT.3"] },
+  { title: "State", stageIds: ["STATE.1", "STATE.2", "STATE.3"] },
+  { title: "Scene", stageIds: ["SCENE.1", "SCENE.2", "SCENE.3"] },
+  { title: "Subscene", stageIds: ["SUB.1", "SUB.2", "SUB.3", "SUB.4"] },
+  { title: "Support A", stageIds: ["SUP.0", "SUP.1", "SUP.2", "SUP.3"] },
+  { title: "Support B", stageIds: ["SUP.4", "SUP.5", "SUP.6", "SUP.7"] },
+  { title: "Final", stageIds: ["FINAL.1", "FINAL.2"] },
+]
+
+function StageGraphNavigator({
+  stages,
+  results,
+  selectedStageId,
+  running,
+  onSelect,
+  onRun,
+}: {
+  stages: StageMap
+  results: StageResultMap
+  selectedStageId: StageId
+  running: boolean
+  onSelect: (stageId: StageId) => void
+  onRun: (stage: { id: StageId; apiPath: string; implemented?: boolean }) => void
+}) {
+  const stageById = new Map(ACTIVE_PIPELINE_STAGES.map((stage) => [stage.id, stage]))
+  const incomingByStage = new Map<StageId, StageId[]>()
+  for (const edge of ACTIVE_PIPELINE_STAGE_EDGES) {
+    incomingByStage.set(edge.to, [...(incomingByStage.get(edge.to) ?? []), edge.from])
+  }
+
+  const statusMeta: Record<StageStatus, { mark: string; className: string }> = {
+    idle: { mark: "-", className: "border-zinc-200 bg-white text-zinc-500" },
+    running: { mark: "*", className: "border-blue-300 bg-blue-50 text-blue-700" },
+    done: { mark: "v", className: "border-emerald-300 bg-emerald-50 text-emerald-700" },
+    error: { mark: "!", className: "border-red-300 bg-red-50 text-red-700" },
+  }
+
+  return (
+    <div className="flex min-h-[360px] max-h-[62vh] min-w-0 shrink-0 flex-col rounded-xl border border-zinc-200 bg-white p-4 xl:min-h-[430px] 2xl:min-h-[520px] 2xl:max-h-[760px]">
+      <div className="shrink-0 flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <p className="text-sm font-semibold text-zinc-900">Pipeline Graph</p>
+          <p className="mt-1 text-xs text-zinc-500">
+            Select or run stages by branch. SUP is the reader-support branch feeding FINAL.1.
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2 text-[11px] text-zinc-500">
+          <span className="rounded-full border border-zinc-200 px-2 py-1">v saved</span>
+          <span className="rounded-full border border-blue-200 bg-blue-50 px-2 py-1 text-blue-700">* running</span>
+          <span className="rounded-full border border-red-200 bg-red-50 px-2 py-1 text-red-700">! error</span>
+        </div>
+      </div>
+
+      <div className="mt-4 min-h-0 min-w-0 flex-1 overflow-auto overscroll-contain pb-3 pr-2">
+        <div className="grid min-w-[1480px] grid-cols-[minmax(125px,0.8fr)_minmax(145px,1fr)_minmax(145px,1fr)_minmax(145px,1fr)_minmax(160px,1fr)_minmax(185px,1.15fr)_minmax(185px,1.15fr)_minmax(135px,0.85fr)] items-start gap-3">
+          {STAGE_GRAPH_COLUMNS.map((column) => (
+            <section
+              key={column.title}
+              className="rounded-xl border border-zinc-200 bg-zinc-50/70 p-2"
+            >
+              <div className="sticky left-0 z-10 mb-2 flex h-7 items-center justify-between rounded-lg bg-zinc-50 px-2">
+                <p className="truncate text-xs font-semibold uppercase tracking-wide text-zinc-500">
+                  {column.title}
+                </p>
+                <span className="rounded-full bg-white px-2 py-0.5 text-[10px] text-zinc-400">
+                  {column.stageIds.length}
+                </span>
+              </div>
+              <div className="grid auto-rows-[92px] gap-2 2xl:auto-rows-[104px]">
+              {column.stageIds.map((stageId) => {
+                const stage = stageById.get(stageId)
+                if (!stage) return null
+                const status = stages[stageId]?.status ?? "idle"
+                const meta = statusMeta[status]
+                const selected = selectedStageId === stageId
+                const saved = results[stageId] !== undefined
+                const incoming = incomingByStage.get(stageId) ?? []
+
+                return (
+                  <div key={stageId} className="relative min-w-0">
+                    <div
+                      className={`flex h-full min-w-0 flex-col rounded-lg border p-2 transition-colors ${
+                        selected ? "border-zinc-900 bg-zinc-50 shadow-sm" : meta.className
+                      }`}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => onSelect(stageId)}
+                        className="flex min-w-0 flex-1 items-start gap-2 text-left"
+                      >
+                        <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-current text-xs font-mono">
+                          {saved && status === "idle" ? "v" : meta.mark}
+                        </span>
+                        <span className="min-w-0 flex-1">
+                          <span className="block text-xs font-semibold text-zinc-900">{stageId}</span>
+                          <span className="mt-0.5 line-clamp-1 block text-[11px] leading-4 text-zinc-500">
+                            {stage.label.replace(`${stageId} - `, "")}
+                          </span>
+                          {incoming.length > 0 && (
+                            <span className="mt-1 block truncate text-[10px] text-zinc-400">
+                              from {incoming.join(", ")}
+                            </span>
+                          )}
+                        </span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => onRun(stage)}
+                        disabled={running || stage.implemented === false}
+                        className="mt-2 h-7 w-full rounded-md border border-zinc-200 bg-white px-2 text-[11px] font-medium text-zinc-600 hover:bg-zinc-50 disabled:opacity-40"
+                      >
+                        Run
+                      </button>
+                    </div>
+                  </div>
+                )
+              })}
+              </div>
+            </section>
+          ))}
+        </div>
+      </div>
     </div>
   )
 }
@@ -7236,6 +7424,314 @@ function Sub4StageView({
   )
 }
 
+type SupportInspectableArtifact =
+  | SupportMemoryLog
+  | SharedSupportRepresentation
+  | SupportSnapshots
+  | SupportCausalBridges
+  | SupportCharacterRelations
+  | SupportReentryReference
+  | SupportPolicySelection
+  | ReaderSupportPackageLog
+
+function supportSceneIds(artifact: SupportInspectableArtifact): string[] {
+  if ("memory" in artifact) {
+    return artifact.memory.scenes.map((scene) => scene.scene_id)
+  }
+  if ("packets" in artifact) {
+    return artifact.packets.map((packet) => packet.scene_id)
+  }
+  return artifact.scenes.map((scene) => scene.scene_id)
+}
+
+function SupportUnitPreview({
+  title,
+  body,
+  meta,
+}: {
+  title: string
+  body: string
+  meta?: string
+}) {
+  return (
+    <div className="rounded-xl border border-zinc-200 bg-white px-4 py-3">
+      <div className="flex items-center justify-between gap-3">
+        <h5 className="text-sm font-semibold text-zinc-900">{title}</h5>
+        {meta && <span className="text-[11px] text-zinc-400">{meta}</span>}
+      </div>
+      <p className="mt-2 text-sm leading-6 text-zinc-600">{body || "No text generated."}</p>
+    </div>
+  )
+}
+
+function SupportStageView({ artifact }: { artifact: SupportInspectableArtifact }) {
+  const sceneIds = supportSceneIds(artifact)
+  const [activeSceneId, setActiveSceneId] = useState<string | null>(sceneIds[0] ?? null)
+  const resolvedSceneId = sceneIds.includes(activeSceneId ?? "") ? activeSceneId : sceneIds[0]
+
+  const supportUnits =
+    "scenes" in artifact
+      ? artifact.scenes.find((scene) => scene.scene_id === resolvedSceneId)
+      : undefined
+  const supportPacket =
+    "packets" in artifact
+      ? artifact.packets.find((packet) => packet.scene_id === resolvedSceneId)
+      : undefined
+  const memoryScene =
+    "memory" in artifact
+      ? artifact.memory.scenes.find((scene) => scene.scene_id === resolvedSceneId)
+      : undefined
+  const memoryEdges =
+    "memory" in artifact
+      ? artifact.memory.edges.filter((edge) => (
+          edge.from_scene_id === resolvedSceneId || edge.to_scene_id === resolvedSceneId
+        ))
+      : []
+  const memoryEvents =
+    "memory" in artifact
+      ? artifact.memory.events.filter((event) => event.scene_id === resolvedSceneId)
+      : []
+
+  const units =
+    supportUnits && "units" in supportUnits
+      ? supportUnits.units
+      : []
+  const selectedUnits =
+    supportUnits && "selected_units" in supportUnits
+      ? supportUnits.selected_units
+      : []
+  const deferredUnits =
+    supportUnits && "deferred_units" in supportUnits
+      ? supportUnits.deferred_units
+      : []
+
+  return (
+    <div className="mt-4 grid min-h-0 flex-1 gap-5 overflow-hidden xl:grid-cols-[360px_minmax(0,1fr)]">
+      <aside className="min-h-0 overflow-y-auto rounded-xl border border-zinc-200 bg-white p-4">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">Support Stage</p>
+            <h4 className="mt-1 text-base font-semibold text-zinc-900">{artifact.stage_id}</h4>
+          </div>
+          <span className="text-xs text-zinc-400">{artifact.method}</span>
+        </div>
+
+        <div className="mt-4 grid gap-3">
+          <ResultMetaCard label="Scenes" value={String(sceneIds.length)} />
+          {"memory" in artifact && (
+            <>
+              <ResultMetaCard label="Events" value={String(artifact.memory.events.length)} />
+              <ResultMetaCard label="Edges" value={String(artifact.memory.edges.length)} />
+            </>
+          )}
+          {"packets" in artifact && (
+            <ResultMetaCard
+              label="Primary Units"
+              value={String(artifact.packets.reduce((sum, packet) => sum + packet.primary_units.length, 0))}
+            />
+          )}
+        </div>
+
+        <div className="mt-5 space-y-2">
+          <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">Scenes</p>
+          {sceneIds.map((sceneId) => (
+            <button
+              key={`support-scene:${artifact.stage_id}:${sceneId}`}
+              type="button"
+              onClick={() => setActiveSceneId(sceneId)}
+              className={`w-full rounded-lg border px-3 py-2 text-left text-sm transition-colors ${
+                sceneId === resolvedSceneId
+                  ? "border-zinc-900 bg-zinc-900 text-white"
+                  : "border-zinc-200 bg-white text-zinc-600 hover:bg-zinc-50"
+              }`}
+            >
+              {sceneId}
+            </button>
+          ))}
+        </div>
+      </aside>
+
+      <section className="min-h-0 overflow-y-auto rounded-xl border border-zinc-200 bg-zinc-50 p-5">
+        {memoryScene && (
+          <div className="space-y-4">
+            <div className="rounded-xl border border-zinc-200 bg-white p-5">
+              <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">Memory Scene</p>
+              <h4 className="mt-2 text-lg font-semibold text-zinc-900">
+                {memoryScene.scene_title || memoryScene.scene_id}
+              </h4>
+              <p className="mt-3 text-[15px] leading-7 text-zinc-700">{memoryScene.summary}</p>
+              <div className="mt-4 grid gap-3 md:grid-cols-3">
+                <ResultMetaCard label="Place" value={memoryScene.place ?? "-"} />
+                <ResultMetaCard label="Cast" value={memoryScene.active_cast.join(", ") || "-"} />
+                <ResultMetaCard label="Actions" value={String(memoryScene.actions.length)} />
+              </div>
+            </div>
+
+            <div className="grid gap-4 lg:grid-cols-2">
+              <div className="rounded-xl border border-zinc-200 bg-white p-4">
+                <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">Events</p>
+                <div className="mt-3 space-y-2">
+                  {memoryEvents.map((event) => (
+                    <SupportUnitPreview
+                      key={event.event_id}
+                      title={event.label}
+                      body={event.causal_result || event.action}
+                      meta={event.subscene_id ?? event.event_id}
+                    />
+                  ))}
+                  {memoryEvents.length === 0 && <p className="text-sm text-zinc-400">No events.</p>}
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-zinc-200 bg-white p-4">
+                <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">Edges</p>
+                <div className="mt-3 space-y-2">
+                  {memoryEdges.map((edge) => (
+                    <SupportUnitPreview
+                      key={edge.edge_id}
+                      title={edge.type}
+                      body={edge.label}
+                      meta={`${edge.from_scene_id} -> ${edge.to_scene_id}`}
+                    />
+                  ))}
+                  {memoryEdges.length === 0 && <p className="text-sm text-zinc-400">No edges.</p>}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {supportUnits && "current_state" in supportUnits && (
+          <div className="space-y-4">
+            <div className="rounded-xl border border-zinc-200 bg-white p-5">
+              <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">Shared Context</p>
+              <h4 className="mt-2 text-lg font-semibold text-zinc-900">{supportUnits.scene_title}</h4>
+              <p className="mt-3 text-[15px] leading-7 text-zinc-700">
+                {supportUnits.current_state.summary}
+              </p>
+              <div className="mt-4 flex flex-wrap gap-2">
+                {supportUnits.candidate_units.map((kind) => (
+                  <span key={`${supportUnits.scene_id}:${kind}`} className="rounded-full bg-blue-50 px-3 py-1 text-xs font-medium text-blue-700">
+                    {kind}
+                  </span>
+                ))}
+              </div>
+            </div>
+
+            <div className="grid gap-4 lg:grid-cols-2">
+              <SupportUnitPreview
+                title="Boundary delta"
+                body={supportUnits.boundary_delta.labels.join(" / ") || "No boundary delta."}
+                meta={`${supportUnits.boundary_delta.cast_entered.length} entered`}
+              />
+              <SupportUnitPreview
+                title="Prior threads"
+                body={supportUnits.prior_threads.map((thread) => thread.label).join(" / ") || "No prior thread."}
+                meta={String(supportUnits.prior_threads.length)}
+              />
+            </div>
+          </div>
+        )}
+
+        {(units.length > 0 || selectedUnits.length > 0 || deferredUnits.length > 0) && (
+          <div className="space-y-4">
+            {selectedUnits.length > 0 && (
+              <div>
+                <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-zinc-500">Selected Units</p>
+                <div className="grid gap-3 lg:grid-cols-2">
+                  {selectedUnits.map((unit) => (
+                    <SupportUnitPreview
+                      key={unit.unit_id}
+                      title={`${unit.label} - ${unit.title}`}
+                      body={unit.body}
+                      meta={`${unit.kind} ${Math.round(unit.priority * 100)}%`}
+                    />
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {units.length > 0 && (
+              <div>
+                <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-zinc-500">Generated Units</p>
+                <div className="grid gap-3 lg:grid-cols-2">
+                  {units.map((unit) => (
+                    <SupportUnitPreview
+                      key={unit.unit_id}
+                      title={`${unit.label} - ${unit.title}`}
+                      body={unit.body}
+                      meta={`${unit.kind} ${Math.round(unit.priority * 100)}%`}
+                    />
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {deferredUnits.length > 0 && (
+              <details className="rounded-xl border border-zinc-200 bg-white">
+                <summary className="cursor-pointer px-4 py-3 text-sm font-semibold text-zinc-700">
+                  Deferred Units ({deferredUnits.length})
+                </summary>
+                <div className="grid gap-3 border-t border-zinc-200 bg-zinc-50 p-4 lg:grid-cols-2">
+                  {deferredUnits.map((unit) => (
+                    <SupportUnitPreview
+                      key={unit.unit_id}
+                      title={`${unit.label} - ${unit.title}`}
+                      body={unit.body}
+                      meta={`${unit.kind} ${Math.round(unit.priority * 100)}%`}
+                    />
+                  ))}
+                </div>
+              </details>
+            )}
+          </div>
+        )}
+
+        {supportPacket && (
+          <div className="space-y-5">
+            <div className="rounded-xl border border-zinc-200 bg-white p-5">
+              <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">Reader Support Packet</p>
+              <h4 className="mt-2 text-lg font-semibold text-zinc-900">
+                {supportPacket.scene_title || supportPacket.scene_id}
+              </h4>
+              <div className="mt-4 grid gap-3 md:grid-cols-3">
+                <ResultMetaCard label="Primary" value={String(supportPacket.primary_units.length)} />
+                <ResultMetaCard label="Overflow" value={String(supportPacket.overflow_units.length)} />
+                <ResultMetaCard label="Before Text" value={String(supportPacket.display_slots.before_text.length)} />
+              </div>
+            </div>
+
+            {[
+              ["Before Text", supportPacket.display_slots.before_text],
+              ["Beside Visual", supportPacket.display_slots.beside_visual],
+              ["On Demand", supportPacket.display_slots.on_demand],
+              ["Overflow", supportPacket.overflow_units],
+            ].map(([label, list]) => {
+              const unitsInSlot = list as typeof supportPacket.primary_units
+              return (
+                <div key={`${supportPacket.scene_id}:${label}`}>
+                  <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-zinc-500">{label as string}</p>
+                  <div className="grid gap-3 lg:grid-cols-2">
+                    {unitsInSlot.map((unit) => (
+                      <SupportUnitPreview
+                        key={`${label}:${unit.unit_id}`}
+                        title={`${unit.label} - ${unit.title}`}
+                        body={unit.body}
+                        meta={`${unit.kind} ${Math.round(unit.priority * 100)}%`}
+                      />
+                    ))}
+                    {unitsInSlot.length === 0 && <p className="text-sm text-zinc-400">No units in this slot.</p>}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </section>
+    </div>
+  )
+}
+
 function Final1StageView({
   artifact,
   scenePacketLog,
@@ -7949,7 +8445,7 @@ export default function PipelineRunner({ docId, chapterId, runId, onRunIdChange 
       setResults(nextResults)
       setStages((prev) => {
         const nextStages = buildStageMapFromResults(nextResults)
-        for (const stage of PIPELINE_STAGES) {
+        for (const stage of ACTIVE_PIPELINE_STAGES) {
           if (prev[stage.id]?.status === "running" || prev[stage.id]?.status === "error") {
             nextStages[stage.id] = prev[stage.id]
           }
@@ -7957,7 +8453,7 @@ export default function PipelineRunner({ docId, chapterId, runId, onRunIdChange 
         return nextStages
       })
 
-      const firstWithResult = PIPELINE_STAGES.find((stage) => nextResults[stage.id] !== undefined)
+      const firstWithResult = ACTIVE_PIPELINE_STAGES.find((stage) => nextResults[stage.id] !== undefined)
       setSelectedStageId((prev) =>
         nextResults[prev] !== undefined ? prev : (firstWithResult?.id ?? "PRE.1"),
       )
@@ -7985,7 +8481,6 @@ export default function PipelineRunner({ docId, chapterId, runId, onRunIdChange 
   function updateStageModel(stageId: StageId, value: string) {
     const nextModels = { ...stageModels, [stageId]: value }
     setStageModels(nextModels)
-    void saveRunStageModels(docId, chapterId, runId, nextModels)
   }
 
   async function prepareRunForStage(
@@ -8000,13 +8495,13 @@ export default function PipelineRunner({ docId, chapterId, runId, onRunIdChange 
     const invalidated = getDescendantStages(stageId)
     invalidated.add(stageId)
 
-    const preservedStages = PIPELINE_STAGES
+    const preservedStages = ACTIVE_PIPELINE_STAGES
       .map((stage) => stage.id)
       .filter((id) => currentResults[id] !== undefined && !invalidated.has(id))
 
     const nextRunId = createTimestampRunId([
       currentRunId,
-      ...PIPELINE_STAGES.map((stage) => {
+      ...ACTIVE_PIPELINE_STAGES.map((stage) => {
         const artifact = currentResults[stage.id] as { run_id?: string } | undefined
         return artifact?.run_id ?? ""
       }),
@@ -8019,7 +8514,7 @@ export default function PipelineRunner({ docId, chapterId, runId, onRunIdChange 
     setResults(nextResults)
     setStages((prev) => {
       const nextStages = buildStageMapFromResults(nextResults)
-      for (const stage of PIPELINE_STAGES) {
+      for (const stage of ACTIVE_PIPELINE_STAGES) {
         if (prev[stage.id]?.status === "running" || prev[stage.id]?.status === "error") {
           nextStages[stage.id] = prev[stage.id]
         }
@@ -8036,7 +8531,7 @@ export default function PipelineRunner({ docId, chapterId, runId, onRunIdChange 
     currentRunId: string,
     currentResults: StageResultMap,
   ): Promise<{ ok: boolean; runId: string; results: StageResultMap }> {
-    const stage = PIPELINE_STAGES.find((item) => item.id === stageId)
+    const stage = ACTIVE_PIPELINE_STAGES.find((item) => item.id === stageId)
     if (!stage || stage.implemented === false) {
       setStage(stageId, "idle")
       return { ok: true, runId: currentRunId, results: currentResults }
@@ -8082,18 +8577,44 @@ export default function PipelineRunner({ docId, chapterId, runId, onRunIdChange 
 
   async function runAll() {
     setRunning(true)
-    let activeRunId = runId
-    let activeResults = results
+    try {
+      let activeRunId = runId
+      let activeResults = results
 
-    for (const stage of PIPELINE_STAGES) {
-      if (stage.implemented === false) continue
-      const outcome = await runStage(stage.apiPath, stage.id, activeRunId, activeResults)
-      activeRunId = outcome.runId
-      activeResults = outcome.results
-      if (!outcome.ok) break
+      for (const stage of ACTIVE_PIPELINE_STAGES) {
+        if (stage.implemented === false) continue
+        const outcome = await runStage(stage.apiPath, stage.id, activeRunId, activeResults)
+        activeRunId = outcome.runId
+        activeResults = outcome.results
+        if (!outcome.ok) break
+      }
+    } finally {
+      setRunning(false)
     }
+  }
 
-    setRunning(false)
+  function getRemainingRunnableStages(currentResults: StageResultMap) {
+    return ACTIVE_PIPELINE_STAGES.filter((stage) => (
+      stage.implemented !== false && currentResults[stage.id] === undefined
+    ))
+  }
+
+  async function runRemaining() {
+    setRunning(true)
+    try {
+      let activeRunId = runId
+      let activeResults = results
+      const remainingStages = getRemainingRunnableStages(activeResults)
+
+      for (const stage of remainingStages) {
+        const outcome = await runStage(stage.apiPath, stage.id, activeRunId, activeResults)
+        activeRunId = outcome.runId
+        activeResults = outcome.results
+        if (!outcome.ok) break
+      }
+    } finally {
+      setRunning(false)
+    }
   }
 
   async function runSingle(apiPath: string, stageId: StageId) {
@@ -8130,7 +8651,7 @@ export default function PipelineRunner({ docId, chapterId, runId, onRunIdChange 
     error: "text-red-500",
   }
 
-  const selectedStage = PIPELINE_STAGES.find((stage) => stage.id === selectedStageId)
+  const selectedStage = ACTIVE_PIPELINE_STAGES.find((stage) => stage.id === selectedStageId)
   const selectedResult = results[selectedStageId]
   const selectedLLMTrials = extractLLMTrials(selectedResult)
   const selectedSummary = selectedResult ? summarizeStage(selectedStageId, selectedResult) : []
@@ -8223,7 +8744,11 @@ export default function PipelineRunner({ docId, chapterId, runId, onRunIdChange 
     selectedStageId === "VIS.4" && selectedResult && typeof selectedResult === "object"
       ? (selectedResult as RenderedImages)
       : undefined
-  const latestStageWithResult = [...PIPELINE_STAGES]
+  const selectedSupportArtifact =
+    selectedStageId.startsWith("SUP.") && selectedResult && typeof selectedResult === "object"
+      ? (selectedResult as SupportInspectableArtifact)
+      : undefined
+  const latestStageWithResult = [...ACTIVE_PIPELINE_STAGES]
     .reverse()
     .find((stage) => results[stage.id] !== undefined)?.id
   const canDeleteSelectedStage =
@@ -8237,6 +8762,7 @@ export default function PipelineRunner({ docId, chapterId, runId, onRunIdChange 
       : latestStageWithResult !== selectedStageId
         ? `Only the latest saved stage can be deleted. Current latest: ${latestStageWithResult ?? "-"}`
         : "Delete this stage result from the current run."
+  const remainingStageCount = getRemainingRunnableStages(results).length
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-4">
@@ -8249,6 +8775,14 @@ export default function PipelineRunner({ docId, chapterId, runId, onRunIdChange 
           Run All Stages
         </button>
         <button
+          onClick={runRemaining}
+          disabled={running || loadingResults || remainingStageCount === 0}
+          className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm font-medium text-emerald-700 transition-colors hover:bg-emerald-100 disabled:opacity-50"
+          title={remainingStageCount === 0 ? "No remaining stages in the current run." : "Run only stages without saved results."}
+        >
+          Run Remaining Stages ({remainingStageCount})
+        </button>
+        <button
           onClick={() => void refreshResults()}
           disabled={running || loadingResults}
           className="rounded-lg border border-zinc-200 px-4 py-2 text-sm font-medium text-zinc-700 transition-colors hover:bg-zinc-50 disabled:opacity-50"
@@ -8259,17 +8793,26 @@ export default function PipelineRunner({ docId, chapterId, runId, onRunIdChange 
         {loadingResults && <span className="text-xs text-zinc-400">loading saved results...</span>}
       </div>
 
-      <div className="grid min-h-0 flex-1 gap-5 xl:grid-cols-[480px_minmax(0,1fr)]">
+      <StageGraphNavigator
+        stages={stages}
+        results={results}
+        selectedStageId={selectedStageId}
+        running={running}
+        onSelect={setSelectedStageId}
+        onRun={(stage) => void runSingle(stage.apiPath, stage.id)}
+      />
+
+      <div className="grid min-h-[520px] flex-1 gap-5 xl:grid-cols-[480px_minmax(0,1fr)]">
         <aside className="min-h-0">
           <div className="h-full space-y-1 overflow-y-auto rounded-xl border border-zinc-200 bg-white p-2">
             <div className="px-3 py-2">
               <p className="text-sm font-semibold uppercase tracking-wide text-zinc-500">Stages</p>
             </div>
-            {PIPELINE_STAGES.map((stage, stageIndex) => {
+            {ACTIVE_PIPELINE_STAGES.map((stage, stageIndex) => {
               const stageState = stages[stage.id] ?? { status: "idle" }
               const summary = results[stage.id] ? summarizeStage(stage.id, results[stage.id]) : []
               const selected = selectedStageId === stage.id
-              const previousStage = stageIndex > 0 ? PIPELINE_STAGES[stageIndex - 1] : undefined
+              const previousStage = stageIndex > 0 ? ACTIVE_PIPELINE_STAGES[stageIndex - 1] : undefined
               const showGroupLabel = !previousStage || previousStage.group !== stage.group
 
               return (
@@ -8561,6 +9104,13 @@ export default function PipelineRunner({ docId, chapterId, runId, onRunIdChange 
             />
           )}
 
+          {selectedSupportArtifact && (
+            <SupportStageView
+              key={selectedSupportArtifact.run_id}
+              artifact={selectedSupportArtifact}
+            />
+          )}
+
           {selectedSceneReaderPackage && (
             <Final1StageView
               key={selectedSceneReaderPackage.run_id}
@@ -8616,7 +9166,7 @@ export default function PipelineRunner({ docId, chapterId, runId, onRunIdChange 
             />
           )}
 
-          {!selectedPreparedChapter && !selectedContentUnits && !selectedMentionCandidates && !selectedFilteredMentions && !selectedStateFrames && !selectedValidatedStateFrames && !selectedSceneBoundaries && !selectedScenePackets && !selectedSceneIndexDraft && !selectedVisualGrounding && !selectedStageBlueprint && !selectedSubsceneProposals && !selectedSubsceneStates && !selectedValidatedSubscenes && !selectedInterventionPackages && !selectedSceneReaderPackage && !selectedOverlayRefinement && !selectedRenderPackage && !selectedRenderedImages && !selectedGroundedSceneModel && !selectedEntityGraph && selectedResult !== undefined && (
+          {!selectedPreparedChapter && !selectedContentUnits && !selectedMentionCandidates && !selectedFilteredMentions && !selectedStateFrames && !selectedValidatedStateFrames && !selectedSceneBoundaries && !selectedScenePackets && !selectedSceneIndexDraft && !selectedVisualGrounding && !selectedStageBlueprint && !selectedSubsceneProposals && !selectedSubsceneStates && !selectedValidatedSubscenes && !selectedInterventionPackages && !selectedSupportArtifact && !selectedSceneReaderPackage && !selectedOverlayRefinement && !selectedRenderPackage && !selectedRenderedImages && !selectedGroundedSceneModel && !selectedEntityGraph && selectedResult !== undefined && (
             <details className="mt-4 min-h-0 min-w-0 flex-1 overflow-hidden rounded-lg border border-zinc-200">
               <summary className="cursor-pointer px-4 py-3 text-sm font-medium text-zinc-700">
                 Raw JSON

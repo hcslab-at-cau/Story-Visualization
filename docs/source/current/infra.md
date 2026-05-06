@@ -1,383 +1,148 @@
-# Infrastructure: LLM Client, Prompt Loader, EPUB, I/O
+# 인프라: LLM 클라이언트, 프롬프트 로더, EPUB, 입출력
 
-Story-Decomposition의 인프라 레이어 전체 코드 문서.
-Next.js 이식 시 이 문서만 참조해 구현할 것.
-
----
-
-## 1. LLM Client (`src/viewer/llm_client.py`)
-
-### 개요
-
-OpenRouter (OpenAI-compatible) API를 통해 모든 LLM 호출을 일원화.
-`temperature=0.0`, JSON-only 응답 강제, 지수 백오프 재시도.
-
-### 클래스 구조
-
-```python
-class OpenRouterLLMClient:
-    OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
-
-    def __init__(self, model: str, api_key: str, api_base: Optional[str] = None, max_tokens: int = 16384):
-        self.model = model
-        self.max_tokens = max_tokens
-        self.client = OpenAI(api_key=api_key, base_url=api_base or OPENROUTER_BASE_URL)
-        self.prompt_loader = PromptLoader()
-        self.prompt_names = {
-            "content_classify": "pre1_content_classify",
-            "mention_extract":   "ent1_mention_extract",
-            "mention_validate":  "ent2_mention_validate",
-            "entity_resolve":    "ent3_entity_resolve",
-            "state_validate":    "state2_state_validate",
-            "scene_index":       "scene2_scene_index",
-            "scene_validate":    "scene3_scene_validate",
-            "semantic_clarification": "vis1_semantic_clarification",
-            "image_support":     "vis2_image_support",
-            "subscene_proposal": "sub1_subscene_proposal",
-            "subscene_state":    "sub2_subscene_state",
-            "subscene_validation":"sub3_subscene_validation",
-            "intervention_packaging":"sub4_intervention_packaging",
-            "scene_titles":      "state3_scene_titles",
-        }
-```
-
-### `_call_json` 핵심 로직
-
-```python
-def _call_json(self, prompt: str, max_retries: int = 1) -> Dict:
-    kwargs = {
-        "model": self.model,
-        "temperature": 0.0,
-        "max_tokens": self.max_tokens,
-        "messages": [
-            {"role": "system", "content": "Return ONLY valid JSON. Do not wrap in markdown code blocks."},
-            {"role": "user", "content": prompt},
-        ],
-    }
-    # response_format json_object: OpenAI/Mistral/LLaMA/xAI 계열만 지원
-    _openai_compat = ("openai/", "mistral/", "meta-llama/", "x-ai/")
-    if any(self.model.startswith(p) for p in _openai_compat):
-        kwargs["response_format"] = {"type": "json_object"}
-
-    for attempt in range(max_retries):
-        if attempt > 0:
-            time.sleep(2 ** attempt)  # 지수 백오프: 2s, 4s
-        try:
-            chat = client.chat.completions.create(**kwargs)
-            content = chat.choices[0].message.content.strip()
-
-            # markdown fence 제거 (Claude가 가끔 추가)
-            if content.startswith("```"):
-                lines = content.splitlines()
-                content = "\n".join(lines[1:-1 if lines[-1] == "```" else len(lines)]).strip()
-
-            # JSON 파싱 시도
-            try:
-                return json.loads(content)
-            except json.JSONDecodeError:
-                # 1차: json_repair 라이브러리
-                repaired = repair_json(content)
-                # 2차: 수동 이스케이프 (_repair_json)
-                return json.loads(repaired)
-        except Exception as e:
-            last_exc = e
-
-    raise last_exc
-```
-
-### `_repair_json` (수동 JSON 복구)
-
-리터럴 개행/탭을 이스케이프 처리. Gemini 모델에서 자주 발생.
-
-```python
-def _repair_json(content: str) -> str:
-    # 문자열 내부의 \n, \r, \t를 \\n, \\r, \\t로 변환
-    in_string = False; escaped = False
-    for ch in content:
-        if escaped: escaped = False
-        elif ch == "\\" and in_string: escaped = True
-        elif ch == '"': in_string = not in_string
-        elif in_string and ch == "\n": append "\\n"
-        elif in_string and ch == "\r": append "\\r"
-        elif in_string and ch == "\t": append "\\t"
-```
-
-### 메서드별 페이로드
-
-| 메서드 | 프롬프트 파라미터 |
-|--------|-----------------|
-| `classify_content` | `paragraphs_json` (JSON) |
-| `extract_mentions` | `chapter_text_with_pids` |
-| `validate_mentions` | `paragraphs_json`, `mentions_json` |
-| `resolve_entities` | `chapter_text`, `entities_json`, `unresolved_json` |
-| `validate_state` | `entity_inventory_json`, `chapter_text_with_pids`, `proposed_frames_json` |
-| `validate_scene_index` | `scene_id`, `start_pid`, `end_pid`, `entity_registry_json`, `start_state_json`, `end_state_json`, `scene_text`, `scene_index_json`, `precheck_issues_json` |
-| `extract_semantic_clarification` | `scene_id`, `start_pid`, `end_pid`, `scene_text`, `current_places_json`, `environment_json`, `start_state_json`, `onstage_cast_json` |
-| `extract_image_support` | `scene_id`, `start_pid`, `end_pid`, `start_state_json`, `end_state_json`, `scene_text`, `onstage_cast_json`, `current_places_json`, `mentioned_places_json`, `objects_json`, `environment_json`, `goals_json`, `grounded_scene_description`, `ambiguity_resolutions_json` |
-| `propose_subscenes` | `scene_id`, `start_pid`, `end_pid`, `scene_text`, `current_places_json`, `start_state_json`, `end_state_json`, `onstage_cast_json`, `main_actions_json`, `goals_json`, `objects_json`, `scene_summary` |
-| `extract_subscene_state` | `scene_id`, `start_pid`, `end_pid`, `scene_text`, `scene_summary`, `start_state_json`, `end_state_json`, `onstage_cast_json`, `current_places_json`, `candidates_json` |
-| `validate_subscenes` | `scene_id`, `start_pid`, `end_pid`, `scene_text`, `scene_summary`, `start_state_json`, `end_state_json`, `onstage_cast_json`, `candidates_json`, `state_records_json` |
-| `package_interventions` | `scene_id`, `scene_summary`, `onstage_cast_json`, `prev_end_state_json`, `subscenes_json` |
-| `extract_scene_index` | `scene_id`, `start_pid`, `end_pid`, `start_state_json`, `end_state_json`, `cast_union`, `current_places`, `mentioned_places`, `time_signals`, `scene_text` |
-| `generate_scene_titles` | `scenes_json` |
-
-### TS 이식 노트
-
-```typescript
-// lib/llm-client.ts
-const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
-
-// openai npm 패키지 사용 (API 동일)
-import OpenAI from "openai"
-
-class LLMClient {
-  private client: OpenAI
-  private promptLoader: PromptLoader
-
-  constructor(model: string, apiKey: string, apiBase?: string, maxTokens = 16384) {
-    this.client = new OpenAI({ apiKey, baseURL: apiBase ?? OPENROUTER_BASE_URL })
-  }
-
-  private async callJson(prompt: string, maxRetries = 1): Promise<Record<string, unknown>> {
-    const isOpenAICompat = /^(openai|mistral|meta-llama|x-ai)\//.test(this.model)
-    // ... 동일 로직
-  }
-}
-```
+이 문서는 파이프라인 자체보다 아래쪽에 있는 공통 인프라 계층을 정리한다. 대상은 LLM 호출, 프롬프트 템플릿 로딩, EPUB 파싱, 원문 입출력과 같은 기반 로직이다.
 
 ---
 
-## 2. Prompt Loader (`src/viewer/prompt_loader.py`)
+## 1. LLM Client
 
-### 개요
+관련 구현:
+- `src/lib/llm-client.ts`
 
-`prompts/` 디렉토리의 `.txt` 파일을 로드해 `{param_name}` 플레이스홀더를 치환.
+### 역할
 
-### 전체 코드
+LLM 클라이언트는 OpenRouter의 OpenAI 호환 API를 통해 각 stage의 JSON 응답을 요청한다. 전체 파이프라인에서 공통으로 쓰는 호출 규약은 다음과 같다.
 
-```python
-class PromptLoader:
-    def __init__(self, prompts_dir: Path | None = None):
-        # 기본값: 프로젝트 루트 / prompts/
-        self.prompts_dir = Path(prompts_dir) if prompts_dir else project_root / "prompts"
+- `temperature=0.0`으로 고정해 추출 결과의 변동성을 줄인다.
+- 시스템 프롬프트로 JSON only 응답을 강제한다.
+- 일부 모델 계열에서는 `response_format: { type: "json_object" }`를 함께 넣는다.
+- 실패 시 재시도와 JSON 복구를 수행한다.
 
-    def load(self, template_name: str, params: Dict | None = None) -> str:
-        template = (self.prompts_dir / f"{template_name}.txt").read_text(encoding="utf-8")
-        return template.format(**params) if params else template
+### 현재 구조
 
-    def load_raw(self, template_name: str) -> str:
-        return (self.prompts_dir / f"{template_name}.txt").read_text(encoding="utf-8")
+클라이언트는 모델명, API 키, 최대 토큰 수를 받아 초기화되고, 내부적으로 `PromptLoader`를 함께 사용한다. stage별 프롬프트 이름 매핑을 통해 `PRE`, `ENT`, `STATE`, `SCENE`, `SUB`, `VIS`, `FINAL.2` 단계가 동일한 방식으로 호출된다.
 
-    def list_templates(self) -> list[str]:
-        return [p.stem for p in self.prompts_dir.glob("*.txt")]
+### JSON 호출 로직
 
-def format_json_param(obj: Any) -> str:
-    return json.dumps(obj, ensure_ascii=False, indent=2)
-```
+핵심 호출 함수는 다음 순서로 동작한다.
 
-### 프롬프트 파일 목록 (prompts/ 디렉토리)
+1. OpenAI 호환 `chat.completions.create` 요청을 구성한다.
+2. 모델이 지원하면 `json_object` 응답 형식을 요청한다.
+3. 응답이 코드 펜스로 감싸져 있으면 제거한다.
+4. `JSON.parse`를 시도한다.
+5. 실패하면 `jsonrepair`로 복구한 뒤 다시 파싱한다.
+6. 그래도 실패하면 재시도 후 마지막 예외를 반환한다.
 
-| 파일명 | Stage |
-|--------|-------|
-| `pre1_content_classify.txt` | PRE.2 |
-| `ent1_mention_extract.txt` | ENT.1 |
-| `ent2_mention_validate.txt` | ENT.2 |
-| `ent3_entity_resolve.txt` | ENT.3 |
-| `state2_state_validate.txt` | STATE.2 |
-| `state3_scene_titles.txt` | STATE.3 (post) |
-| `scene2_scene_index.txt` | SCENE.2 |
-| `scene3_scene_validate.txt` | SCENE.3 |
-| `vis1_semantic_clarification.txt` | VIS.1 |
-| `vis2_image_support.txt` | VIS.2 |
-| `vis3_image_common.txt` | VIS.3 |
-| `vis3_style_common.txt` | VIS.3 |
-| `sub1_subscene_proposal.txt` | SUB.1 |
-| `sub2_subscene_state.txt` | SUB.2 |
-| `sub3_subscene_validation.txt` | SUB.3 |
-| `sub4_intervention_packaging.txt` | SUB.4 |
-| `final2_overlay_refinement.txt` | FINAL.2 |
+이 계층의 목적은 “프롬프트별로 제각각 예외 처리하는 것”을 막고, stage 구현이 JSON 스키마 중심으로만 동작하게 만드는 데 있다.
 
-### TS 이식 노트
+### 현재 한계
 
-```typescript
-// lib/prompt-loader.ts
-// Next.js: prompts/ 파일을 fs.readFileSync로 읽거나
-// public/prompts/에 두고 fetch로 가져오거나
-// 빌드 시 import 가능 (정적 파일)
-
-import fs from "fs"
-import path from "path"
-
-export class PromptLoader {
-  private promptsDir: string
-
-  constructor(promptsDir?: string) {
-    this.promptsDir = promptsDir ?? path.join(process.cwd(), "prompts")
-  }
-
-  load(templateName: string, params?: Record<string, string>): string {
-    const template = fs.readFileSync(
-      path.join(this.promptsDir, `${templateName}.txt`), "utf-8"
-    )
-    if (!params) return template
-    return template.replace(/\{(\w+)\}/g, (_, key) => params[key] ?? `{${key}}`)
-  }
-}
-
-export function formatJsonParam(obj: unknown): string {
-  return JSON.stringify(obj, null, 2)
-}
-```
+- JSON 복구는 형식 오류에는 강하지만, 내용적 hallucination을 막지는 못한다.
+- 재시도는 네트워크/포맷 오류 완화에는 도움이 되지만, 잘못된 추출 자체를 교정하지는 않는다.
+- stage별로 입력이 길어질수록 토큰 비용과 지연이 커진다.
 
 ---
 
-## 3. EPUB Parser (`src/viewer/epub.py`)
+## 2. Prompt Loader
 
-### 개요
+관련 구현:
+- `src/lib/prompt-loader.ts`
+- `prompts/*.txt`
 
-EPUB 파일 → `RawChapter[]` 변환 파이프라인.
-TOC 기반 → Spine 기반 → Heading 기반 순으로 폴백.
+### 역할
 
-### 주요 함수
+프롬프트 로더는 `prompts/` 디렉토리의 텍스트 템플릿을 읽고, stage 실행 시 필요한 문자열 파라미터를 삽입해 최종 프롬프트를 만든다.
 
-#### `html_to_paragraphs(html: str) → List[str]`
+### 현재 구조
 
-HTML → 단락 문자열 리스트. 3단계 폴백:
+- 기본 경로는 프로젝트 루트의 `prompts/` 디렉토리다.
+- `load(templateName, params)`는 템플릿을 읽어 `{param}` 자리에 값을 채운다.
+- `loadRaw(templateName)`는 원본 템플릿을 그대로 읽는다.
+- `listTemplates()`는 사용 가능한 템플릿 목록을 반환한다.
 
-```python
-BLOCK_TAGS = ['p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'li', 'blockquote', 'pre', 'figcaption']
+### 현재 프로젝트에서의 의미
 
-def html_to_paragraphs(html: str) -> List[str]:
-    soup = BeautifulSoup(html, 'html.parser')
-    # script/style/nav/head 제거
-    body = soup.find('body') or soup
+이 구조 덕분에 프롬프트와 stage 로직이 분리되어 있다. 즉 stage 코드는 “무엇을 넣어 호출할지”를 담당하고, 템플릿 파일은 “어떻게 요청할지”를 담당한다. 이후 프롬프트 실험이나 버전 관리가 필요해질 때도 이 분리는 유지하는 편이 맞다.
 
-    # Pass 1: leaf block 요소 (중첩 block 없는 것)
-    for elem in body.find_all(BLOCK_TAGS):
-        if elem.find(BLOCK_TAGS): continue  # 컨테이너 skip
-        text = elem.get_text(separator=' ', strip=True)
-        text = ' '.join(text.split())  # 공백 정규화
-        if text and len(text) > 1: yield text
+### 개선 필요 지점
 
-    # Pass 2: leaf <div> (Pass 1이 없을 때)
-    # Pass 3: 줄바꿈으로 split (최후 수단)
-```
-
-#### `epub_to_chapter_candidates(epub_path: str) → List[RawChapterCandidate]`
-
-```python
-def epub_to_chapter_candidates(epub_path):
-    book = epub.read_epub(epub_path)
-    spine_docs = _get_spine_documents(book)   # 읽기 순서대로 SpineDocument[]
-
-    # Strategy 1: TOC 기반 (가장 정확)
-    toc_entries = _extract_toc_entries(book)  # TOCEntry[]
-    if toc_entries:
-        candidates = _chapters_from_toc(toc_entries, spine_docs)
-        if candidates: return candidates
-
-    # Strategy 2: Spine 기반 (1 doc = 1 chapter)
-    candidates = _chapters_from_spine(spine_docs)
-    if candidates: return candidates
-
-    # Strategy 3: Heading 기반 (h1/h2로 분할)
-    return _chapters_from_headings(spine_docs)
-```
-
-#### `normalize_chapters(candidates, doc_id, min_chars=500, max_chars=30000) → List[RawChapter]`
-
-```python
-def normalize_chapters(candidates, doc_id, min_chapter_chars=500, max_chapter_chars=30000):
-    # Phase 1: 짧은 챕터 병합 (< min_chars → 이전 챕터에 흡수)
-    merged = _merge_short_chapters(candidates, min_chapter_chars)
-
-    # Phase 2: 긴 챕터 분할 (> max_chars → 단락 경계에서 분할)
-    split = []
-    for cand in merged:
-        if cand.text_length > max_chapter_chars:
-            split.extend(_split_long_chapter(cand, max_chapter_chars))
-        else:
-            split.append(cand)
-
-    # Phase 3: RawChapter 변환 (pid 할당: 0-indexed)
-    return [_candidate_to_raw_chapter(cand, doc_id, f"ch{i+1:02d}") for i, cand in enumerate(split)]
-```
-
-#### `_candidate_to_raw_chapter` — Paragraph 변환
-
-```python
-def _candidate_to_raw_chapter(candidate, doc_id, chapter_id) -> RawChapter:
-    paras = []
-    current_pos = 0
-    for idx, text in enumerate(candidate.paragraphs):
-        start = current_pos
-        end = current_pos + len(text)
-        paras.append(Paragraph(pid=idx, start=start, end=end, text=text))
-        current_pos = end + 1  # +1 for space separator
-    return RawChapter(
-        doc_id=doc_id, chapter_id=chapter_id,
-        title=candidate.title, text=' '.join(candidate.paragraphs),
-        paragraphs=paras,
-        source=ChapterSource(type=candidate.source_type, ...)
-    )
-```
-
-### TS 이식 노트
-
-```typescript
-// lib/epub.ts
-// 사용 npm 패키지: epub2 (또는 epubjs)
-// HTML 파싱: cheerio (BeautifulSoup 대체)
-import { EPub } from "epub2"
-import * as cheerio from "cheerio"
-
-const BLOCK_TAGS = ["p", "h1", "h2", "h3", "h4", "h5", "h6", "li", "blockquote", "pre", "figcaption"]
-
-function htmlToParagraphs(html: string): string[] {
-  const $ = cheerio.load(html)
-  $("script, style, nav, head").remove()
-  const paragraphs: string[] = []
-  // Pass 1: leaf block elements
-  $(BLOCK_TAGS.join(",")).each((_, el) => {
-    if ($(el).find(BLOCK_TAGS.join(",")).length > 0) return
-    const text = $(el).text().replace(/\s+/g, " ").trim()
-    if (text.length > 1) paragraphs.push(text)
-  })
-  return paragraphs
-}
-```
+- 프롬프트 버전 식별자와 변경 이력을 stage 로그에 함께 남길 필요가 있다.
+- 지원 생성 계층이 추가되면 `SUP.*`용 프롬프트 세트도 같은 규약으로 관리해야 한다.
+- 장기적으로는 프롬프트 입력 길이, 응답 품질, 실패율을 같이 기록하는 운영 계층이 필요하다.
 
 ---
 
-## 4. I/O (`src/viewer/io.py`)
+## 3. EPUB Parser
 
-### 파일명 컨벤션
+관련 구현:
+- `src/lib/epub.ts`
 
-```
-data/raw/{doc_id}__{chapter_id}.json
-```
+### 역할
 
-### 주요 함수
+EPUB 파서는 업로드된 책 파일을 `RawChapter` 형태로 정규화하는 전처리 계층이다. 이후 모든 stage는 이 결과를 기준으로 동작한다.
 
-```python
-def load_raw_chapter(file_path: Path) -> Optional[RawChapter]:
-    data = orjson.loads(file_path.read_bytes())
-    return RawChapter(**data)
+### 현재 구조
 
-def save_raw_chapter(chapter: RawChapter, out_dir="data/raw", overwrite=False) -> str:
-    filename = f"{chapter.doc_id}__{chapter.chapter_id}.json"
-    # json.dump(data, f, indent=2, ensure_ascii=False)
+파서는 대체로 다음 흐름을 따른다.
 
-def format_paragraphs_for_llm(chapter, narrative_pids=None) -> str:
-    # [P{pid}] text 형식으로 LLM에 전달
-    lines = [f"[P{p.pid}] {p.text}" for p in chapter.paragraphs
-             if narrative_pids is None or p.pid in narrative_pids]
-    return "\n".join(lines)
-```
+1. EPUB를 읽고 spine 문서를 가져온다.
+2. TOC가 있으면 TOC 기준으로 chapter 후보를 만든다.
+3. TOC가 충분하지 않으면 spine 기준으로 chapter를 나눈다.
+4. 그것도 부족하면 heading 기반으로 후보를 만든다.
+5. 추출된 HTML을 paragraph 배열로 정리한다.
+6. 너무 짧은 chapter는 병합하고, 너무 긴 chapter는 분할한다.
+7. 최종적으로 `Paragraph(pid, start, end, text)` 목록이 들어간 `RawChapter`를 만든다.
 
-### Firebase 전환 노트
+### paragraph 추출
 
-로컬 파일 I/O → Firestore로 전환:
-- `load_raw_chapter` → `firestore.doc("documents/{docId}/chapters/{chapterId}").get()`
-- `save_raw_chapter` → `firestore.doc(...).set()`
-- `format_paragraphs_for_llm` → 동일 로직 TS로 포팅
+HTML에서 `p`, `h1~h6`, `li`, `blockquote`, `pre`, `figcaption` 같은 블록 요소를 우선 대상으로 삼고, leaf block만 paragraph 후보로 사용한다. 이후 공백 정규화와 보조 규칙을 적용해 LLM이 읽기 쉬운 단위로 맞춘다.
+
+### 현재 한계
+
+- EPUB 내부 구조가 불규칙하면 chapter 경계가 완전히 안정적이지 않을 수 있다.
+- paragraph 분해 품질은 이후 mention extraction과 scene boundary 품질에 직접 영향을 준다.
+- 매우 긴 chapter를 단순 분할할 경우 narrative 단위가 끊길 위험이 있다.
+
+---
+
+## 4. 입출력 계층
+
+관련 구현:
+- `src/lib/firestore.ts`
+- `src/lib/pipeline/*`
+- 일부 로컬 유틸
+
+### 역할
+
+현재 프로젝트의 실질적인 저장 계층은 Firestore다. 초기 Python 버전에서 로컬 JSON 파일을 읽고 쓰던 흐름이 이제는 `documents/{docId}/chapters/{chapterId}/runs/{runId}` 중심 구조로 옮겨왔다.
+
+### 현재 구조
+
+- 원문 chapter는 문서/챕터 단위로 저장된다.
+- 각 실행은 `runId` 아래에 stage별 artifact를 남긴다.
+- 파이프라인은 이전 stage 출력을 읽어 다음 stage 입력으로 넘긴다.
+- 뷰어는 최신 run 또는 선택한 run의 artifact를 읽어 inspector와 reader screen을 구성한다.
+
+### 현재 구조의 장점
+
+- 동일 chapter를 여러 번 실행해도 run 단위로 비교가 가능하다.
+- stage별 산출물을 개별적으로 점검할 수 있다.
+- 디버깅과 재현성이 로컬 파일 기반보다 좋아졌다.
+
+### 현재 구조의 한계
+
+- 문서 전역 기억보다는 chapter/run 단위 기록에 강한 구조다.
+- 엔티티/사건/인과/장소 변화를 장기적으로 재사용하기에는 별도 memory 계층이 없다.
+- 앞으로 reader support를 고도화하려면 `support/memory-schema.md`에서 제안한 doc-level memory를 추가해야 한다.
+
+---
+
+## 5. 정리
+
+현재 인프라 계층은 “chapter 단위 장면 분해와 독자 패키지 생성”까지는 충분히 받쳐주고 있다. 다음 단계에서 필요한 것은 기반 기술 교체가 아니라, 이 위에 올라갈 장기 기억 계층과 지원 생성 계층의 추가다.
+
+특히 다음 세 가지가 중요하다.
+
+- LLM 호출 결과의 신뢰성과 관측성을 높이는 운영 장치
+- 문서 전역 기억을 저장하는 별도 스키마
+- 기존 stage와 지원 생성 stage를 느슨하게 연결하는 공통 표현 계층

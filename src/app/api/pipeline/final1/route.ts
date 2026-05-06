@@ -8,6 +8,7 @@ import type {
   SceneBoundaries,
   ValidatedSubscenes,
   InterventionPackages,
+  ReaderSupportPackageLog,
   StageBlueprint,
 } from "@/types/schema"
 
@@ -37,10 +38,14 @@ export async function POST(request: Request): Promise<Response> {
     const blueprintLog = await loadStageResult<StageBlueprint>(docId, chapterId, runId, stageKey("VIS.2"))
     const interventionLog = await loadStageResult<InterventionPackages>(docId, chapterId, runId, stageKey("SUB.4"))
     const renderedImagesLog = await loadStageResult<RenderedImages>(docId, chapterId, runId, stageKey("VIS.4"))
+    const supportLog = await loadStageResult<ReaderSupportPackageLog>(docId, chapterId, runId, stageKey("SUP.7"))
 
     const result = runSceneReaderPackage(
       groundedLog, sub3Log, packetLog, boundaryLog, chapter, docId, chapterId, parents,
-      blueprintLog ?? undefined, interventionLog ?? undefined, renderedImagesLog ?? undefined,
+      blueprintLog ?? undefined,
+      interventionLog ?? undefined,
+      renderedImagesLog ?? undefined,
+      supportLog ?? undefined,
     )
 
     await saveStageResult(docId, chapterId, runId, stageKey("FINAL.1"), result)

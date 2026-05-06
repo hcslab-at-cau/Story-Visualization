@@ -17,6 +17,7 @@ import type {
   ReaderPairView,
   SceneReaderPackageLog,
   SceneReaderPacket,
+  SupportUnit,
 } from "@/types/schema"
 
 const CONF_THRESHOLD = 0.5
@@ -226,6 +227,45 @@ function CharacterButton({
   )
 }
 
+const SUPPORT_KIND_LABEL: Record<string, string> = {
+  snapshot: "Now",
+  boundary_delta: "Shift",
+  causal_bridge: "Why",
+  character_focus: "Cast",
+  relation_delta: "Relation",
+  reentry_recap: "Resume",
+  reference_repair: "Names",
+  spatial_continuity: "Place",
+  visual_context: "Cues",
+}
+
+function SupportUnitCard({
+  unit,
+  compact = false,
+}: {
+  unit: SupportUnit
+  compact?: boolean
+}) {
+  return (
+    <div className="rounded-xl border border-zinc-200 bg-white px-4 py-3 shadow-sm">
+      <div className="flex items-center justify-between gap-3">
+        <span className="rounded-full bg-zinc-100 px-2.5 py-1 text-[11px] font-semibold text-zinc-600">
+          {SUPPORT_KIND_LABEL[unit.kind] ?? unit.label}
+        </span>
+        <span className="text-[11px] text-zinc-400">
+          {Math.round(unit.priority * 100)}
+        </span>
+      </div>
+      <h4 className={`mt-3 font-semibold text-zinc-900 ${compact ? "text-sm" : "text-base"}`}>
+        {unit.title}
+      </h4>
+      <p className={`${compact ? "mt-1 text-sm leading-6" : "mt-2 text-[15px] leading-7"} text-zinc-600`}>
+        {unit.body}
+      </p>
+    </div>
+  )
+}
+
 type ReaderFocusContext =
   | {
       mode: "global"
@@ -373,6 +413,9 @@ export default function ReaderScreen({ final1, final2, topControls }: Props) {
     activeSubsceneId,
     selectedCharacterIds: resolvedSelectedCharacterIds,
   })
+  const supportBeforeText = packet.support?.display_slots.before_text ?? []
+  const supportBesideVisual = packet.support?.display_slots.beside_visual ?? []
+  const supportOnDemand = packet.support?.display_slots.on_demand ?? []
 
   const activeImageKey = packet?.visual.image_path ? `${packet.scene_id}:${packet.visual.image_path}` : ""
   const metricsForActiveImage =
@@ -559,11 +602,32 @@ export default function ReaderScreen({ final1, final2, topControls }: Props) {
             </div>
           )}
 
+          {supportBeforeText.length > 0 && (
+            <div className="grid gap-3 md:grid-cols-2">
+              {supportBeforeText.map((unit) => (
+                <SupportUnitCard key={unit.unit_id} unit={unit} />
+              ))}
+            </div>
+          )}
+
           <div className="flex flex-col gap-5 rounded-2xl border border-zinc-200 bg-white px-7 py-6 text-[17px] leading-9 text-zinc-700 shadow-sm xl:text-[18px]">
             {(subscene?.body_paragraphs ?? packet.body_paragraphs).map((paragraph, index) => (
               <p key={index}>{paragraph}</p>
             ))}
           </div>
+
+          {supportOnDemand.length > 0 && (
+            <details className="rounded-xl border border-zinc-200 bg-white">
+              <summary className="cursor-pointer px-4 py-3 text-sm font-semibold text-zinc-700">
+                More reading support ({supportOnDemand.length})
+              </summary>
+              <div className="grid gap-3 border-t border-zinc-200 bg-zinc-50 p-4 md:grid-cols-2">
+                {supportOnDemand.map((unit) => (
+                  <SupportUnitCard key={unit.unit_id} unit={unit} compact />
+                ))}
+              </div>
+            </details>
+          )}
 
           {(packet.subscene_nav.length > 1 || final1.packets.length > 1) && (
             <div className="flex gap-2">
@@ -716,6 +780,14 @@ export default function ReaderScreen({ final1, final2, topControls }: Props) {
                   {focusContext.panels[activePanel]}
                 </div>
               )}
+            </div>
+          )}
+
+          {supportBesideVisual.length > 0 && (
+            <div className="grid gap-3">
+              {supportBesideVisual.map((unit) => (
+                <SupportUnitCard key={unit.unit_id} unit={unit} compact />
+              ))}
             </div>
           )}
         </div>

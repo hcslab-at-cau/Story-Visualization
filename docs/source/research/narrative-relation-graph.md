@@ -1,72 +1,80 @@
-# Narrative Relation Graph Proposal
+# Narrative Relation Graph 제안
 
-## 1. Position
+## 1. 위치 설정
 
-The proposed direction is mostly right.
+현재 제안된 방향은 대체로 맞다.
 
-The project should not treat the next step as:
+다음 단계를
 
-- better image prompts
-- one more reader card
-- a larger final summary
+- 더 좋은 image prompt
+- reader card 하나 더 추가
+- 더 큰 final summary
 
-The stronger direction is:
+로 보면 약하다.
+
+더 강한 방향은 다음이다.
 
 `validated extraction -> evidence-grounded narrative relation graph -> multiple reader-support artifacts`
 
-The reason is simple: Resume Card, Shift Bridge, Situation Snapshot, Timeline, Relation View, Spatial Map, Scene Image, and Interaction Button all need the same underlying information.
+이유는 단순하다.
 
-They all ask:
+Resume Card, Shift Bridge, Situation Snapshot, Timeline, Relation View, Spatial Map, Scene Image, Interaction Button은 모두 같은 기반 정보를 필요로 한다.
 
-- who is present?
-- where and when is this happening?
-- what changed from the previous scene?
-- what goal, conflict, or question is active?
-- what earlier event or thread explains the current moment?
-- what can be shown without spoiling unread text?
+공통으로 묻는 질문:
 
-So the missing layer is not one specific artifact. The missing layer is a stable narrative data layer.
+- 누가 present한가?
+- 어디서 언제 벌어지는가?
+- 이전 scene과 비교해 무엇이 달라졌는가?
+- 어떤 goal, conflict, question이 active한가?
+- 어떤 earlier event나 thread가 현재 장면을 설명하는가?
+- unread text를 spoil하지 않고 무엇을 보여줄 수 있는가?
 
-Recommended name:
+즉 빠진 것은 support 하나가 아니라 안정된 narrative data layer다.
+
+권장 이름:
 
 - `Narrative Relation Graph`
 
-Alternative implementation name:
+더 정확한 이름:
 
 - `Reader-position-aware Narrative Graph`
 
-The second name is more precise because every node and edge must know when it is safe to reveal.
+두 번째 이름이 더 정확한 이유는,
+모든 node와 edge가 언제 safe to reveal인지 알아야 하기 때문이다.
 
-## 2. How This Fits Current Documents
+## 2. 현재 문서와의 연결
 
-Existing documents already point in this direction:
+기존 문서들도 이미 이 방향을 가리키고 있다.
 
-- `../support/reader-support-design.md` identifies the support forms.
-- `../support/roadmap.md` says the project needs document-level memory.
-- `../support/memory-schema.md` proposes memory collections.
-- `../support/pipeline-plan.md` proposes a `SUP.*` branch.
+- `../support/reader-support-design.md`는 support form 종류를 정리했다.
+- `../support/roadmap.md`는 document-level memory가 필요하다고 말한다.
+- `../support/memory-schema.md`는 memory collection을 제안한다.
+- `../support/pipeline-plan.md`는 `SUP.*` branch를 제안한다.
 
-This document sharpens that direction:
+이 문서는 그 방향을 더 날카롭게 만든다.
 
-`support memory` should not be only a set of scene summaries. It should become an evidence-linked graph of state, threads, and relations.
+핵심:
 
-The graph should feed the `SUP.*` branch rather than replace it.
+- `support memory`는 scene summary 묶음이 되어서는 안 된다.
+- evidence-linked state / thread / relation graph로 발전해야 한다.
 
-## 3. Main Recommendation
+그리고 이 graph는 `SUP.*` branch를 대체하는 것이 아니라 feeding layer가 되어야 한다.
 
-Build a graph-shaped intermediate representation before building more final UI artifacts.
+## 3. 핵심 권장 사항
 
-High-level flow:
+final UI artifact를 더 만들기 전에 graph-shaped intermediate representation을 먼저 만드는 편이 맞다.
+
+고수준 흐름:
 
 ```text
-TextUnit DB
-  -> Raw Mention / State / Boundary / Scene Artifacts
-  -> Canonical Entity + Scope Normalization
-  -> Scene State Ledger
-  -> Narrative Thread Ledger
-  -> Scene Relation Graph
-  -> Chapter Relation Graph
-  -> Reader-facing Artifacts
+TextUnit 저장소
+  -> 원시 Mention / State / Boundary / Scene 산출물
+  -> 정규 Entity + 범위 정규화
+  -> Scene 상태 원장
+  -> Narrative thread 원장
+  -> Scene 관계 그래프
+  -> Chapter 관계 그래프
+  -> 독자용 산출물
      -> Resume Card
      -> Shift Bridge
      -> Situation Snapshot
@@ -77,494 +85,121 @@ TextUnit DB
      -> Interaction Buttons
 ```
 
-The important shift is:
+중요한 변화는 다음이다.
 
-`generate final support directly from scene output`
+`scene output에서 바로 final support 생성`
 
-should become:
+이 아니라
 
-`derive final support from a shared relation graph`
+`shared relation graph에서 final support 파생`
 
-## 4. Why a Graph Is Needed
+으로 바뀌어야 한다는 점이다.
 
-The existing pipeline can produce useful scene-local information, but reader support often needs cross-scene and cross-chapter retrieval.
+## 4. 왜 graph가 필요한가
 
-Examples:
+현재 파이프라인도 scene-local 정보는 잘 뽑는다.
+하지만 reader support는 cross-scene, cross-chapter retrieval이 자주 필요하다.
 
-- Timeline needs event order and temporal links.
-- Relation View needs character-pair state changes across scenes.
-- Shift Bridge needs previous-vs-current scene deltas.
-- Resume Card needs the latest important unresolved changes before the current reader position.
-- Spatial Map needs place continuity and movement edges.
-- Cause-Effect Chip needs causal, enabling, blocking, or resolving edges.
-- Scene Image needs current place, cast, objects, mood, and action, but it should also know which visual claims are safe.
+예:
 
-These are not separate data problems. They are different projections of the same narrative graph.
+- Timeline은 event order와 temporal link가 필요하다.
+- Relation View는 character-pair state change를 여러 scene에 걸쳐 봐야 한다.
+- Shift Bridge는 previous vs current delta를 알아야 한다.
+- Resume Card는 현재 reader position 직전의 중요한 unresolved change를 알아야 한다.
+- Spatial Map은 place continuity와 movement edge가 필요하다.
+- Cause-Effect Chip은 causal / enabling / blocking / resolving edge가 필요하다.
+- Scene Image는 current place, cast, object, mood, action이 필요하지만 동시에 어떤 visual claim이 safe한지도 알아야 한다.
 
-## 5. Recommended Data Layers
+즉 이것들은 서로 다른 data 문제가 아니라,
+같은 narrative graph의 다른 projection이다.
 
-The story still has a hierarchy:
+## 5. 권장 데이터 층
+
+이야기는 여전히 계층 구조를 가진다.
 
 ```text
-Book
-  -> Chapter
-     -> Scene
-        -> Beat / Subscene
-           -> TextUnit
+책
+  -> 챕터
+     -> 장면
+        -> 비트 / 서브신
+           -> 텍스트 단위
 ```
 
-But support requires graph edges across that hierarchy:
+하지만 support를 위해서는 이 계층을 가로지르는 edge가 추가되어야 한다.
 
 ```text
 Scene 3 -> causes -> Scene 7
 Scene 4 -> place_shift -> Scene 5
-Scene 6 -> relationship_delta -> Scene 8
-Chapter 1 -> resolves_setup -> Chapter 4
-Object clue -> callback -> later discovery
-Mystery thread -> reframe -> later reveal
+Subscene 12 -> escalates -> Subscene 13
+Character A + Character B -> relation_change -> Scene 9
 ```
 
-So the DB should be both:
+그래서 필요한 것은 tree-only structure가 아니라 hybrid 구조다.
 
-- hierarchical for text location and ordering
-- graph-like for narrative relations
+- hierarchy for containment
+- graph for relation
 
-## 6. Core Records
+## 6. graph에 들어가야 할 것
 
-## 6.1 NarrativeNode
+### node 유형
 
-Use nodes for more than characters and places.
+- `scene_state_node`
+- `subscene_event_node`
+- `thread_node`
+- `relation_state_node`
+- `place_state_node`
 
-Recommended node types:
+### edge 유형
 
-- `chapter`
-- `scene`
-- `beat`
-- `event`
-- `character`
-- `place`
-- `object`
-- `relationship`
-- `goal`
-- `conflict`
-- `mystery`
-- `theme`
-- `question`
-
-Important fields:
-
-- `id`
-- `bookId`
-- `type`
-- `label`
-- `summary`
-- `startTextUnitId`
-- `endTextUnitId`
-- `firstMentionTextUnitId`
-- `revealAtTextUnitId`
-- `confidence`
-- `evidenceTextUnitIds`
-- `metadata`
-
-The key design decision is to represent goal, conflict, mystery, and question as first-class nodes.
-
-Reason:
-
-- many chapter-to-chapter relationships are not "same character appears"
-- they are "the same unresolved goal/conflict/mystery continues"
-
-## 6.2 NarrativeThread
-
-Threads are the most useful bridge between scenes and chapters.
-
-Recommended thread types:
-
-- `goal`
-- `conflict`
-- `mystery`
-- `relationship`
-- `object_clue`
-- `background_knowledge`
-- `theme`
-
-Important fields:
-
-- `id`
-- `bookId`
-- `type`
-- `title`
-- `description`
-- `status`
-- `ownerEntityIds`
-- `introducedAtSceneId`
-- `resolvedAtSceneId`
-- `revealAtTextUnitId`
-- `spoilerRisk`
-- `evidenceTextUnitIds`
-
-Recommended thread statuses:
-
-- `opened`
-- `progressing`
-- `complicated`
-- `partially_resolved`
-- `resolved`
-- `abandoned`
-- `uncertain`
-
-## 6.3 ThreadEvent
-
-Thread events record how a thread behaves inside a scene.
-
-Recommended roles:
-
-- `introduce`
-- `continue`
-- `escalate`
-- `block`
-- `reveal`
-- `reframe`
-- `resolve`
-
-This makes chapter-level bridges much more stable.
-
-Example:
-
-```text
-Thread: "the suspicious phone call"
-  Chapter 1 Scene 2: introduce
-  Chapter 2 Scene 4: escalate
-  Chapter 4 Scene 1: reveal
-  Chapter 4 Scene 2: resolve
-```
-
-Then a Resume Card can say:
-
-`The current scene returns to the suspicious-call thread opened in Chapter 1.`
-
-without asking an LLM to infer the whole structure from scratch.
-
-## 6.4 SceneState
-
-Every scene should have entry and exit state.
-
-```text
-SceneState
-  sceneId
-  entryState
-  exitState
-  stateDelta[]
-```
-
-`SituationState` should include:
-
-- active characters
-- current location
-- current time
-- current POV
-- current goals
-- current conflicts
-- open questions
-- important objects
-- relationship states
-- mood
-- tension
-- evidence
-- confidence
-
-This is critical because many relation edges can be generated from state diffs.
-
-Examples:
-
-- entry/exit location changed -> `place_shift`
-- active cast changed -> `cast_shift`
-- goal changed -> `goal_shift`
-- open question resolved -> `resolves`
-- relationship state changed -> `relationship_delta`
-
-## 6.5 SceneEdge
-
-Scene edges should be reader-support claims, not just links.
-
-Recommended edge types:
-
-- `sequence`
-- `time_shift`
-- `place_shift`
-- `cast_shift`
-- `pov_shift`
-- `goal_shift`
-- `causal`
+- `causes`
 - `enables`
 - `blocks`
 - `resolves`
-- `reveals`
-- `callback`
-- `parallel`
-- `contrast`
+- `place_shift`
+- `time_shift`
+- `cast_shift`
+- `goal_shift`
+- `thread_continuation`
 - `relationship_delta`
-- `object_transfer`
-- `clue_progression`
-- `emotional_shift`
-- `theme_recurrence`
+- `foreshadows`
+- `recalls`
 
-Important fields:
+### 모든 graph element가 가져야 할 것
 
-- `id`
-- `sourceSceneId`
-- `targetSceneId`
-- `type`
-- `claim`
-- `before`
-- `after`
-- `relatedEntityIds`
-- `relatedThreadIds`
-- `evidenceTextUnitIds`
-- `confidence`
-- `importance`
-- `revealAtTextUnitId`
-- `spoilerRisk`
-- `generatedFromRunId`
+- evidence reference
+- confidence
+- source run
+- scope label
+- reveal timing
+- spoiler risk
 
-The `claim` field matters because UI artifacts can reuse it directly after compression.
+## 7. scope와 reveal이 중요한 이유
 
-## 6.6 ChapterEdge
+이 graph는 generic KG가 아니라 reader-facing graph여야 한다.
 
-Chapter edges should be aggregated from scene edges and thread events.
+그러려면 다음을 구분해야 한다.
 
-Do not ask the LLM for abstract chapter relations first. Build scene-level links first, then aggregate.
+- actual state
+- memory
+- imagination
+- hypothetical
+- dialogue claim
+- unreliable narration
 
-Recommended chapter edge types:
+그리고 현재 reader position보다 뒤의 정보를 미리 드러내면 안 된다.
 
-- `continues_thread`
-- `resolves_setup`
-- `callback`
-- `parallel_structure`
-- `contrast`
-- `same_location_return`
-- `relationship_progression`
-- `pov_reframe`
-- `time_jump`
-- `arc_transition`
+즉 graph는 단순한 relation 저장소가 아니라
 
-Important fields:
+- `is this claim valid?`
+- `is this claim reveal-safe now?`
 
-- `id`
-- `sourceChapterId`
-- `targetChapterId`
-- `type`
-- `summary`
-- `supportingSceneEdgeIds`
-- `relatedThreadIds`
-- `relatedEntityIds`
-- `evidenceTextUnitIds`
-- `confidence`
-- `importance`
-- `revealAtTextUnitId`
+를 함께 다뤄야 한다.
 
-## 7. Narrative Scope
+## 8. 현재 구현과의 연결
 
-This is a high-priority reliability requirement.
+현재 코드에서 가장 중요한 입력:
 
-Every mention, event, place, and relation claim should carry narrative scope when relevant.
-
-Recommended scope values:
-
-- `actual_storyworld`
-- `memory`
-- `imagination`
-- `hypothetical`
-- `metaphor`
-- `dialogue_claim`
-- `unreliable_claim`
-
-Recommended fields:
-
-- `realityStatus`
-- `scopeOwnerEntityId`
-- `scopeStartTextUnitId`
-- `scopeEndTextUnitId`
-- `affectsCurrentSceneState`
-
-Why this matters:
-
-- imagined places should not become actual locations
-- memories should not always update present-time state
-- dialogue claims should not become facts unless validated
-- unreliable or hypothetical statements should not create hard graph edges
-
-Example:
-
-```json
-{
-  "surfaceText": "New Zealand",
-  "type": "place",
-  "scope": {
-    "realityStatus": "imagination",
-    "scopeOwnerEntityId": "char_alice"
-  },
-  "affectsCurrentSceneState": false
-}
-```
-
-This prevents false `place_shift` edges.
-
-## 8. Evidence and Spoiler Policy
-
-Every graph record must be evidence-linked.
-
-Required fields:
-
-- `evidenceTextUnitIds`
-- `confidence`
-- `revealAtTextUnitId`
-- `spoilerRisk`
-- `generatedFromRunId`
-
-Rules:
-
-- A support claim cannot be shown before its `revealAtTextUnitId`.
-- High spoiler-risk edges should be excluded from normal reader support.
-- Claims without evidence should stay in a correction queue, not the canonical graph.
-- Evidence must point to actual text units or validated upstream artifacts.
-
-This is the main difference between a useful support graph and a hallucinated knowledge graph.
-
-## 9. Generation Strategy
-
-Do not ask an LLM to "find all relations."
-
-Use a three-step process.
-
-## Step 1. Candidate Edge Generation
-
-Generate candidates with deterministic rules.
-
-Examples:
-
-- adjacent scene pair -> `sequence`
-- location changes -> `place_shift`
-- time changes -> `time_shift`
-- active cast changes -> `cast_shift`
-- active thread changes -> `goal_shift` or `thread_continuation`
-- recurring object appears -> `object_continuity`
-- relation state changes -> `relationship_delta`
-
-## Step 2. LLM Relation Classifier
-
-Give the LLM one candidate at a time.
-
-The task should be narrow:
-
-- is this relation real?
-- what relation type is best?
-- what is the reader-facing claim?
-- what evidence supports it?
-- when is it safe to reveal?
-- does narrative scope block this edge?
-
-## Step 3. Correction Loop
-
-Before writing the edge, validate:
-
-1. evidence exists in the text
-2. claim does not contradict evidence
-3. imagined/hypothetical/memory scopes are not treated as actual events
-4. reader-position safety is respected
-5. entity IDs are canonical, not duplicated
-6. edge is not a duplicate of an existing edge
-7. confidence and importance are calibrated
-
-This structure is better than prompt-only iteration because failures become inspectable.
-
-## 10. Importance Score
-
-Every edge should have an importance score.
-
-Suggested components:
-
-- `narrativeImpact`
-- `readerRelevance`
-- `recurrenceStrength`
-- `unresolvedThreadWeight`
-- `boundaryStrength`
-- `evidenceConfidence`
-
-Use importance to keep UI selective.
-
-Examples:
-
-- Resume Card uses high-importance recent edges.
-- Timeline uses temporal, causal, and resolve edges.
-- Relation View uses relationship deltas.
-- Spatial Map uses place-shift edges.
-- Scene Image uses current state plus spatially relevant edges.
-
-## 11. Artifact Mapping
-
-| Artifact | Required graph data |
-|---|---|
-| Resume Card | current scene state, latest important edge, open threads |
-| Shift Bridge | state delta, time/place/cast/pov/goal shift edges |
-| Situation Snapshot | active cast, location, time, goal, conflict, why-it-matters |
-| Timeline | event nodes, temporal edges, causal edges |
-| Relation View | character nodes, relationship states, relationship-delta edges |
-| Chapter Relation Map | chapter edges, shared threads, callbacks, resolutions |
-| Spatial Map | place nodes, movement edges, scene-location mapping |
-| Scene Image / Stage | scene state, place, cast, objects, mood, action |
-| Cause-Effect Chip | causal, enables, blocks, resolves edges |
-| Mystery Hook | open mystery threads and unresolved questions |
-| Object Focus | object nodes and clue-progression edges |
-| Q&A Button | graph query plus evidence spans |
-
-This is the main reason the graph is worth building: one data layer can generate many support forms.
-
-## 12. Minimal Viable Graph
-
-Do not build the whole graph first.
-
-MVP relation types:
-
-1. `sequence`
-2. state delta edges:
-   - `time_shift`
-   - `place_shift`
-   - `cast_shift`
-   - `goal_shift`
-3. causal edges:
-   - `causal`
-   - `enables`
-   - `blocks`
-   - `resolves`
-4. `thread_continuation`
-5. `relationship_delta`
-
-MVP records:
-
-- scene state entry/exit
-- state delta
-- narrative thread
-- thread event
-- scene edge
-- chapter edge aggregation
-
-MVP generated artifacts:
-
-- Resume Card
-- Shift Bridge
-- Situation Snapshot
-- simple Timeline
-- Relation Delta
-- Goal/Mystery Hook
-
-This is enough to demonstrate that the project can generate several reader supports from one shared graph.
-
-## 13. Implementation Plan
-
-## Phase 1. Scene State Ledger
-
-Inputs:
-
+- `ENT.3`
 - `STATE.2`
 - `STATE.3`
 - `SCENE.1`
@@ -572,219 +207,24 @@ Inputs:
 - `SUB.2`
 - `SUB.3`
 
-Outputs:
+보조 입력:
 
-- scene entry state
-- scene exit state
-- active cast/place/time/goals/questions
-- evidence refs
-- scope flags
+- `SUB.4`
+- `VIS.1 / VIS.2`
 
-## Phase 2. State Delta Builder
+권장 해석:
 
-Compute deltas between adjacent scenes.
+- `SCENE.3`은 scene-level grounded fact source
+- `SUB.2 / SUB.3`은 local progression source
+- `STATE.3`은 boundary / shift signal source
+- `ENT.3`은 canonical identity source
 
-Outputs:
+즉 지금 구현은 graph 구축 전단계로 충분히 재활용할 수 있다.
 
-- location delta
-- time delta
-- cast delta
-- goal/thread delta
-- relationship delta candidates
+## 9. 최종 권장 방향
 
-## Phase 3. Narrative Thread Ledger
+이 문서의 결론은 간단하다.
 
-Start with conservative thread types:
+`stage output을 바로 support로 쓰는 대신, evidence-linked narrative relation graph를 만들고 그 graph에서 support를 파생시킨다.`
 
-- goal
-- conflict
-- mystery
-- relationship
-- object clue
-
-Outputs:
-
-- thread records
-- thread events per scene
-- open/resolved status
-
-## Phase 4. Scene Edge Candidate Builder
-
-Generate candidate edges from:
-
-- state deltas
-- thread events
-- recurring entities
-- recurring objects
-- relation state changes
-
-## Phase 5. Relation Classifier and Correction Loop
-
-Use an LLM only for:
-
-- relation confirmation
-- claim wording
-- evidence selection if deterministic evidence is insufficient
-
-Then validate before saving.
-
-## Phase 6. Chapter Edge Aggregator
-
-Aggregate from:
-
-- scene edges
-- thread events
-- repeated entities/objects/places
-
-Do not create chapter edges independently from raw chapter summaries.
-
-## Phase 7. First Artifact Generators
-
-Build:
-
-- Resume Card
-- Shift Bridge
-- Situation Snapshot
-- Timeline
-- Relation Delta
-
-Only after these work should image-specific improvements become the focus again.
-
-## 14. Relationship to `SUP.*`
-
-This graph should live inside the support branch.
-
-Recommended mapping:
-
-- `SUP.0` Support Memory Build
-  - scene state ledger
-  - thread ledger
-  - graph node/edge write
-- `SUP.1` Shared Support Representation
-  - retrieve graph records for current scene/subscene
-  - rank relevant edges and threads
-- `SUP.2+` Support Artifact Generators
-  - generate snapshots, chips, bridges, cards, recap
-- `SUP.7` Support Policy Selection
-  - decide which graph-derived supports to show
-
-Avoid adding a separate top-level branch unless the implementation becomes too large.
-
-## 15. Practical Storage Recommendation
-
-The MVP does not need Neo4j.
-
-Firestore, PostgreSQL, or SQLite are enough if the schema keeps nodes, edges, evidence, and metadata separate.
-
-Minimum tables or collections:
-
-- `nodes`
-- `edges`
-- `node_evidence`
-- `edge_evidence`
-- `scene_states`
-- `state_deltas`
-- `threads`
-- `thread_events`
-- `chapter_edges`
-
-The DB choice is less important than the invariant:
-
-`every graph claim must have evidence and reveal timing`
-
-## 16. Main Risks
-
-## Risk 1. Graph bloat
-
-If every weak relation is stored, the graph becomes noise.
-
-Mitigation:
-
-- start sparse
-- require evidence
-- rank by importance
-- keep low-confidence claims in review/candidate state
-
-## Risk 2. False certainty
-
-LLM-generated claims may sound more certain than the text allows.
-
-Mitigation:
-
-- separate explicit, strong inference, and weak inference
-- expose confidence internally
-- avoid reader-facing claims from weak inference
-
-## Risk 3. Spoilers
-
-Cross-chapter edges can accidentally reveal future information.
-
-Mitigation:
-
-- mandatory `revealAtTextUnitId`
-- reader-position filter before any display
-- chapter-edge aggregation must respect reveal timing
-
-## Risk 4. Scope errors
-
-Imagined, remembered, hypothetical, or unreliable content can corrupt scene state.
-
-Mitigation:
-
-- add NarrativeScope early
-- block actual state updates from non-actual scopes unless explicitly intended
-
-## Risk 5. Overbuilding before demo value
-
-A full graph system can become too large before producing visible results.
-
-Mitigation:
-
-- build only scene state, thread, and five edge types first
-- show multiple artifacts generated from one chapter graph
-
-## 17. Recommended Demo for Next Meeting
-
-Use one chapter and show:
-
-1. scene list
-2. each scene's entry and exit state
-3. detected state deltas
-4. open and resolved narrative threads
-5. scene relation edges
-6. chapter-level bridge summary if multiple chapters are available
-7. generated Resume Card
-8. generated Shift Bridge
-9. generated Timeline or Relation Delta
-
-The goal is to show:
-
-`one relation graph -> multiple reader supports`
-
-This is more persuasive than showing another image generation run.
-
-## 18. Final Recommendation
-
-Adopt the Narrative Relation Graph as the next core architecture layer, but keep the first version conservative.
-
-Build first:
-
-- scene entry/exit state
-- narrative scope
-- state deltas
-- thread ledger
-- scene edges for five relation families
-- chapter-edge aggregation from scene edges
-- Resume Card / Shift Bridge / Situation Snapshot demo
-
-Defer:
-
-- full global graph UI
-- dense dashboard
-- graph database migration
-- complex personalization
-- image-first redesign
-
-Research framing:
-
-`The system is not primarily an LLM scene-image generator. It is an evidence-grounded narrative relation graph builder that produces selective reader supports for situation-model recovery.`
+이 방향이 지금 시스템을 더 강한 연구 기여로 끌어올릴 가능성이 가장 크다.

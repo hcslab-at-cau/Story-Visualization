@@ -75,7 +75,10 @@ stage 상태:
 - SCENE: `SCENE.1`, `SCENE.2`, `SCENE.3`
 - VIS: `VIS.1`, `VIS.2`, `VIS.3`, `VIS.4`
 - SUB: `SUB.1`, `SUB.2`, `SUB.3`, `SUB.4`
+- SUP: `SUP.0`, `SUP.1`, `SUP.2`, `SUP.3`, `SUP.4`, `SUP.5`, `SUP.6`, `SUP.7`
 - FINAL: `FINAL.1`, `FINAL.2`
+
+이번 구현 브랜치에서는 `SUP` branch도 추가되었다. `PipelineRunner` 상단에는 그래프형 stage navigator가 있고, 각 `SUP` stage는 전용 inspector에서 memory, context, support unit, policy, reader package를 확인할 수 있다.
 
 VIS branch는 더 이상 pending placeholder가 아니다. `VIS.1`부터 `VIS.4`까지 API route와 pipeline implementation이 연결되어 있고, `PipelineRunner`에는 각 VIS artifact를 확인하는 전용 view가 있다.
 
@@ -130,7 +133,7 @@ ReaderScreen 기능:
 - `GET /api/documents`
 - `GET /api/chapters?docId=...`
 
-Pipeline:
+파이프라인 API:
 
 - `POST /api/pipeline/pre1`
 - `POST /api/pipeline/pre2`
@@ -151,6 +154,14 @@ Pipeline:
 - `POST /api/pipeline/sub2`
 - `POST /api/pipeline/sub3`
 - `POST /api/pipeline/sub4`
+- `POST /api/pipeline/sup0`
+- `POST /api/pipeline/sup1`
+- `POST /api/pipeline/sup2`
+- `POST /api/pipeline/sup3`
+- `POST /api/pipeline/sup4`
+- `POST /api/pipeline/sup5`
+- `POST /api/pipeline/sup6`
+- `POST /api/pipeline/sup7`
 - `POST /api/pipeline/final1`
 - `POST /api/pipeline/final2`
 

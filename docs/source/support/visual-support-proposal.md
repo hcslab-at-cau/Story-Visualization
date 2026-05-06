@@ -1,8 +1,8 @@
-# VIS Improvement Proposal
+# VIS 개선 제안
 
-## 1. Why Revisit VIS
+## 1. 왜 VIS를 다시 봐야 하는가
 
-VIS is now implemented in this repository:
+현재 저장소에서 VIS는 이미 구현되어 있다.
 
 - `src/lib/pipeline/vis1.ts`
 - `src/lib/pipeline/vis2.ts`
@@ -13,275 +13,257 @@ VIS is now implemented in this repository:
 - `src/app/api/pipeline/vis3/route.ts`
 - `src/app/api/pipeline/vis4/route.ts`
 
-That is good progress. But the current VIS branch is still optimized mainly for:
+이 자체는 큰 진전이다. 다만 지금 VIS가 잘하고 있는 것은 주로 다음이다.
 
-- generating a clean place image
-- avoiding hallucinated layout errors
-- keeping image prompts render-safe
+- place image를 비교적 안정적으로 생성
+- layout hallucination을 줄이기
+- render-safe prompt를 만들기
 
-This is necessary, but not sufficient for the research goal.
+이것만으로는 연구 목표를 충분히 만족하지 못한다.
 
-The research goal is not image generation itself.
-It is reader state repair.
+연구 목표는 image generation 자체가 아니라
 
-So VIS should be evaluated by:
+- reader state repair
 
-`Does this visual help the reader recover the current scene state?`
+이기 때문이다.
+
+따라서 VIS는 다음 질문으로 평가해야 한다.
+
+`이 visual이 독자의 현재 장면 상태 복구에 실제로 도움이 되는가?`
 
 ---
 
-## 2. Current VIS Strengths
+## 2. 현재 VIS의 강점
 
-## 2.1 Clear staged design
-
-The current structure is good:
+### 2.1 단계 분리가 명확하다
 
 - `VIS.1` semantic clarification
 - `VIS.2` blueprint extraction
 - `VIS.3` render package compilation
 - `VIS.4` image generation
 
-This is much better than prompting image generation directly from raw scene text.
+raw scene text에서 바로 image를 생성하는 것보다 훨씬 낫다.
 
-## 2.2 Strong anti-hallucination posture
+### 2.2 anti-hallucination 태도가 강하다
 
-The prompts already do useful things:
+현재 prompt는 다음을 잘 하고 있다.
 
-- distinguish current place from mentioned place
-- keep layout and structure primary
-- use `avoid`, `forbid`, and `must_not_show`
-- avoid overfitting to decorative story props
+- current place와 mentioned place 구분
+- layout / structure 우선
+- `avoid`, `forbid`, `must_not_show` 활용
+- narrative prop 과적합 회피
 
-## 2.3 Useful environment-first framing
+### 2.3 environment-first framing이 유효하다
 
-The current VIS design correctly assumes that many scene images should be about:
+현재 VIS는 scene image를 dramatic illustration이 아니라
 
 - place structure
 - navigable area
-- boundaries
-- composition constraints
+- boundary
+- composition constraint
 
-not dramatic illustration.
+중심으로 보려는 점이 좋다.
 
 ---
 
-## 3. Current VIS Weaknesses
+## 3. 현재 VIS의 약점
 
-## 3.1 VIS is treated as a support answer rather than a support component
+### 3.1 VIS가 support component가 아니라 support answer처럼 취급된다
 
-Problem:
+문제:
 
-- the image is still easy to interpret as "the support"
-- but image alone cannot reliably repair:
+- image가 곧 support처럼 보이기 쉽다.
+- 하지만 image alone으로는 다음을 안정적으로 복구하기 어렵다.
   - causality
   - relation change
-  - local goal/problem
+  - local goal / problem
   - dialogue reference ambiguity
 
-Required change:
+필요한 변화:
 
-- explicitly downgrade VIS from primary answer to one optional modality in a broader support bundle
+- VIS를 primary answer에서 내려놓고 broader support bundle 안의 optional modality로 명시
 
-## 3.2 Character support is weak by design
+### 3.2 character support가 구조적으로 약하다
 
-`VIS.2` explicitly removes character lists from the blueprint output.
-This is reasonable for layout quality, but it creates a gap:
+`VIS.2`는 blueprint에서 character list를 사실상 제거하는 방향이다.
+layout 품질 관점에서는 타당하지만, reader support 관점에서는 빈틈이 생긴다.
 
-- the scene image knows the place
-- the reader needs to know who matters in the place
+- scene image는 place를 알고
+- reader는 그 place에서 누가 중요한지도 알아야 한다.
 
-Required change:
+필요한 변화:
 
-- keep layout-first image generation
-- add a parallel `visual support metadata` layer that says:
-  - which characters matter in this scene
-  - which characters matter in this subscene
-  - whether the image is suitable for character anchoring
+- layout-first image generation은 유지
+- parallel한 `visual support metadata`를 추가해서
+  - 어떤 character가 scene에서 중요한지
+  - 어떤 character가 subscene에서 중요한지
+  - image가 character anchoring에 적합한지
+  를 함께 알려주기
 
-## 3.3 No usefulness scoring
+### 3.3 usefulness scoring이 없다
 
-Some scenes benefit from image support a lot.
-Some scenes do not.
+어떤 scene은 image support가 아주 유용하고,
+어떤 scene은 거의 도움이 되지 않는다.
 
-Examples where VIS is strong:
+VIS가 강한 경우:
 
-- location shift
-- entry into a new space
-- chase, movement, navigation, concealment
-- scenes where boundary layout matters
+- place shift
+- 새로운 공간 진입
+- chase / movement / navigation / concealment
+- boundary layout이 중요한 장면
 
-Examples where VIS is weak:
+VIS가 약한 경우:
 
-- introspection-heavy scenes
-- social nuance without strong spatial change
-- scenes where the key difficulty is causal, not spatial
+- introspection-heavy scene
+- social nuance 중심 장면
+- 핵심 어려움이 causal이지 spatial이 아닌 장면
 
-Required change:
+필요한 변화:
 
-- compute a `visual_usefulness_score`
-- suppress or down-rank images when usefulness is low
+- `visual_usefulness_score` 추가
+- score가 낮으면 suppress 또는 secondary placement
 
-## 3.4 Weak scene-to-scene continuity
+### 3.4 scene-to-scene continuity가 약하다
 
-Even when the same place recurs, current VIS does not strongly enforce:
+같은 장소가 반복되어도 현재 VIS는 다음을 강하게 고정하지 않는다.
 
 - viewpoint continuity
 - palette continuity
 - structural element persistence
 - place identity continuity
 
-Required change:
+필요한 변화:
 
-- store continuity anchors by `canonical_place_key`
-- reuse them across later scene renders
+- `canonical_place_key` 기반 continuity memory 저장
+- 이후 scene render에서 재사용
 
-## 3.5 No fallback visual mode besides normal image generation
+### 3.5 일반 이미지 외 fallback visual mode가 없다
 
-When image generation is unstable, the current branch mostly falls back to "no image."
+현재 image generation이 불안정하면 사실상 "없음"에 가깝게 떨어질 수 있다.
 
-Required change:
+필요한 변화:
 
-- support a low-fidelity visual fallback:
-  - simple place schematic
+- low-fidelity visual fallback 추가
+  - 간단한 place schematic
   - restrained spatial diagram
-  - very low-detail support image
-
-That is often better than a bad image.
+  - low-detail support image
 
 ---
 
-## 4. Recommended VIS Direction
+## 4. 권장 VIS 방향
 
-## 4.1 Reframe VIS as three visual support modes
-
-Rather than treating VIS as one thing, it should conceptually support three modes.
+VIS를 하나의 방식으로 보지 말고 세 가지 visual support mode로 나누어 생각하는 편이 좋다.
 
 ### Mode A. Place Restoration Visual
 
-Question answered:
+질문:
 
-- where are we?
+- 지금 어디인가?
 
-Best for:
+잘 맞는 상황:
 
 - spatial recovery
 - boundary crossing
-- re-entry into recurring place
+- recurring place re-entry
 
-Current system already approximates this mode well.
+현재 시스템은 이 모드를 비교적 잘 하고 있다.
 
 ### Mode B. Interaction Anchor Visual
 
-Question answered:
+질문:
 
-- who matters here and where should I attend?
+- 이 장면에서 누가 중요하고, 시선을 어디에 두어야 하나?
 
-Best for:
+잘 맞는 상황:
 
-- scenes with small active cast and strong local interaction
+- active cast가 작고
+- local interaction이 분명한 장면
 
-Current system only partially supports this through overlay buttons.
+현재는 overlay button 수준에서만 부분 지원한다.
 
 ### Mode C. Spatial Schematic
 
-Question answered:
+질문:
 
-- how is this space organized?
+- 이 공간이 어떻게 조직되어 있지?
 
-Best for:
+잘 맞는 상황:
 
-- confusing layout
-- movement through multiple regions
-- unstable realistic image generation
+- layout가 복잡할 때
+- 여러 zone을 이동할 때
+- realistic image generation이 불안정할 때
 
-Current system does not explicitly support this mode yet.
+현재는 명시적으로 지원하지 않는다.
 
-Recommendation:
+권장 순서:
 
-- build Mode A first
-- treat Mode B as metadata + overlay support
-- add Mode C as fallback
+- Mode A를 먼저 강화
+- Mode B는 metadata + overlay 수준으로 확장
+- Mode C는 fallback으로 추가
 
 ---
 
-## 5. Concrete VIS Changes
+## 5. 구체적인 변경 제안
 
-## 5.1 Add `visual_usefulness_score`
+### 5.1 `visual_usefulness_score` 추가
 
-### Purpose
+목적:
 
-- decide whether image support should be shown at all
+- image support를 보여줄 가치가 있는지 판단
 
-### Suggested fields
+권장 필드:
 
 - `visual_usefulness_score: number`
 - `visual_usefulness_reason: string[]`
 - `visual_primary_role: "place_restore" | "interaction_anchor" | "spatial_schematic" | "low_value"`
 
-### Inputs
+입력으로 쓸 것:
 
-- `SCENE.3` place/environment/actions
-- `SUB.2` action_mode/problem_state
-- `STATE.3` boundary reasons
+- `SCENE.3` place / environment / actions
+- `SUB.2` action_mode / problem_state
+- `STATE.3` boundary reason
 - `VIS.1` semantic clarification
 
-### Heuristic examples
+간단한 heuristic:
 
-Increase score if:
+score 증가:
 
-- place shift exists
-- environment is newly established
-- scene has movement or pursuit
-- scene has multiple meaningful zones
+- place shift 존재
+- 새로운 environment establish
+- movement / pursuit 중심
+- 의미 있는 zone이 많음
 
-Decrease score if:
+score 감소:
 
-- scene is mostly reflection
-- current place is already stable and familiar
-- primary confusion is relational or causal only
+- reflection 위주
+- current place가 이미 오래 안정적임
+- primary confusion이 relation / causality 쪽임
 
-### Implementation
+### 5.2 place 기반 continuity memory 추가
 
-Add a rule-based scorer in `vis1.ts` or a small post-processing file such as:
+목적:
 
-- `src/lib/pipeline/vis-support-score.ts`
+- 같은 장소의 image drift를 줄이기
 
----
-
-## 5.2 Add continuity memory by place
-
-### Purpose
-
-- reduce visual drift across scenes in the same place
-
-### Store by `canonical_place_key`
+`canonical_place_key`별로 저장할 것:
 
 - preferred viewpoint family
-- major boundaries
-- recurring structural elements
-- palette/light family
+- major boundary
+- recurring structural element
+- palette / light family
 - scene archetype
 
-### Implementation
-
-Add doc-level memory records:
+권장 저장 위치:
 
 - `documents/{docId}/memory/place_visuals/{canonicalPlaceKey}`
 
-Then when running `VIS.2` and `VIS.3`, inject continuity hints if:
+### 5.3 visual support metadata 추가
 
-- same `canonical_place_key`
-- same or adjacent chapter recurrence
+목적:
 
----
+- image가 무엇을 도와주는지 명시
 
-## 5.3 Add visual support metadata
-
-### Purpose
-
-- clarify what the image is supposed to help with
-
-### Suggested fields
+권장 필드:
 
 - `supports_place_repair: boolean`
 - `supports_cast_orientation: boolean`
@@ -289,267 +271,140 @@ Then when running `VIS.2` and `VIS.3`, inject continuity hints if:
 - `supports_causal_repair: boolean`
 - `not_reliable_for: string[]`
 
-Example:
+예:
 
 - reliable for:
   - current place
   - rough movement path
 - not reliable for:
-  - precise relation status
-  - hidden motives
+  - precise relation state
+  - hidden motive
 
-### Implementation
+### 5.4 schematic fallback mode 추가
 
-Either:
+목적:
 
-- extend `VisualGroundingPacket`
+- realistic image가 불안정할 때 더 안전한 visual을 제공
 
-or:
+권장 스타일:
 
-- add a new small artifact `VIS.X SupportMetadata`
-
----
-
-## 5.4 Add schematic fallback mode
-
-### Purpose
-
-- offer a safer visual when realistic image generation is too unstable or too interpretive
-
-### Suggested output style
-
-- low-detail, low-ornament
+- low-detail
+- low-ornament
 - no human figure
-- emphasized zones and navigable structure
-- visually calm, not dramatic
+- zone과 navigable structure 강조
 
-### Trigger
+트리거:
 
-- low generation confidence
-- repeated failure
+- generation failure
 - low blueprint validity
-- low image usefulness but high spatial confusion
+- high spatial confusion + low image stability
 
-### Implementation path
+### 5.5 `FINAL.1`과 더 강하게 연동
 
-Option 1:
+현재 `FINAL.1`은 image / blueprint 구분은 하지만,
+image의 가치에 따른 display 강도 조절은 약하다.
 
-- make `VIS.3` compile a second prompt variant for schematic mode
+권장 규칙:
 
-Option 2:
+- usefulness 높음:
+  - image prominent
+  - 작은 state snapshot과 같이 노출
 
-- add `VIS.3b schematic render package`
+- usefulness 중간:
+  - image secondary
+  - chip과 focus card를 더 앞세움
 
-Recommendation:
+- usefulness 낮음:
+  - image default suppress
+  - text support 우선
 
-- keep it simple and add a second prompt variant inside `VIS.3`
+### 5.6 overlay refinement가 visual role을 알게 만들기
 
----
+지금 `FINAL.2`는 semantic plausibility를 우선하는 점은 좋다.
+하지만 image가 place restoration용인지 interaction anchor용인지까지 알면 더 안정적이다.
 
-## 5.5 Improve integration with `FINAL.1`
-
-Current `FINAL.1` already chooses image vs blueprint block.
-It should also choose how strongly VIS participates in the support bundle.
-
-### Suggested integration logic
-
-If `visual_usefulness_score` is high:
-
-- show image prominently
-- pair it with small state snapshot
-
-If medium:
-
-- show image collapsed or secondary
-- pair it with chips and one focused card
-
-If low:
-
-- suppress image by default
-- rely on text-side supports first
-
-### Implementation
-
-Extend `VisualBlock` in `schema.ts` with:
-
-- `visual_usefulness_score`
-- `visual_primary_role`
-- `not_reliable_for`
-
-Then update `final1.ts` and `ReaderScreen.tsx`.
-
----
-
-## 5.6 Make overlay refinement scene-correct before scene-empty
-
-`FINAL.2` already prefers semantic plausibility over readability.
-That is good.
-
-But overlays would improve if they had extra input from support metadata:
-
-- whether character placement actually matters in this scene
-- whether characters should cluster
-- whether the image is just a place restoration view
-
-### Implementation
-
-Pass extra fields into `refineOverlay()`:
+추가 입력 예:
 
 - `visual_primary_role`
 - `supports_cast_orientation`
 - `supports_motion_orientation`
 
-If the image is place-only:
+place-only image라면:
 
-- keep overlay conservative
-- avoid pretending the image carries character evidence
-
----
-
-## 6. Changes by File
-
-## 6.1 Suggested schema updates
-
-Update `src/types/schema.ts`.
-
-### `VisualGroundingPacket`
-
-Add:
-
-- `visual_usefulness_score?: number`
-- `visual_usefulness_reason?: string[]`
-- `visual_primary_role?: string`
-
-### `StageBlueprintPacket`
-
-Add:
-
-- `supports_place_repair?: boolean`
-- `supports_cast_orientation?: boolean`
-- `supports_motion_orientation?: boolean`
-- `not_reliable_for?: string[]`
-
-### `VisualBlock`
-
-Add:
-
-- `visual_usefulness_score?: number`
-- `visual_primary_role?: string`
-- `not_reliable_for?: string[]`
+- overlay를 더 보수적으로 두고
+- image가 character evidence인 것처럼 과하게 해석하지 않기
 
 ---
 
-## 6.2 Suggested pipeline updates
+## 6. 파일 단위 변경 제안
+
+### `schema.ts`
+
+추가 권장:
+
+- `VisualGroundingPacket`
+  - `visual_usefulness_score?`
+  - `visual_usefulness_reason?`
+  - `visual_primary_role?`
+
+- `StageBlueprintPacket`
+  - `supports_place_repair?`
+  - `supports_cast_orientation?`
+  - `supports_motion_orientation?`
+  - `not_reliable_for?`
+
+- `VisualBlock`
+  - `visual_usefulness_score?`
+  - `visual_primary_role?`
+  - `not_reliable_for?`
 
 ### `vis1.ts`
-
-Add:
 
 - usefulness scoring
 - primary role inference
 
 ### `vis2.ts`
 
-Add:
-
-- continuity hints from place memory
-- support metadata inference
+- place continuity hint 주입
+- support metadata 추론
 
 ### `vis3.ts`
 
-Add:
-
-- dual prompt mode:
-  - normal place render
-  - schematic fallback render
+- 일반 render prompt + schematic fallback prompt 이중화
 
 ### `vis4.ts`
 
-Add:
-
-- retry path using schematic prompt when normal generation fails or looks unstable
+- normal generation 실패 시 schematic fallback path
 
 ### `final1.ts`
 
-Add:
-
-- stronger support bundle logic using usefulness score
+- usefulness score 기반 visual block 강도 조절
 
 ### `ReaderScreen.tsx`
 
-Add:
-
-- UI behavior based on usefulness score
-- lower prominence when image is low-value
+- usefulness score에 따른 UI prominence 조절
 
 ---
 
-## 7. What Not to Do in VIS
+## 7. VIS에서 지금 하지 않는 편이 좋은 것
 
-These changes would likely hurt the project.
-
-### Do not make VIS the main support surface
-
-Image is too weak for:
-
-- causality
-- unresolved motives
-- relation dynamics
-- pronoun repair
-
-### Do not push character illustration too hard
-
-The current environment-first design is valuable.
-Turning VIS into full narrative illustration will likely reduce reliability.
-
-### Do not force an image for every scene
-
-Some scenes should simply not use image as default support.
-
-### Do not mix too many visual goals into one prompt
-
-Keep prompts separated by role:
-
-- place recovery
-- schematic fallback
-- overlay refinement
+- VIS를 main support surface로 만드는 것
+- full character illustration 쪽으로 기울이는 것
+- 모든 scene에 image를 강제로 보여주는 것
+- 하나의 prompt에 너무 많은 visual goal을 섞는 것
 
 ---
 
-## 8. Recommended VIS Priority
+## 8. 최종 권장 방향
 
-### First
+VIS는 중요하지만 역할을 더 좁고 명확하게 잡는 편이 좋다.
 
-- add usefulness scoring
-- add support metadata
-- use those fields in `FINAL.1`
+가장 좋은 역할은 다음과 같다.
 
-### Second
+- place를 복구해 주기
+- 필요할 때 interaction orientation을 보조해 주기
+- causality / relation / state repair를 대체하지 않기
 
-- add place continuity memory
-- reuse continuity hints in `VIS.2 / VIS.3`
+가장 중요한 변화는 "더 예쁜 이미지"가 아니라 다음이다.
 
-### Third
-
-- add schematic fallback render mode
-
-### Fourth
-
-- refine overlay logic using visual role metadata
-
----
-
-## 9. Final Recommendation
-
-VIS should remain important, but narrower in scope.
-
-Best role for VIS:
-
-- help restore place
-- sometimes help orient interaction
-- never pretend to replace causal/relational/state repair
-
-The best VIS change is not "make prettier images."
-It is:
-
-`make VIS self-aware about when it is useful, what it supports, and when it should step back.`
+`VIS가 언제 유용한지, 무엇을 지원하는지, 언제 물러나야 하는지를 스스로 알게 만드는 것`

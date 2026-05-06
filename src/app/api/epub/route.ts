@@ -38,6 +38,6 @@ export async function POST(request: Request): Promise<Response> {
     const chapterMeta = await listChapters(docId)
     return Response.json({ docId, chapters: chapterMeta, sourceFile })
   } catch (e) {
-    return Response.json({ error: String(e) }, { status: 500 })
+    return Response.json({ error: e instanceof Error ? e.message : String(e) }, { status: 500 })
   }
 }

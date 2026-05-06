@@ -1,43 +1,62 @@
-# Support Pipeline Plan
+# Support Pipeline 계획
 
-## 1. Purpose
+## 구현 반영 메모
 
-This document proposes a new support-generation branch for the project.
+이번 구현 브랜치에서는 `SUP.0` ~ `SUP.7`이 실제 stage로 추가되었다. 실제 구현 상세는 `support/support-implementation.md`를 기준으로 본다.
 
-Current pipeline:
+현재 구현된 stage 구성은 다음과 같다.
 
-- extracts and validates story structure well
+- `SUP.0`: Support Memory
+- `SUP.1`: Shared Support Context
+- `SUP.2`: Snapshot and Boundary
+- `SUP.3`: Causal Bridges
+- `SUP.4`: Character and Relation
+- `SUP.5`: Reentry and Reference
+- `SUP.6`: Support Policy
+- `SUP.7`: Reader Support Package
 
-Missing branch:
+초기 계획과 달리 첫 구현에서는 boundary delta를 `SUP.2`에, character/relation을 `SUP.4`에, re-entry/reference/spatial/visual cue를 `SUP.5`에 묶었다. 목적은 stage 수를 늘리기보다 실행 가능한 artifact 계약과 inspector를 먼저 고정하는 것이다.
 
-- transforms that structure into multiple reader-facing support artifacts
+## 1. 목적
 
-This document defines that branch.
+이 문서는 프로젝트에 새로운 support-generation branch를 추가하는 계획을 정리한다.
+
+현재 파이프라인은
+
+- 이야기 구조를 추출하고 검증하는 데에는 강하다.
+
+하지만 아직 부족한 것은
+
+- 그 구조를 여러 reader-facing support artifact로 변환하는 별도 브랜치
+
+이다.
 
 ---
 
-## 2. Why a Separate Branch is Needed
+## 2. 왜 별도 브랜치가 필요한가
 
-Support generation should not live only inside:
+support generation을 단순히
 
 - `SUB.4`
 - `FINAL.1`
 
-Reason:
+안에만 두는 것은 구조적으로 아쉽다.
 
-- `SUB.4` is local and subscene-centered
-- `FINAL.1` is packaging-oriented
-- support generation needs its own retrieval, grounding, and ranking logic
+이유:
 
-Therefore a new branch is cleaner:
+- `SUB.4`는 local하고 subscene-centered
+- `FINAL.1`은 packaging 중심
+- support generation은 retrieval, grounding, ranking logic을 따로 가져야 함
+
+그래서 더 자연스러운 구조는 다음과 같다.
 
 `SCENE.3 + SUB.3 + support memory -> support artifacts -> FINAL.1`
 
 ---
 
-## 3. Proposed Support Branch
+## 3. 제안하는 Support Branch
 
-Suggested stage family:
+권장 stage family:
 
 - `SUP.0` Support Memory Build
 - `SUP.1` Shared Support Representation
@@ -48,19 +67,19 @@ Suggested stage family:
 - `SUP.6` Re-entry / Reference Repair
 - `SUP.7` Support Policy Selection
 
-This branch can stay optional at first, but structurally it should be explicit.
+처음에는 optional branch로 시작해도 되지만, 구조적으로는 명시적인 브랜치로 보는 편이 맞다.
 
 ---
 
-## 4. Stage Specifications
+## 4. Stage별 역할
 
 ## 4.1 `SUP.0` Support Memory Build
 
-Purpose:
+목적:
 
-- materialize document-level support memory from validated artifacts
+- validated artifact에서 document-level support memory를 materialize
 
-Inputs:
+입력:
 
 - `ENT.3`
 - `STATE.2`
@@ -70,16 +89,16 @@ Inputs:
 - `SUB.2`
 - `SUB.3`
 
-Processing mode:
+처리 방식:
 
-- mostly rule-based
-- some light normalization prompts may be allowed later
+- 기본은 rule-based
+- 이후 필요하면 가벼운 normalization prompt 추가 가능
 
-Outputs:
+출력:
 
-- memory records written to doc-level storage
+- doc-level storage에 memory record 작성
 
-Main functions:
+주요 기능:
 
 - scene ledger write
 - subscene ledger write
@@ -87,29 +106,27 @@ Main functions:
 - place normalization
 - relation timeline write
 
----
-
 ## 4.2 `SUP.1` Shared Support Representation
 
-Purpose:
+목적:
 
-- create one stable support-ready unit per scene or subscene
+- scene 또는 subscene 단위의 안정된 support-ready unit 생성
 
-Inputs:
+입력:
 
-- current scene/subscene artifacts
-- retrieved memory records
+- 현재 scene/subscene artifact
+- retrieved memory record
 
-Processing mode:
+처리 방식:
 
-- mostly rule-based retrieval and merging
-- optional light LLM cleanup if needed
+- rule-based retrieval + merge 중심
+- 필요시 가벼운 LLM cleanup
 
-Outputs:
+출력:
 
 - `SharedSupportUnit[]`
 
-Suggested fields:
+권장 필드:
 
 - `support_target_type`
 - `support_target_id`
@@ -123,28 +140,26 @@ Suggested fields:
 - `ambiguity_flags`
 - `evidence_refs`
 
----
-
 ## 4.3 `SUP.2` Current-State Snapshot
 
-Purpose:
+목적:
 
-- generate the most compact default support
+- 가장 기본적인 복구용 support 생성
 
-Inputs:
+입력:
 
-- shared support units
+- shared support unit
 
-Processing mode:
+처리 방식:
 
-- rule templating first
-- LLM compression second if needed
+- 먼저 rule templating
+- 필요하면 그 위에 LLM compression
 
-Outputs:
+출력:
 
-- one snapshot per scene/subscene
+- scene/subscene별 snapshot
 
-Suggested fields:
+권장 필드:
 
 - `support_target_id`
 - `summary_lines`
@@ -152,34 +167,26 @@ Suggested fields:
 - `confidence`
 - `evidence_refs`
 
----
-
 ## 4.4 `SUP.3` Boundary Delta Chips
 
-Purpose:
+목적:
 
-- generate lightweight transition signals
+- 전환 신호를 가벼운 chip 형태로 생성
 
-Inputs:
+입력:
 
-- shared support units
-- boundary reasons
+- shared support unit
+- boundary reason
 
-Processing mode:
+처리 방식:
 
 - deterministic
 
-Outputs:
+출력:
 
-- ranked chip sets
+- ranked chip set
 
-Suggested fields:
-
-- `support_target_id`
-- `chips`
-- `salience_score`
-
-Chip categories:
+권장 카테고리:
 
 - place
 - time
@@ -188,28 +195,26 @@ Chip categories:
 - relation
 - narrative mode
 
----
-
 ## 4.5 `SUP.4` Causal Bridge
 
-Purpose:
+목적:
 
-- connect current subscene/state to earlier enabling or causing events
+- 현재 subscene/state를 이전 enabling 또는 causing event와 연결
 
-Inputs:
+입력:
 
-- shared support units
+- shared support unit
 - event graph
 
-Processing mode:
+처리 방식:
 
-- retrieval + short LLM generation
+- retrieval + 짧은 LLM generation
 
-Outputs:
+출력:
 
-- one or more ranked causal bridges
+- ranked causal bridge
 
-Suggested fields:
+권장 필드:
 
 - `target_id`
 - `bridge_text`
@@ -219,92 +224,80 @@ Suggested fields:
 - `confidence`
 - `evidence_refs`
 
-Important rule:
+중요 규칙:
 
-- no long explanation chain
-- prefer one bridge sentence
-
----
+- 긴 설명 사슬 금지
+- 한 문장 bridge를 우선
 
 ## 4.6 `SUP.5` Character / Relation Support
 
-Purpose:
+목적:
 
-- create focused support for active characters and relevant pairs
+- active character와 중요한 pair를 위한 focused support 생성
 
-Inputs:
+입력:
 
-- shared support units
+- shared support unit
 - entity memory
 - relation memory
 
-Processing mode:
+처리 방식:
 
-- retrieval + short LLM formatting
+- retrieval + 짧은 LLM formatting
 
-Outputs:
+출력:
 
-- character focus cards
-- relation delta cards
-
-Suggested split:
-
-- `CharacterSupportArtifact`
-- `RelationSupportArtifact`
-
----
+- character focus card
+- relation delta card
 
 ## 4.7 `SUP.6` Re-entry / Reference Repair
 
-Purpose:
+목적:
 
-- support pause-resume and ambiguity repair
+- pause-resume와 local ambiguity repair 지원
 
-Inputs:
+입력:
 
-- shared support units
+- shared support unit
 - optional reader session memory
-- local mention ambiguity signals
+- local mention ambiguity signal
 
-Processing mode:
+처리 방식:
 
 - trigger-dependent
 
-Outputs:
+출력:
 
 - re-entry recap
 - reference repair list
 
-Suggested rule:
+권장 규칙:
 
-- do not generate this constantly
-- only generate on trigger or on demand
-
----
+- 항상 생성하지 말고 trigger 또는 on-demand에서만 생성
 
 ## 4.8 `SUP.7` Support Policy Selection
 
-Purpose:
+목적:
 
-- decide which support to show, where, and with what priority
+- 어떤 support를 어디에 어떤 우선순위로 보여줄지 결정
 
-Inputs:
+입력:
 
-- all support artifacts
+- 모든 support artifact
 - optional VIS usefulness
 - interface context
 - trigger state
 
-Processing mode:
+처리 방식:
 
-- deterministic policy first
-- optional learned personalization later
+- 우선 deterministic policy
+- personalization은 나중 단계
 
-Outputs:
+출력:
 
 - `DisplaySupportPlan`
 
-Suggested fields:
+권장 필드:
 
 - `always_visible`
 - `expandable`
@@ -314,147 +307,109 @@ Suggested fields:
 
 ---
 
-## 5. Deterministic vs LLM Boundary
+## 5. deterministic vs LLM 경계
 
-Not every support stage should be LLM-heavy.
+모든 support stage를 LLM-heavy하게 만들 필요는 없다.
 
-Recommended split:
+권장 분리:
 
-Mostly deterministic:
+거의 deterministic:
 
 - `SUP.0`
 - `SUP.1`
 - `SUP.3`
 - `SUP.7`
 
-Mixed:
+혼합:
 
 - `SUP.2`
 - `SUP.5`
 - `SUP.6`
 
-Retrieval + LLM:
+retrieval + LLM:
 
 - `SUP.4`
 
-Reason:
+이유:
 
-- the support branch should be controllable and auditable
-
----
-
-## 6. Integration with Existing Branches
-
-## 6.1 Relationship to `SUB`
-
-`SUB` still matters.
-
-Best interpretation:
-
-- `SUB` finds local progression units and local support targets
-- `SUP` turns them into reader-facing support forms using wider memory
-
-## 6.2 Relationship to `VIS`
-
-Best interpretation:
-
-- `VIS` is one output modality
-- `SUP` decides whether and when VIS should be part of the support bundle
-
-## 6.3 Relationship to `FINAL`
-
-Best interpretation:
-
-- `FINAL.1` becomes the packager of text supports plus VIS plus UI policy
+- support branch는 controllable하고 auditable해야 한다.
 
 ---
 
-## 7. Suggested Artifact Types
+## 6. 기존 브랜치와의 관계
 
-The following new types are worth adding to `schema.ts` later.
+## 6.1 `SUB`와의 관계
 
-- `SharedSupportUnit`
-- `CurrentStateSnapshot`
-- `BoundaryDeltaArtifact`
-- `CausalBridgeArtifact`
-- `CharacterSupportArtifact`
-- `RelationSupportArtifact`
-- `ReentryRecapArtifact`
-- `ReferenceRepairArtifact`
-- `DisplaySupportPlan`
+가장 자연스러운 해석:
 
-These should remain support artifacts, not UI components.
+- `SUB`는 local progression unit과 local support target을 찾는다.
+- `SUP`는 더 넓은 memory를 이용해 그것을 reader-facing support form으로 바꾼다.
 
----
+## 6.2 `VIS`와의 관계
 
-## 8. Trigger Model
+가장 자연스러운 해석:
 
-The support pipeline should be aware of reading conditions.
+- `VIS`는 하나의 output modality다.
+- `SUP`가 VIS를 support bundle에 포함할지 결정한다.
 
-Suggested trigger types:
+## 6.3 `FINAL`과의 관계
 
-- `scene_entry`
-- `subscene_entry`
-- `reentry_after_pause`
-- `large_place_shift`
-- `large_cast_turnover`
-- `high_reference_ambiguity`
-- `low_visual_usefulness`
-- `manual_request`
+가장 자연스러운 해석:
 
-These triggers should feed into `SUP.7`.
+- `FINAL.1`은 text support + VIS + UI policy를 합쳐 조립하는 packager가 된다.
 
 ---
 
-## 9. Minimum Viable Support Branch
+## 7. MVP 범위
 
-If the project wants the smallest useful first version, build only:
+가장 작은 유의미한 support branch만 먼저 만든다면:
 
 - `SUP.0`
 - `SUP.1`
 - `SUP.2`
 - `SUP.3`
 - `SUP.4`
-- simple subset of `SUP.7`
+- `SUP.7`의 단순 버전
 
-This is enough to test the core idea:
+이 정도만으로도 다음 질문은 시험할 수 있다.
 
-- compact state recovery plus causal repair
-
----
-
-## 10. Main Risks
-
-## Risk 1. The branch duplicates SUB.4
-
-Mitigation:
-
-- keep `SUB.4` local, `SUP` retrieval-aware and document-aware
-
-## Risk 2. Too many artifact types too early
-
-Mitigation:
-
-- implement only the first-wave artifacts first
-
-## Risk 3. Too much LLM dependence
-
-Mitigation:
-
-- use deterministic retrieval and diff logic wherever possible
-
-## Risk 4. Support outputs become repetitive
-
-Mitigation:
-
-- explicit deduplication and policy suppression rules
+- generic summary보다 targeted repair support가 더 나은가?
 
 ---
 
-## 11. Final Recommendation
+## 8. 주요 리스크
 
-The support branch should be treated as:
+### 리스크 1. `SUB.4`와 중복된다
 
-`a transformation pipeline from structured narrative understanding to selective repair-oriented reader supports`
+대응:
 
-That framing will help future implementation decisions stay coherent.
+- `SUB.4`는 local
+- `SUP`는 retrieval-aware, document-aware로 역할 분리
+
+### 리스크 2. artifact type이 너무 빨리 늘어난다
+
+대응:
+
+- first-wave artifact만 먼저 구현
+
+### 리스크 3. LLM 의존도가 과도해진다
+
+대응:
+
+- retrieval과 diff logic은 deterministic 우선
+
+### 리스크 4. support 출력이 서로 반복된다
+
+대응:
+
+- deduplication과 suppression rule 명시
+
+---
+
+## 9. 최종 권장 방향
+
+support branch는 다음처럼 이해하는 것이 맞다.
+
+`구조화된 narrative understanding을 선택적이고 복구 지향적인 reader support로 변환하는 파이프라인`
+
+이 관점이 이후 구현 결정을 가장 일관되게 만들어 준다.

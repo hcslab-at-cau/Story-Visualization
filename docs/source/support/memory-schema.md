@@ -1,61 +1,61 @@
-# Support Memory Schema Proposal
+# Support Memory 스키마 제안
 
-## 1. Why Memory Needs to Change
+## 1. 왜 memory 구조를 바꿔야 하는가
 
-Current storage is good for pipeline runs, but weak for reader support.
+현재 저장 구조는 pipeline run 관리에는 강하지만 reader support에는 약하다.
 
-Current strength:
+현재 강점:
 
-- preserves per-stage artifacts by chapter and run
+- chapter / run / stage artifact를 잘 보존함
 
-Current weakness:
+현재 약점:
 
-- reader support often needs document-level retrieval
-- causal and relation supports require cross-scene linking
-- re-entry support requires more than the current chapter artifact set
+- support는 문서 전역 retrieval이 필요한 경우가 많음
+- causal / relation support는 cross-scene linking이 필요함
+- re-entry support는 현재 chapter artifact만으로 부족함
 
-So the project needs a second storage layer:
+그래서 두 번째 저장 계층이 필요하다.
 
-- not raw extraction storage
-- not UI-only storage
-- but support memory
+- raw extraction storage도 아니고
+- UI 전용 cache도 아니며
+- support generation을 위한 normalized memory 계층
 
-This layer should persist normalized story state that can be reused across support forms.
-
----
-
-## 2. Design Goals
-
-The memory schema should:
-
-- work at document scope
-- preserve provenance and evidence
-- support append-only updates where possible
-- separate normalized memory from run-specific artifacts
-- allow rebuilding from artifacts if schema changes later
-
-It should avoid:
-
-- storing only final prose summaries
-- mixing reader UI state with canonical narrative state
-- storing unsupported inferences as if they were facts
+이 계층은 여러 support form에서 재사용 가능한 story state를 보존해야 한다.
 
 ---
 
-## 3. Storage Philosophy
+## 2. 설계 목표
 
-Use two layers:
+memory schema는 다음을 만족해야 한다.
+
+- document scope에서 동작
+- provenance와 evidence 유지
+- 가능한 경우 append-only update 지원
+- run-specific artifact와 normalized memory 분리
+- schema가 바뀌어도 artifact에서 재구성 가능
+
+반대로 피해야 하는 것:
+
+- 최종 prose summary만 저장
+- reader UI state와 canonical narrative state를 혼합
+- unsupported inference를 사실처럼 저장
+
+---
+
+## 3. 저장 철학
+
+두 층을 구분한다.
 
 ## Layer A. Pipeline Artifacts
 
-Already exists.
+이미 존재하는 계층이다.
 
-Purpose:
+목적:
 
-- preserve run-specific intermediate products
-- debugging and reproducibility
+- run별 중간 산출물 보존
+- debugging과 재현성
 
-Examples:
+예:
 
 - `PRE.2`
 - `SCENE.3`
@@ -64,31 +64,31 @@ Examples:
 
 ## Layer B. Support Memory
 
-Proposed.
+새로 제안하는 계층이다.
 
-Purpose:
+목적:
 
-- normalized story memory used by support generation
+- support generation에 쓰이는 normalized story memory
 
-Examples:
+예:
 
 - scene ledger
-- event nodes
-- causal edges
+- event node
+- causal edge
 - place graph
 - relation timeline
 
-This second layer should be generated from stable artifacts, usually after `SCENE.3` and `SUB.3`.
+이 두 번째 계층은 보통 `SCENE.3`, `SUB.3` 이후의 안정된 artifact에서 생성하는 편이 맞다.
 
 ---
 
-## 4. Proposed Firestore Layout
+## 4. 제안하는 Firestore 구조
 
-Suggested root:
+루트:
 
 `documents/{docId}/memory/`
 
-Suggested subcollections:
+하위 컬렉션:
 
 - `entities`
 - `scenes`
@@ -103,19 +103,19 @@ Suggested subcollections:
 
 ---
 
-## 5. Collection Specs
+## 5. 컬렉션 정의
 
 ## 5.1 `entities`
 
-Path:
+경로:
 
 `documents/{docId}/memory/entities/{entityId}`
 
-Purpose:
+목적:
 
-- canonical reader-facing entity memory
+- 독자 지원용 canonical entity memory
 
-Suggested fields:
+권장 필드:
 
 - `entity_id`
 - `canonical_name`
@@ -130,24 +130,21 @@ Suggested fields:
 - `place_associations`
 - `open_questions`
 
-Notes:
+메모:
 
-- this should not replace `ENT.3`
-- it should summarize and extend it across scenes and chapters
-
----
+- `ENT.3`를 대체하는 것이 아니라, scene/chapter를 넘어서 요약·확장하는 계층이다.
 
 ## 5.2 `scenes`
 
-Path:
+경로:
 
 `documents/{docId}/memory/scenes/{sceneId}`
 
-Purpose:
+목적:
 
-- stable scene ledger for support retrieval
+- support retrieval을 위한 안정된 scene ledger
 
-Suggested fields:
+권장 필드:
 
 - `scene_id`
 - `chapter_id`
@@ -169,23 +166,17 @@ Suggested fields:
 - `evidence_refs`
 - `source_run_id`
 
-Notes:
-
-- this is the main retrieval unit for re-entry and continuity
-
----
-
 ## 5.3 `subscenes`
 
-Path:
+경로:
 
 `documents/{docId}/memory/subscenes/{subsceneId}`
 
-Purpose:
+목적:
 
-- local progression memory inside scenes
+- scene 내부 local progression memory
 
-Suggested fields:
+권장 필드:
 
 - `subscene_id`
 - `scene_id`
@@ -205,23 +196,17 @@ Suggested fields:
 - `evidence_refs`
 - `source_run_id`
 
-Notes:
-
-- this is where local reader support usually begins
-
----
-
 ## 5.4 `events`
 
-Path:
+경로:
 
 `documents/{docId}/memory/events/{eventId}`
 
-Purpose:
+목적:
 
-- normalized event nodes for causal retrieval
+- causal retrieval에 쓰이는 normalized event node
 
-Suggested fields:
+권장 필드:
 
 - `event_id`
 - `scene_id`
@@ -241,7 +226,7 @@ Suggested fields:
 - `derived_from`
 - `source_run_id`
 
-Event types can be coarse:
+권장 `event_type` 예:
 
 - `entry`
 - `exit`
@@ -255,24 +240,17 @@ Event types can be coarse:
 - `place_shift`
 - `goal_shift`
 
-Notes:
-
-- event nodes should be compact and retrieval-friendly
-- they should not be giant scene summaries
-
----
-
 ## 5.5 `edges`
 
-Path:
+경로:
 
 `documents/{docId}/memory/edges/{edgeId}`
 
-Purpose:
+목적:
 
-- connect events into causal and narrative structure
+- event를 causal / narrative 구조로 연결
 
-Suggested fields:
+권장 필드:
 
 - `edge_id`
 - `from_event_id`
@@ -284,7 +262,7 @@ Suggested fields:
 - `notes`
 - `source_run_id`
 
-Suggested `edge_type` vocabulary:
+권장 `edge_type`:
 
 - `causes`
 - `enables`
@@ -296,29 +274,23 @@ Suggested `edge_type` vocabulary:
 - `follows_from`
 - `reframes`
 
-Suggested `support_level`:
+권장 `support_level`:
 
 - `explicit`
 - `strong_inference`
 - `weak_inference`
 
-Notes:
-
-- this is the critical structure for `Causal Bridge`
-
----
-
 ## 5.6 `places`
 
-Path:
+경로:
 
 `documents/{docId}/memory/places/{placeKey}`
 
-Purpose:
+목적:
 
-- normalize place identity and continuity
+- place identity와 continuity를 정규화
 
-Suggested fields:
+권장 필드:
 
 - `place_key`
 - `canonical_name`
@@ -332,26 +304,17 @@ Suggested fields:
 - `visual_continuity_seed`
 - `notes`
 
-Notes:
-
-- this collection supports:
-  - spatial continuity
-  - VIS continuity
-  - mentioned-vs-current place disambiguation
-
----
-
 ## 5.7 `relations`
 
-Path:
+경로:
 
 `documents/{docId}/memory/relations/{pairKey}`
 
-Purpose:
+목적:
 
-- persistent character-pair relation memory
+- character pair relation memory
 
-Suggested fields:
+권장 필드:
 
 - `pair_key`
 - `entity_ids`
@@ -362,7 +325,7 @@ Suggested fields:
 - `latest_change_scene_id`
 - `evidence_refs`
 
-Suggested timeline item:
+timeline item 예:
 
 - `scene_id`
 - `subscene_id`
@@ -371,23 +334,17 @@ Suggested timeline item:
 - `confidence`
 - `evidence_refs`
 
-Notes:
-
-- this collection supports relation delta cards
-
----
-
 ## 5.8 `evidence`
 
-Path:
+경로:
 
 `documents/{docId}/memory/evidence/{evidenceId}`
 
-Purpose:
+목적:
 
-- reusable text-grounding references
+- reusable text-grounding reference 저장
 
-Suggested fields:
+권장 필드:
 
 - `evidence_id`
 - `chapter_id`
@@ -398,24 +355,17 @@ Suggested fields:
 - `span_type`
 - `source_stage`
 
-Why useful:
-
-- avoids duplicating quoted text everywhere
-- helps explainability and UI traceability
-
----
-
 ## 5.9 `support_units`
 
-Path:
+경로:
 
 `documents/{docId}/memory/support_units/{supportUnitId}`
 
-Purpose:
+목적:
 
-- store shared support representation before rendering specific forms
+- 최종 support form으로 변환되기 전 shared support representation 저장
 
-Suggested fields:
+권장 필드:
 
 - `support_unit_id`
 - `scene_id`
@@ -431,23 +381,17 @@ Suggested fields:
 - `support_candidates`
 - `source_run_id`
 
-Notes:
-
-- this should be the direct input to support-generation stages
-
----
-
 ## 5.10 `reader_sessions`
 
-Path:
+경로:
 
 `documents/{docId}/memory/reader_sessions/{sessionId}`
 
-Purpose:
+목적:
 
-- optional reader-state memory for re-entry and adaptive support
+- re-entry나 adaptive support를 위한 reader-state memory
 
-Suggested fields:
+권장 필드:
 
 - `session_id`
 - `last_scene_id`
@@ -458,121 +402,114 @@ Suggested fields:
 - `support_shown`
 - `interaction_summary`
 
-Notes:
-
-- useful later
-- not required for the first canonical support memory implementation
+처음 구현 단계에서는 optional로 두어도 된다.
 
 ---
 
-## 6. Update Policy
+## 6. 업데이트 정책
 
-The schema should define not just what is stored, but how it is updated.
+## 6.1 canonical vs run-specific
 
-## 6.1 Canonical vs run-specific
+권장 방향:
 
-Recommendation:
+- artifact는 run-specific 유지
+- support memory는 document scope에서 canonicalized
 
-- artifacts remain run-specific
-- support memory is canonicalized at document scope
+즉:
 
-This means:
+- 특정 run이 memory를 populate / refresh할 수 있고
+- memory record는 `source_run_id`를 가져야 하며
+- 필요하면 다시 rebuild 가능해야 한다.
 
-- a chosen run can populate or refresh memory
-- memory records should preserve `source_run_id`
-- rebuilding memory should be possible
+## 6.2 append-first 정책
 
-## 6.2 Append-first policy
+append-only를 선호하는 대상:
 
-Prefer append-only history for:
+- relation timeline
+- event record
+- scene ledger history
 
-- relation timelines
-- event records
-- scene ledger sequence
-
-Prefer replace/merge for:
+replace / merge를 선호하는 대상:
 
 - latest entity summary
 - latest place summary
-- latest support unit rebuild
+- rebuilt support unit
 
-## 6.3 Rebuildability
+## 6.3 rebuildability
 
-Every support memory record should be regenerable from artifacts.
+모든 support memory record는 artifact에서 다시 만들어질 수 있어야 한다.
 
-Practical rule:
+실무 규칙:
 
-- never store a memory record that cannot be traced back to stage artifacts
+- stage artifact로 trace-back 할 수 없는 memory record는 저장하지 않는다.
 
 ---
 
-## 7. Retrieval Patterns
+## 7. retrieval 패턴
 
-The schema should support these common retrievals.
+schema는 적어도 다음 retrieval을 지원해야 한다.
 
-## 7.1 Current scene recovery
+## 7.1 current scene recovery
 
-Query:
+조회 대상:
 
 - current scene ledger
 - current subscene
 - latest support unit
 
-## 7.2 Causal bridge retrieval
+## 7.2 causal bridge retrieval
 
-Query:
+조회 대상:
 
-- current event nodes
-- incoming causal edges
-- nearest prior supporting event
+- current event node
+- incoming causal edge
+- 가장 가까운 prior supporting event
 
-## 7.3 Character focus retrieval
+## 7.3 character focus retrieval
 
-Query:
+조회 대상:
 
 - active cast
 - entity profile
-- latest relevant event involving entity
+- 해당 entity가 포함된 최근 relevant event
 
-## 7.4 Relation delta retrieval
+## 7.4 relation delta retrieval
 
-Query:
+조회 대상:
 
 - current pair relation
 - previous pair relation state
 
-## 7.5 Re-entry recap retrieval
+## 7.5 re-entry recap retrieval
 
-Query:
+조회 대상:
 
 - current scene
-- previous 2 to 4 salient scenes
-- unresolved tensions
+- 현재 scene에 이어지는 최근 salient scene 2~4개
+- unresolved tension
 
 ---
 
-## 8. Validation Rules
+## 8. validation 규칙
 
-Support memory should not become a second hallucination layer.
+support memory가 두 번째 hallucination layer가 되면 안 된다.
 
-Validation rules:
+기본 검증 규칙:
 
-- every event must have evidence refs
-- every edge must have confidence and support level
-- place keys must distinguish current vs mentioned place
-- relation timeline updates must reference the scene/subscene where change occurs
-- inferred support fields must stay separable from explicit source fields
+- 모든 event는 evidence ref를 가져야 함
+- 모든 edge는 confidence와 support level을 가져야 함
+- place key는 current / mentioned place를 구분해야 함
+- relation timeline update는 변화가 발생한 scene/subscene를 참조해야 함
+- inferred field와 explicit field를 구분 가능해야 함
 
-Suggested implementation:
+구현 제안:
 
-- add zod schemas for memory collections
-- add normalization and consistency checks before writes
+- memory collection마다 zod schema 추가
+- write 전에 normalization / consistency check 수행
 
 ---
 
-## 9. Suggested Build Sequence
-
-Build in this order:
+## 9. 권장 구축 순서
 
 1. `scenes`
 2. `subscenes`
@@ -583,38 +520,23 @@ Build in this order:
 7. `support_units`
 8. optional `reader_sessions`
 
-Reason:
+이유:
 
-- scene and subscene ledgers are the easiest and highest-value base
-- support units should come only after lower-level memory is stable
-
----
-
-## 10. Open Questions
-
-The project should eventually decide:
-
-- what counts as the canonical run that writes support memory?
-- should memory be refreshed only manually, or automatically after stable stages complete?
-- should edges be conservative and sparse, or broader and ranked?
-- how much low-confidence memory should be stored vs generated only on demand?
-
-Recommendation:
-
-- start sparse and conservative
+- scene / subscene ledger가 가장 쉽고 가치가 높다.
+- support unit은 lower-level memory가 안정화된 뒤에 만드는 편이 맞다.
 
 ---
 
-## 11. Final Recommendation
+## 10. 최종 권장 방향
 
-The memory layer should be thought of as:
+이 memory layer는 다음처럼 이해하는 것이 맞다.
 
-`a normalized, evidence-linked story state store for support generation`
+`support generation을 위한 normalized, evidence-linked story state store`
 
-not:
+즉,
 
-- a duplicate of existing artifacts
-- a UI cache
-- a free-form summary database
+- 기존 artifact의 단순 복제도 아니고
+- UI cache도 아니며
+- 자유로운 summary database도 아니다.
 
-If this layer is built cleanly, most future support ideas become much easier to implement.
+이 계층이 잘 만들어지면 이후 support 아이디어 대부분이 훨씬 쉽게 구현된다.

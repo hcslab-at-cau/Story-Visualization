@@ -78,7 +78,7 @@ SCENE.3
 - LLM 응답에서 일부 필드가 빠져도 규칙 기반 fallback으로 보정한다.
 - run id 형식은 `semantic_clarification__{docId}__{chapterId}`이다.
 
-API route:
+API 라우트:
 
 - `POST /api/pipeline/vis1`
 
@@ -120,7 +120,7 @@ API route:
 - blueprint validity와 warning을 함께 저장한다.
 - run id 형식은 `image_support__{docId}__{chapterId}`이다.
 
-API route:
+API 라우트:
 
 - `POST /api/pipeline/vis2`
 
@@ -154,7 +154,7 @@ API route:
 - 텍스트 렌더링, UI panel, 말풍선, label 등 금지 조건을 hard constraint로 명시한다.
 - run id 형식은 `render_package__{docId}__{chapterId}`이다.
 
-API route:
+API 라우트:
 
 - `POST /api/pipeline/vis3`
 
@@ -195,7 +195,7 @@ API route:
 - 실패한 scene은 `success=false`와 `error`를 기록한다.
 - run id 형식은 `image_gen__{docId}__{chapterId}`이다.
 
-API route:
+API 라우트:
 
 - `POST /api/pipeline/vis4`
 

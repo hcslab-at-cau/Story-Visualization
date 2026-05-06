@@ -1,42 +1,43 @@
-# Reader Support Design Proposal
+# Reader Support 설계 제안
 
-## 1. Problem Restatement
+## 1. 문제 재정의
 
-The next stage of this project is not "make a longer summary."
+이 프로젝트의 다음 단계는 단순히 "더 긴 요약"을 만드는 것이 아니다.
 
-The real target is:
+진짜 목표는 다음과 같다.
 
-- repair the reader's current situation model
-- help the reader recover when scene/state tracking collapses
-- provide the minimum support that is useful right now
-- preserve evidence and causal grounding so supports stay trustworthy
+- 독자의 현재 situation model 복구
+- scene/state tracking이 무너졌을 때 빠른 회복 지원
+- 지금 이 순간 필요한 최소한의 정보 제공
+- evidence와 causal grounding을 유지한 support 생성
 
-The April 13, 2026 meeting slides and the 2026 JCCI slides point in the same direction:
+2026-04-13 미팅 자료와 JCCI 발표 자료는 같은 방향을 가리킨다.
 
-- scene segmentation and scene representation are the base
-- support should be generated from a shared scene representation
-- image is only one form among many
-- causal linkage, state recovery, and re-entry support matter as much as image support
+- scene segmentation과 scene representation이 기반
+- support는 shared scene representation에서 파생되어야 함
+- image는 여러 형태 중 하나일 뿐
+- causal linkage, state recovery, re-entry support가 image만큼 중요함
 
-This document expands the support space beyond `SUM / IDX / CAU / VIS`, evaluates which forms are worth building, and proposes how to implement them in this repository.
+이 문서는 `SUM / IDX / CAU / VIS`를 넘어서 더 넓은 support space를 다시 보고,
+어떤 형태가 실제로 가치가 큰지와 구현 방향을 함께 정리한다.
 
 ---
 
-## 2. Current System Reading
+## 2. 현재 시스템 읽기
 
-The current repository already has strong intermediate structure.
+현재 저장소에는 이미 강한 intermediate structure가 있다.
 
-Available structured assets:
+지금 확보된 구조:
 
-- chapter text and paragraph IDs
-- mention/entity clustering
-- per-paragraph state tracking and scene boundaries
-- scene packets with cast/place/time aggregation
-- grounded scene index with actions, goals, relations, objects, environment
-- subscene-level local state and intervention packaging
-- scene blueprint and image generation pipeline
+- chapter text와 paragraph ID
+- mention / entity clustering
+- paragraph-level state tracking과 scene boundary
+- cast / place / time이 집계된 scene packet
+- actions / goals / relations / objects / environment를 가진 grounded scene index
+- subscene-level local state와 intervention packaging
+- scene blueprint와 image generation branch
 
-Relevant code:
+관련 구현 파일:
 
 - `src/types/schema.ts`
 - `src/lib/pipeline/scene1.ts`
@@ -48,155 +49,155 @@ Relevant code:
 - `src/lib/pipeline/vis2.ts`
 - `src/lib/firestore.ts`
 
-Current limitation:
+현재 한계:
 
-- storage is mostly `document -> chapter -> run -> artifact`
-- most reasoning is still chapter-local
-- there is no stable doc-level memory for events, recurring entities, causal edges, relation changes, or cross-scene retrieval
-- final reader support is still biased toward `scene packet + local subscene hints + optional image`
+- 저장 구조가 거의 `document -> chapter -> run -> artifact` 중심
+- reasoning이 여전히 chapter-local
+- event, recurring entity, causal edge, relation change를 위한 stable doc-level memory가 없음
+- final reader support가 `scene packet + local subscene hint + optional image`에 치우쳐 있음
 
-So the next step should be:
+그래서 다음 단계는 다음 순서로 가야 한다.
 
-1. build a doc-level support memory
-2. generate multiple support forms from that memory
-3. decide which form to show based on reader state and trigger timing
-
----
-
-## 3. Design Principle
-
-The support form should be judged by one question:
-
-`Does this help the reader reconnect to the current story state faster than raw rereading?`
-
-Useful forms tend to satisfy four conditions:
-
-- local: tied to the current scene/subscene
-- contrastive: emphasizes what changed
-- grounded: can point to evidence span or source state
-- selective: does not dump all metadata at once
-
-Bad forms usually fail because they are:
-
-- too global
-- too decorative
-- too inferential without evidence
-- too dense for the reading moment
+1. doc-level support memory 구축
+2. 그 memory에서 여러 support form 생성
+3. reader state와 trigger timing에 따라 어떤 support를 보여줄지 결정
 
 ---
 
-## 4. Expanded Support Inventory
+## 3. 설계 원칙
 
-### 4.1 Core Forms: strong candidates
+support form은 다음 한 질문으로 평가해야 한다.
 
-These are the forms most aligned with the project goal and current pipeline.
+`이 support가 raw rereading보다 더 빨리 독자를 현재 이야기 상태에 다시 연결해 주는가?`
 
-#### A. Current-State Snapshot
+좋은 support는 보통 다음 네 가지를 만족한다.
 
-Purpose:
+- local: 현재 scene/subscene에 붙어 있음
+- contrastive: 무엇이 바뀌었는지 강조함
+- grounded: evidence span이나 source state를 가리킬 수 있음
+- selective: metadata를 한꺼번에 쏟아붓지 않음
 
-- answer "where are we, who is here, what is going on now?"
+반대로 나쁜 support는 보통 다음 이유로 실패한다.
 
-Reader problem:
+- 너무 global함
+- 지나치게 장식적임
+- evidence 없이 과하게 추론함
+- 읽는 순간에 비해 너무 조밀함
 
-- loses current time/place/cast/goal alignment
+---
 
-Output shape:
+## 4. 확장된 Support Inventory
 
-- 3 to 5 short lines
+## 4.1 핵심 형태: 가장 강한 후보
+
+이 형태들은 연구 목표와 현재 파이프라인 구조에 가장 잘 맞는다.
+
+### A. Current-State Snapshot
+
+목적:
+
+- "지금 어디이고, 누가 있고, 무슨 일이 벌어지고 있지?"에 답함
+
+독자 문제:
+
+- 시간 / 장소 / 인물 / 목표 정렬을 놓침
+
+출력 형태:
+
+- 3~5개의 짧은 줄
 - `place`
 - `active cast`
 - `immediate goal`
 - `local problem`
 - `why this moment matters`
 
-Why it is strong:
+강한 이유:
 
-- lowest cognitive load
-- directly maps to situation-model recovery
-- works for confusion and re-entry both
+- 인지 부하가 가장 낮음
+- situation-model recovery와 바로 연결됨
+- 혼란 상황과 re-entry 상황 둘 다에 유용
 
-#### B. Boundary Delta Chips
+### B. Boundary Delta Chips
 
-Purpose:
+목적:
 
-- signal scene/subscene transition without forcing expansion
+- scene/subscene 전환 신호를 작은 조각으로 보여줌
 
-Reader problem:
+독자 문제:
 
-- misses a shift in place/time/cast/goal
+- place / time / cast / goal 변화 신호를 놓침
 
-Output shape:
+출력 형태:
 
-- short chips beside boundary or near current paragraph
-- examples:
+- 문장 근처나 경계 근처에 붙는 짧은 chip
+- 예:
   - `Place shift`
   - `Rabbit exits`
   - `Goal changes`
   - `Flashback begins`
 
-Why it is strong:
+강한 이유:
 
-- fits the "just enough" philosophy
-- can be always-on
-- cheap to compute from existing state deltas
+- "딱 필요한 만큼" 보여주는 방식에 잘 맞음
+- always-on support로 두기 좋음
+- 현재 state delta에서 비교적 싸게 계산 가능
 
-#### C. Causal Bridge
+### C. Causal Bridge
 
-Purpose:
+목적:
 
-- answer "why did this happen now?"
+- "왜 지금 이런 일이 생겼지?"에 답함
 
-Reader problem:
+독자 문제:
 
-- current event feels unmotivated because earlier cause is forgotten
+- 현재 사건을 일으킨 이전 원인을 잊어서 현재 장면이 뜬금없게 느껴짐
 
-Output shape:
+출력 형태:
 
-- 1 short causal sentence
-- optional 2-step chain:
+- 짧은 causal sentence 1개
+- 필요하면 2단 구조:
   - `Earlier: ...`
   - `So now: ...`
 
-Why it is strong:
+강한 이유:
 
-- directly addresses one of the most important failure modes in the slides
-- uses subscene causal fields already present, but needs document-level linking
+- 발표 자료에서 가장 중요하게 언급된 failure mode를 직접 다룸
+- 현재 `SUB.2 causal_input/result`를 기반으로 시작할 수 있지만, 실제로는 doc-level linking이 필요함
 
-#### D. Character Focus Card
+### D. Character Focus Card
 
-Purpose:
+목적:
 
-- answer "what is this character doing / wanting in this moment?"
+- "이 장면에서 이 인물은 무엇을 하고, 무엇을 원하지?"에 답함
 
-Reader problem:
+독자 문제:
 
-- many names, long dialogue, unclear role of each person
+- 인물이 많거나 대화가 길면 각 인물의 현재 역할이 흐려짐
 
-Output shape:
+출력 형태:
 
-- one card per active character on demand
+- active character별 on-demand card
 - `role in this beat`
 - `current intention`
 - `constraint`
 - `recent change`
 
-Why it is strong:
+강한 이유:
 
-- builds on current `SUB.4 character_units`
-- especially useful in dialogue-heavy scenes
+- 현재 `SUB.4 character_units`와 잘 이어짐
+- dialogue-heavy scene에서 특히 유용
 
-#### E. Relation Delta Card
+### E. Relation Delta Card
 
-Purpose:
+목적:
 
-- answer "what changed between these two characters?"
+- "두 인물 사이에서 무엇이 바뀌었지?"에 답함
 
-Reader problem:
+독자 문제:
 
-- social alignment shifts are easy to miss even when character names are remembered
+- 이름은 기억하지만 social alignment 변화는 놓치기 쉬움
 
-Output shape:
+출력 형태:
 
 - pair-level short card
 - `before`
@@ -204,180 +205,163 @@ Output shape:
 - `change`
 - `why it matters`
 
-Why it is strong:
+강한 이유:
 
-- relation change is often more important than plain cast listing
-- current pipeline already has scene relations and pair-level hint slots
+- relation change는 단순 cast listing보다 훨씬 중요할 때가 많음
+- current pipeline의 scene relations, pair-level hint slot과 연결 가능
 
-#### F. Spatial Continuity Card
+### F. Spatial Continuity Card
 
-Purpose:
+목적:
 
-- answer "how did we get here?" or "what space are we in now?"
+- "어떻게 여기까지 왔지?" 또는 "지금 이 공간이 어떤 곳이지?"에 답함
 
-Reader problem:
+독자 문제:
 
-- movement across spaces, nested spaces, confusing described layouts
+- 이동이 많거나 nested space가 복잡한 경우 공간 감각 붕괴
 
-Output shape:
+출력 형태:
 
-- compact place chain or mini spatial note
+- 간단한 place chain 또는 공간 메모
 - `previous place -> current place`
 - `current space cues`
 - `mentioned but not current places`
 
-Why it is strong:
+강한 이유:
 
-- strongly supported by narrative comprehension literature on spatial updating
-- more reliable and cheaper than a full map
+- narrative comprehension의 spatial updating 연구와 잘 맞음
+- full map보다 더 가볍고 안정적임
 
-#### G. Re-entry Recap
+### G. Re-entry Recap
 
-Purpose:
+목적:
 
-- help after pause or chapter return
+- 독서를 쉬었다가 다시 들어왔을 때 빠르게 복귀 지원
 
-Reader problem:
+독자 문제:
 
-- reader returns after hours/days and no longer remembers scene momentum
+- 오랜만에 돌아와서 scene momentum이 사라짐
 
-Output shape:
+출력 형태:
 
-- 3-part compact recall:
+- 3파트 압축:
   - `current state`
   - `most recent turning points`
   - `unfinished tension`
 
-Why it is strong:
+강한 이유:
 
-- one of the clearest practical use cases
-- differs from ordinary summary because it is anchored to the current re-entry point
+- 실제 사용 시나리오가 매우 분명함
+- 단순 retrospective summary와 달리 현재 reading point에 맞춰 anchor됨
 
-#### H. Reference Repair
+### H. Reference Repair
 
-Purpose:
+목적:
 
-- resolve ambiguous mentions and dialogue references
+- 지시어, 호칭, 역할 지칭을 빠르게 풀어줌
 
-Reader problem:
+독자 문제:
 
-- "he", "she", titles, kinship labels, role labels become hard to resolve
+- "he", "she", 직함, 가족 호칭, 역할 호칭이 길어질수록 누군지 흐려짐
 
-Output shape:
+출력 형태:
 
-- short alias resolution
+- 짧은 alias resolution
 - `he = Mr. X`
 - `the girl = Alice`
 - `the doctor = Dr. Y`
 
-Why it is strong:
+강한 이유:
 
-- cheap but high value
-- especially useful in long dialogue sequences and multi-character scenes
+- 구현 비용 대비 체감 가치가 큼
+- 긴 대화와 다인물 장면에서 특히 유용
 
----
+## 4.2 보조 형태: 조건부로 유용함
 
-### 4.2 Secondary Forms: useful but conditional
+### I. Scene Image
 
-These can be good, but should not be treated as always-on core support.
+유용한 경우:
 
-#### I. Scene Image
+- place와 cast 배치가 중요할 때
+- 장면의 spatial structure가 안정적일 때
+- 이미지가 보수적이고 일관성 있게 생성될 때
 
-Good when:
+하지만 이것만으로 충분하지는 않다.
 
-- place and cast configuration matter
-- the scene has stable spatial structure
-- the image is visually conservative and consistent
+- causality, relation change, local goal/problem은 image alone으로 복구하기 어려움
+- 과하게 믿으면 오히려 오해를 만들 수 있음
 
-Not enough by itself because:
+### J. Evidence Quote Card
 
-- image rarely captures causal linkage, shifting goals, or social nuance
-- may mislead if over-interpreted
+목적:
 
-#### J. Evidence Quote Card
+- support claim 뒤의 decisive text span을 보여줌
 
-Purpose:
+유용한 경우:
 
-- show one or two decisive text spans behind a support claim
+- explainability가 중요할 때
+- support가 약간 inference를 포함할 때
 
-Good when:
+리스크:
 
-- user distrust or explainability matters
-- a support claim is slightly inferential
+- 인용을 너무 많이 보여주면 읽기 흐름을 깨뜨림
 
-Risk:
+### K. Goal-Problem Tracker
 
-- too much quoting breaks reading flow
+목적:
 
-#### K. Goal-Problem Tracker
+- local pursuit structure를 정리
 
-Purpose:
+유용한 경우:
 
-- make local pursuit structure visible
+- action / problem-solving 중심 narrative
 
-Good when:
+리스크:
 
-- the narrative is action/problem-solving heavy
+- reflective scene에서는 value가 낮을 수 있음
 
-Risk:
+### L. Prediction Prompt / Reflective Question
 
-- less useful in reflective or atmospheric scenes
+목적:
 
-#### L. Prediction Prompt / Reflective Question
+- 단순 복구를 넘어 active reading을 유도
 
-Purpose:
+유용한 경우:
 
-- encourage active reading rather than passive help
+- 나중에 learning / engagement 효과까지 보려는 실험
 
-Good when:
+리스크:
 
-- the project later studies learning/engagement outcomes
+- 회복 지원보다 과제 느낌이 강해질 수 있음
 
-Risk:
+## 4.3 과하거나 지금은 약한 형태
 
-- can interrupt reading
-- feels pedagogical rather than restorative if overused
+### M. Full Story Graph Viewer
 
----
+- retrospective analysis에는 강함
+- immediate scene recovery에는 약함
+- 현재 목표에 비해 UI와 data complexity가 큼
 
-### 4.3 Overkill or weak forms
+### N. Always-visible Global Timeline
 
-These are not wrong in theory, but likely too heavy for the current goal.
+- 전체 흐름 회상에는 좋을 수 있지만
+- 현재 읽기 순간에 필요한 최소 지원과는 거리가 있음
 
-#### M. Full Story Graph Viewer
+### O. Dense Knowledge Dashboard
 
-Why it is too much now:
+- panel이 많아지면 reader task를 방해함
+- minimal repair principle에 어긋남
 
-- strong for retrospective analysis
-- weak for immediate scene recovery
-- high UI and data complexity
+### P. Heavy Image-first Interface
 
-#### N. Always-visible global timeline
-
-Why it is too much now:
-
-- pushes the reader into meta-navigation too often
-- may work for analysis mode, not default reading mode
-
-#### O. Dense knowledge-panel dashboard
-
-Why it is too much now:
-
-- too many panels compete with the main reading task
-- violates the minimal repair principle
-
-#### P. Heavy image-first interface
-
-Why it is too much now:
-
-- turns support into illustration consumption
-- weak for causal and relation repair
+- support가 illustration consumption으로 기울어짐
+- causal / relation repair에는 약함
 
 ---
 
-## 5. Recommended Form Portfolio
+## 5. 권장 Support Portfolio
 
-### Tier 1: build first
+### Tier 1: 먼저 만들 것
 
 - Current-State Snapshot
 - Boundary Delta Chips
@@ -386,367 +370,185 @@ Why it is too much now:
 - Re-entry Recap
 - Reference Repair
 
-### Tier 2: build next
+### Tier 2: 다음 단계
 
 - Relation Delta Card
 - Spatial Continuity Card
 - Scene Image
 - Evidence Quote Card
 
-### Tier 3: conditional / experimental
+### Tier 3: 조건부 / 실험용
 
 - Goal-Problem Tracker
 - Prediction Prompt
-- retrospective graph/timeline tools
+- retrospective graph / timeline tool
 
 ---
 
-## 6. Implementation Strategy Per Form
+## 6. 형태별 구현 전략
 
-## 6.1 Current-State Snapshot
+### Current-State Snapshot
 
-### Use current data
+재사용 데이터:
 
-- `STATE.2` validated state
-- `SCENE.3` validated scene index
-- `SUB.2` local goal / problem / causal result
-- `SUB.4` compact language if available
+- `STATE.2`
+- `SCENE.3`
+- `SUB.2`
+- `SUB.4`
 
-### Processing
+처리:
 
-1. retrieve active scene and active subscene
-2. merge:
-   - current place
-   - active cast
-   - local goal
-   - local problem
-   - one action summary
-3. compress to 3 to 5 short fields with evidence pointers
+1. active scene / subscene retrieval
+2. place / cast / local goal / local problem / action summary merge
+3. 3~5개의 짧은 field로 압축
 
-### New artifact
+추가 시스템:
 
 - `SUP.1 CurrentStateSnapshot`
-
-### New system need
-
-- support artifact stage runner
 - field-level evidence linking
 
----
+### Boundary Delta Chips
 
-## 6.2 Boundary Delta Chips
+재사용 데이터:
 
-### Use current data
+- `STATE.3`
+- `SCENE.1`
+- `SUB.3`
 
-- `STATE.3` boundaries
-- `SCENE.1` scene packet start/end states
-- `SUB.3` validated subscenes
+처리:
 
-### Processing
+1. previous vs current delta 계산
+2. chip vocabulary로 mapping
+3. salience ranking
 
-1. compute previous vs current delta
-2. map delta to chip vocabulary:
-   - place shift
-   - time shift
-   - cast turnover
-   - goal update
-   - memory mode shift
-3. rank chips by salience
-
-### New artifact
+추가 시스템:
 
 - `SUP.2 BoundaryDelta`
-
-### New system need
-
 - delta scoring layer
-- chip vocabulary and severity mapping
 
----
+### Causal Bridge
 
-## 6.3 Causal Bridge
-
-### Use current data
+재사용 데이터:
 
 - `SUB.2 causal_input / causal_result`
-- `SCENE.3 main_actions / goals / relations`
-- previous scene packet end state
+- `SCENE.3 actions / goals / relations`
+- previous scene end state
 
-### Processing
+처리:
 
-1. create event nodes from subscenes
-2. connect edges:
-   - causes
-   - enables
-   - blocks
-   - reveals
-   - escalates
-3. for the current subscene, retrieve the nearest earlier causal parent
-4. ask LLM for one short bridge sentence grounded in both source and target evidence
+1. subscene에서 event node 생성
+2. causes / enables / blocks / reveals / escalates edge 연결
+3. 현재 subscene의 prior causal parent retrieval
+4. evidence 기반 짧은 bridge sentence 생성
 
-### New artifact
-
-- `SUP.3 CausalBridge`
-
-### New system need
+추가 시스템:
 
 - document-level event graph
-- edge extraction and validation
-- retrieval for prior causally linked nodes
+- edge extraction / validation
 
----
+### Character Focus Card
 
-## 6.4 Character Focus Card
-
-### Use current data
+재사용 데이터:
 
 - `ENT.3`
-- `SCENE.3 onstage_cast / goals / actions / relations`
+- `SCENE.3`
 - `SUB.2`
-- `SUB.4 character_units`
+- `SUB.4`
 
-### Processing
+추가 시스템:
 
-1. resolve character identity from current scene
-2. collect local role, goal, problem, and recent changes
-3. fill missing fields from scene-level evidence only when needed
-4. generate one concise character repair card
+- character memory profile
+- alias handling layer
 
-### New artifact
+### Relation Delta Card
 
-- `SUP.4 CharacterFocus`
-
-### New system need
-
-- character memory profile across scenes
-- alias handling for mentions and reader-facing names
-
----
-
-## 6.5 Relation Delta Card
-
-### Use current data
+재사용 데이터:
 
 - `SCENE.3 relations`
 - `SUB.4 pair_units`
-- previous scene/subscene relation state
+- previous relation state
 
-### Processing
-
-1. normalize relation tuples
-2. compare current relation tuple with prior relation tuple
-3. detect:
-   - alliance formed
-   - trust dropped
-   - tension rose
-   - deception exposed
-4. generate short pair delta explanation
-
-### New artifact
-
-- `SUP.5 RelationDelta`
-
-### New system need
+추가 시스템:
 
 - relation timeline store
 - pair-state diff logic
 
----
+### Spatial Continuity Card
 
-## 6.6 Spatial Continuity Card
-
-### Use current data
+재사용 데이터:
 
 - `STATE.2 current_place`
-- `SCENE.1 current/mentioned_places`
+- `SCENE.1 current / mentioned places`
 - `SCENE.3 scene_place`
-- `VIS.1` place clarification if available
+- optional `VIS.1`
 
-### Processing
-
-1. normalize current place identity
-2. compare with previous place state
-3. generate:
-   - previous place
-   - current place
-   - transition cue
-   - scene-specific spatial anchors
-
-### New artifact
-
-- `SUP.6 SpatialContinuity`
-
-### New system need
+추가 시스템:
 
 - place graph
 - place synonym normalization
 
----
+### Re-entry Recap
 
-## 6.7 Re-entry Recap
+재사용 데이터:
 
-### Use current data
+- scene-level support memory 전반
 
-- all scene-level support memory
+추가 시스템:
 
-### Processing
+- reader-state / session memory
+- prior scene salience ranking
 
-1. detect re-entry event:
-   - new session
-   - user jumps into later chapter
-   - long inactivity
-2. gather:
-   - current state snapshot
-   - last 2 to 4 important turns linked to current scene
-   - unresolved tension
-3. compress into a recap anchored to the present reading point
+### Reference Repair
 
-### New artifact
-
-- `SUP.7 ReentryRecap`
-
-### New system need
-
-- reader-state/session memory
-- salience ranking for prior scenes/events
-
----
-
-## 6.8 Reference Repair
-
-### Use current data
+재사용 데이터:
 
 - `ENT.3`
-- paragraph-level text
+- local paragraph text
 - scene cast
 - dialogue-local participants
 
-### Processing
-
-1. identify ambiguous local references
-2. resolve candidate antecedents from onstage cast and recent mentions
-3. return only high-confidence repairs
-
-### New artifact
-
-- `SUP.8 ReferenceRepair`
-
-### New system need
+추가 시스템:
 
 - mention alias table
-- confidence filter to avoid wrong repairs
+- confidence-based filtering
+
+### Scene Image
+
+재사용 데이터:
+
+- `VIS.1 ~ VIS.4`
+
+원칙:
+
+- image는 optional support
+- image는 support metadata와 함께 제시
+- image alone이 정답처럼 보이지 않게 설계
 
 ---
 
-## 6.9 Scene Image
+## 7. 추가로 필요한 시스템
 
-### Use current data
+### 7.1 Document-Level Support Memory
 
-- `VIS.1`
-- `VIS.2`
-- `VIS.3`
-- `VIS.4`
+가장 중요한 누락 시스템이다.
 
-### Processing
+필요한 컬렉션 예:
 
-1. keep the image environment-first
-2. use image as optional support, not default truth surface
-3. fuse image with support metadata:
-   - what changed
-   - who matters
-   - what not to infer from image
+- `entities`
+- `scene_ledger`
+- `event_nodes`
+- `causal_edges`
+- `place_graph`
+- `relation_timeline`
+- `evidence_index`
 
-### New artifact
+### 7.2 Shared Support Representation
 
-- existing `VIS.*`
-- plus a small `VIS support metadata` layer
+각 support form을 raw artifact에서 직접 만드는 대신,
+공통 intermediate layer를 두어야 한다.
 
-### New system need
+예:
 
-- image-confidence/usefulness scoring
-- consistency checks across adjacent scenes
-
----
-
-## 7. Systems to Add
-
-## 7.1 Document-Level Support Memory
-
-This is the most important missing system.
-
-### Proposed collections
-
-`documents/{docId}/memory/entities/{entityId}`
-
-- canonical name
-- aliases
-- type
-- first_seen_scene
-- latest_seen_scene
-- relation partners
-
-`documents/{docId}/memory/scenes/{sceneId}`
-
-- chapter id
-- scene index
-- state summary
-- active cast
-- place
-- time
-- goal state
-- evidence pointers
-
-`documents/{docId}/memory/events/{eventId}`
-
-- scene id
-- subscene id
-- actors
-- place
-- action summary
-- local goal
-- problem state
-- causal input
-- causal result
-- evidence pids
-
-`documents/{docId}/memory/edges/{edgeId}`
-
-- from_event
-- to_event
-- edge_type
-- confidence
-- evidence
-
-`documents/{docId}/memory/relations/{pairKey}`
-
-- pair members
-- timeline of relation states
-
-`documents/{docId}/memory/places/{placeKey}`
-
-- normalized place
-- aliases
-- neighboring places
-- scenes used
-
-### Why this is necessary
-
-- support generation should retrieve prior causes, prior place states, prior relation states
-- the current run/chapter artifact store is not enough for that job
-
----
-
-## 7.2 Shared Support Representation
-
-Instead of generating each support form directly from raw prior artifacts, create one stable intermediate layer.
-
-### Proposed structure
-
-`SharedSupportUnit`
-
-- scene_id
-- subscene_id
-- support_target
 - current_state
 - delta_from_previous
 - local_event
@@ -755,231 +557,104 @@ Instead of generating each support form directly from raw prior artifacts, creat
 - relation_candidates
 - place_transition
 - evidence_index
-- retrieval_context
 
-Then derive:
+### 7.3 Support Policy Layer
 
-- snapshot
-- chips
-- causal bridge
-- relation card
-- re-entry recap
-- image overlay metadata
+모든 support를 같은 방식으로 보여주면 안 된다.
 
-This follows the direction already suggested in the JCCI slide.
+권장 구분:
 
----
-
-## 7.3 Support Policy Layer
-
-Different forms should not be shown the same way.
-
-### Default exposure
-
-- always visible:
+- 항상 보임:
   - Boundary Delta Chips
-  - small Current-State Snapshot
+  - 작은 Current-State Snapshot
 
-### on click / on hover
+- click / hover:
+  - Character Focus
+  - Relation Delta
+  - Spatial Continuity
+  - Evidence Quote
 
-- Character Focus Card
-- Relation Delta Card
-- Spatial Continuity Card
-- Evidence Quote Card
-
-### only on trigger
-
-- Re-entry Recap
-- Reference Repair
-- Causal Bridge when confusion is likely
-
-### trigger examples
-
-- scene boundary entered
-- large cast turnover
-- large place shift
-- inactivity resume
-- dialogue density high
-- pronoun ambiguity high
+- trigger-only:
+  - Re-entry Recap
+  - Reference Repair
+  - 일부 Causal Bridge
 
 ---
 
-## 8. Proposed New Stage Layout
+## 8. 제안하는 새 Stage Layout
 
-Current stage names can stay for the main extraction pipeline.
+기존 extraction stage 이름은 유지해도 된다.
 
-Add a support branch after `SCENE.3` and `SUB.4`.
+다만 `SCENE.3`와 `SUB.4` 이후에 support branch를 명시적으로 추가하는 편이 맞다.
 
-### Suggested support stages
+권장 stage:
 
 - `SUP.0` Document Memory Builder
 - `SUP.1` Shared Support Representation Builder
 - `SUP.2` Snapshot Generator
 - `SUP.3` Delta Chip Generator
 - `SUP.4` Causal Bridge Generator
-- `SUP.5` Character/Relation Card Generator
+- `SUP.5` Character / Relation Card Generator
 - `SUP.6` Re-entry / Reference Repair Generator
 - `SUP.7` Support Policy Selector
 
-This branch should feed `FINAL.1` rather than being folded into `SUB.4`.
+---
 
-Reason:
+## 9. VIS에 대해 지금 바꾸면 좋은 점
 
-- `SUB.4` is currently local and subscene-facing
-- support generation should become a broader, document-aware branch
+현재 VIS는 구현 자체는 되어 있지만, reader support라는 연구 목표에 비춰 보면 재정의가 필요하다.
+
+강점:
+
+- semantic clarification -> blueprint -> render package -> image generation 구조가 분명함
+- avoid / forbid / must_not_show logic이 있음
+- environment-first 접근이 비교적 안정적임
+
+한계:
+
+- causal / relation / goal repair를 대신할 수 없음
+- usefulness score가 없음
+- recurring place continuity가 약함
+- support metadata가 부족함
+
+권장 수정:
+
+1. `visual_usefulness_score` 추가
+2. `canonical_place_key` 기반 continuity memory 추가
+3. support-side metadata 추가
+4. schematic fallback 모드 추가
+5. image를 항상 기본 support로 쓰지 않고, support bundle 안의 한 modality로 배치
 
 ---
 
-## 9. VIS: What Should Change
+## 10. 실무적 구축 순서
 
-The VIS branch is no longer missing. It is implemented in this repository, but it should be repositioned.
-
-Current VIS strengths:
-
-- good separation of semantic clarification, blueprinting, render packaging, and image generation
-- conservative environment-first prompts
-- explicit forbid/avoid/must_not_show logic
-
-Current VIS limitations:
-
-- character support is intentionally removed from `VIS.2`
-- image generation is environment-centric, so it is weak as a primary reading support
-- there is little explicit linkage from VIS output back to causal, relational, and state-repair support
-- no direct usefulness score for whether an image should be shown or suppressed
-- continuity across adjacent scene images is not managed strongly
-
-### Recommended VIS changes
-
-#### VIS change 1. Split place image from support image intent
-
-Keep one image type only for now, but conceptually distinguish:
-
-- `place restoration image`: where are we
-- `interaction cue image`: who matters and where
-
-For now, build only the first one strongly.
-
-#### VIS change 2. Add `visual usefulness score`
-
-Each scene should be rated for whether image support is worth showing.
-
-High usefulness:
-
-- place is distinct
-- spatial structure matters
-- movement/entry/exit matters
-
-Low usefulness:
-
-- scene is mostly internal reflection
-- scene is mainly verbal/social nuance
-- image would add little beyond text
-
-#### VIS change 3. Add continuity anchors across adjacent scenes
-
-Store and reuse:
-
-- canonical place key
-- stable viewpoint family
-- repeated structural elements
-- palette/light family
-
-This will reduce the feeling that every scene image is isolated.
-
-#### VIS change 4. Add support-side metadata to VIS outputs
-
-Each VIS result should expose:
-
-- what spatial claim the image is meant to support
-- what it should not be used to infer
-- which support forms should accompany it
-
-#### VIS change 5. Allow low-fidelity spatial diagrams as fallback
-
-When image realism is unstable, allow a simpler spatial support mode:
-
-- low-detail scene schematic
-- no decorative illustration ambition
-
-This is often better than a misleading image.
-
-#### VIS change 6. Better integration with reader cards
-
-Image should be paired with:
-
-- current-state snapshot
-- chips
-- selected character focus or causal bridge
-
-not shown alone as if it is self-sufficient.
+1. doc-level memory 추가
+2. `SharedSupportUnit` 추가
+3. snapshot / chips / causal bridge부터 구현
+4. support policy를 `FINAL.1`에 연결
+5. 그 다음 VIS usefulness / continuity / fallback을 붙이기
 
 ---
 
-## 10. Practical Build Order
+## 11. 최종 권장 방향
 
-### Phase 1
-
-- add doc-level memory collections
-- create `SharedSupportUnit`
-- build Current-State Snapshot
-- build Boundary Delta Chips
-
-### Phase 2
-
-- build Causal Bridge
-- build Character Focus Card
-- build Reference Repair
-- add support policy layer
-
-### Phase 3
-
-- build Relation Delta Card
-- build Spatial Continuity Card
-- build Re-entry Recap
-- connect support branch into `FINAL.1`
-
-### Phase 4
-
-- add VIS usefulness scoring
-- add VIS continuity control
-- add optional low-fidelity spatial fallback
-
----
-
-## 11. Final Recommendation
-
-If this project has to choose a small number of support forms that best fit the research goal, the best set is:
+이 프로젝트가 소수의 support form만 먼저 골라야 한다면 가장 좋은 조합은 다음이다.
 
 - Current-State Snapshot
 - Boundary Delta Chips
 - Causal Bridge
 - Character Focus Card
 - Re-entry Recap
-- Scene Image as secondary support
+- Scene Image(보조 수단)
 
-The forms that look attractive but should not lead the design are:
+반대로 매력적으로 보이지만 지금 선두에 세우면 안 되는 것:
 
 - full story graph viewer
 - always-open timeline dashboard
 - image-first interface
-- dense all-metadata side panels
+- 과도하게 조밀한 side panel
 
-The main architectural decision should be:
+가장 중요한 구조적 결정은 다음 한 문장으로 요약된다.
 
-`Move from chapter-local artifact generation to document-level support memory plus selective support rendering.`
-
-That is the change that will make the current pipeline feel like a real reader-support system rather than a well-structured extraction demo.
-
----
-
-## 12. Reference Notes
-
-The following works were especially useful for this proposal:
-
-- Zehe et al., "Detecting Scenes in Fiction: A new Segmentation Task" (EACL 2021)
-- Zehe et al., "Assessing the State of the Art in Scene Segmentation" (NAACL 2025)
-- Zwaan and related event-indexing work on time/space/protagonist/causality/intentionality
-- Rapp, Klug, and Taylor on spatial representation during narrative comprehension
-- Trabasso and van den Broek on causal structure in narrative comprehension
-- Cohn-Sheehy et al. on coherent narrative linkage and memory
-- Paper Plain, ReaderQuizzer, CiteSee, Soliloquy, and The Semantic Reader Project as reading-interface precedents
+`chapter-local artifact generation에서 document-level support memory와 selective support rendering 구조로 넘어간다.`

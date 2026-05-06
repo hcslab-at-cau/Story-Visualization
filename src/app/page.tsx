@@ -1,8 +1,10 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useState, type ReactNode } from "react"
+import BookMemoryPanel from "@/components/BookMemoryPanel"
 import EpubUploader from "@/components/EpubUploader"
 import ExistingDocumentsPicker from "@/components/ExistingDocumentsPicker"
+import KnowledgeGraphExplorer from "@/components/KnowledgeGraphExplorer"
 import PipelineRunner from "@/components/PipelineRunner"
 import ReaderScreen from "@/components/ReaderScreen"
 import {
@@ -11,13 +13,14 @@ import {
   loadStageResult,
   setRunFavorite,
   stageKey,
+  type DataSource,
   type RunMeta,
-} from "@/lib/firestore"
+} from "@/lib/client-data"
 import { createTimestampRunId } from "@/lib/run-id"
 import type { OverlayRefinementResult, SceneReaderPackageLog } from "@/types/schema"
 import type { ChapterMeta } from "@/types/ui"
 
-type View = "upload" | "pipeline" | "reader"
+type View = "upload" | "pipeline" | "graph" | "reader" | "legacy"
 
 function getPreferredRunId(runs: RunMeta[]): string {
   return runs.find((item) => item.favorite)?.runId ?? runs[0]?.runId ?? ""
@@ -150,7 +153,7 @@ export default function Home() {
       <header className="flex items-center gap-6 border-b border-zinc-200 bg-white px-6 py-4">
         <h1 className="text-lg font-semibold text-zinc-900">Story Visualization</h1>
         <nav className="flex gap-1">
-          {(["upload", "pipeline", "reader"] as View[]).map((currentView) => (
+          {(["upload", "pipeline", "graph", "reader", "legacy"] as View[]).map((currentView) => (
             <button
               key={currentView}
               type="button"
@@ -169,7 +172,11 @@ export default function Home() {
 
       <main
         className={`min-h-0 flex-1 text-base ${
-          view === "reader" ? "overflow-y-auto p-0" : "overflow-hidden p-6"
+          view === "reader" || view === "legacy" || view === "graph"
+            ? "overflow-y-auto p-0"
+            : view === "pipeline"
+              ? "overflow-y-auto p-6"
+              : "overflow-hidden p-6"
         }`}
       >
         {view === "upload" && (
@@ -180,7 +187,7 @@ export default function Home() {
         )}
 
         {view === "pipeline" && docId && (
-          <div className="flex h-full min-h-0 w-full flex-col gap-5">
+          <div className="flex min-h-full w-full flex-col gap-5">
             <div className="space-y-4 rounded-xl border border-zinc-200 bg-white p-5">
               <div className="grid gap-4 xl:grid-cols-[420px_minmax(0,1fr)_minmax(0,1fr)] xl:items-end">
                 <div className="min-w-[340px]">
@@ -294,7 +301,7 @@ export default function Home() {
               </div>
             </div>
 
-            <div className="min-h-0 min-w-0 flex-1 rounded-xl border border-zinc-200 bg-white p-5">
+            <div className="min-h-[720px] min-w-0 rounded-xl border border-zinc-200 bg-white p-5">
               <PipelineRunner
                 docId={docId}
                 chapterId={selectedChapterId}
@@ -310,7 +317,27 @@ export default function Home() {
             >
               View reader screen
             </button>
+            <button
+              type="button"
+              onClick={() => setView("graph")}
+              className="text-base text-zinc-500 underline hover:text-zinc-800"
+            >
+              View knowledge graph
+            </button>
           </div>
+        )}
+
+        {view === "graph" && docId && (
+          <GraphView
+            docId={docId}
+            chapterId={selectedChapterId}
+            runId={runId}
+            chapters={chapters}
+            availableRuns={availableRuns}
+            loadingRuns={loadingRuns}
+            onChapterChange={handlePipelineChapterChange}
+            onRunChange={setRunId}
+          />
         )}
 
         {view === "reader" && docId && (
@@ -324,7 +351,9 @@ export default function Home() {
           />
         )}
 
-        {view !== "upload" && !docId && (
+        {view === "legacy" && <LegacyArchiveView />}
+
+        {view !== "upload" && view !== "legacy" && !docId && (
           <div className="mt-20 text-center text-zinc-400">
             Upload an EPUB first to get started.
           </div>
@@ -388,12 +417,271 @@ function ReaderChapterControl({
   )
 }
 
+function GraphView({
+  docId,
+  chapterId,
+  runId,
+  chapters,
+  availableRuns,
+  loadingRuns,
+  onChapterChange,
+  onRunChange,
+}: {
+  docId: string
+  chapterId: string
+  runId: string
+  chapters: ChapterMeta[]
+  availableRuns: RunMeta[]
+  loadingRuns: boolean
+  onChapterChange: (chapterId: string) => void
+  onRunChange: (runId: string) => void
+}) {
+  const selectedChapterIndex = chapters.findIndex((chapter) => chapter.chapterId === chapterId)
+  const runExists = availableRuns.some((item) => item.runId === runId)
+
+  return (
+    <div className="mx-auto flex w-full max-w-[1920px] flex-col gap-5 p-6">
+      <section className="rounded-2xl border border-zinc-200 bg-white p-5">
+        <div className="flex flex-wrap items-end justify-between gap-4">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">Graph Controls</p>
+            <h2 className="mt-1 text-lg font-semibold text-zinc-900">Current run graph query</h2>
+            <p className="mt-1 text-sm text-zinc-500">
+              새 저장소 `documents_v2`의 graph projection을 조회합니다. 기존 `documents` 데이터는 legacy 탭에서 확인합니다.
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                const prev = chapters[selectedChapterIndex - 1]
+                if (prev) onChapterChange(prev.chapterId)
+              }}
+              disabled={selectedChapterIndex <= 0}
+              className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-700 hover:bg-zinc-50 disabled:opacity-40"
+            >
+              Prev
+            </button>
+            <select
+              value={chapterId}
+              onChange={(event) => onChapterChange(event.target.value)}
+              className="min-w-[300px] rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm"
+            >
+              {chapters.map((chapter) => (
+                <option key={chapter.chapterId} value={chapter.chapterId}>
+                  {`Chapter ${chapter.index + 1} - ${chapter.title}`}
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              onClick={() => {
+                const next = chapters[selectedChapterIndex + 1]
+                if (next) onChapterChange(next.chapterId)
+              }}
+              disabled={selectedChapterIndex < 0 || selectedChapterIndex >= chapters.length - 1}
+              className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-700 hover:bg-zinc-50 disabled:opacity-40"
+            >
+              Next
+            </button>
+            <select
+              value={runExists ? runId : ""}
+              onChange={(event) => {
+                if (event.target.value) onRunChange(event.target.value)
+              }}
+              disabled={loadingRuns || availableRuns.length === 0}
+              className="min-w-[320px] rounded-lg border border-zinc-200 bg-white px-3 py-2 font-mono text-sm disabled:opacity-50"
+            >
+              <option value="">{loadingRuns ? "Loading..." : "Select a saved run"}</option>
+              {availableRuns.map((item) => (
+                <option key={item.runId} value={item.runId}>
+                  {`${item.favorite ? "* " : ""}${item.runId}`}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+      </section>
+
+      {runId ? (
+        <>
+          <BookMemoryPanel
+            docId={docId}
+            runId={runId}
+            currentChapterId={chapterId}
+            chapters={chapters}
+          />
+          <KnowledgeGraphExplorer docId={docId} chapterId={chapterId} runId={runId} />
+        </>
+      ) : (
+        <div className="rounded-xl border border-dashed border-zinc-300 bg-white px-4 py-8 text-center text-sm text-zinc-500">
+          Select or create a saved run before querying the knowledge graph.
+        </div>
+      )}
+    </div>
+  )
+}
+
+function LegacyArchiveView() {
+  const [docId, setDocId] = useState("")
+  const [chapters, setChapters] = useState<ChapterMeta[]>([])
+  const [selectedChapterId, setSelectedChapterId] = useState("")
+  const [availableRuns, setAvailableRuns] = useState<RunMeta[]>([])
+  const [loadingRuns, setLoadingRuns] = useState(false)
+  const [runId, setRunId] = useState("")
+  const selectedChapterIndex = chapters.findIndex((chapter) => chapter.chapterId === selectedChapterId)
+
+  useEffect(() => {
+    let cancelled = false
+
+    async function loadLegacyRuns() {
+      if (!docId || !selectedChapterId) {
+        setAvailableRuns([])
+        setRunId("")
+        return
+      }
+
+      setLoadingRuns(true)
+      try {
+        const runs = await listRuns(docId, selectedChapterId, "legacy")
+        if (cancelled) return
+        setAvailableRuns(runs)
+        setRunId((current) => (runs.some((item) => item.runId === current) ? current : (runs[0]?.runId ?? "")))
+      } finally {
+        if (!cancelled) setLoadingRuns(false)
+      }
+    }
+
+    void loadLegacyRuns()
+    return () => {
+      cancelled = true
+    }
+  }, [docId, selectedChapterId])
+
+  function handleSelectedLegacy(newDocId: string, newChapters: ChapterMeta[]) {
+    setDocId(newDocId)
+    setChapters(newChapters)
+    setSelectedChapterId(newChapters[0]?.chapterId ?? "")
+    setRunId("")
+  }
+
+  function handleChapterChange(chapterId: string) {
+    setSelectedChapterId(chapterId)
+    setAvailableRuns([])
+    setRunId("")
+  }
+
+  const runSelector = (
+    <div className="flex items-center gap-2">
+      <label className="text-sm font-medium text-zinc-600">Legacy Run</label>
+      <select
+        value={runId}
+        onChange={(event) => setRunId(event.target.value)}
+        disabled={loadingRuns || availableRuns.length === 0}
+        className="min-w-[320px] rounded-lg border border-zinc-200 bg-white px-3 py-1.5 font-mono text-sm disabled:cursor-not-allowed disabled:opacity-60"
+      >
+        <option value="">{loadingRuns ? "Loading..." : "No saved run"}</option>
+        {availableRuns.map((item) => (
+          <option key={item.runId} value={item.runId}>
+            {`${item.favorite ? "* " : ""}${item.runId}`}
+          </option>
+        ))}
+      </select>
+    </div>
+  )
+
+  return (
+    <div className="mx-auto flex w-full max-w-[1920px] flex-col gap-5 p-6">
+      <div className="grid gap-5 xl:grid-cols-[minmax(360px,0.8fr)_minmax(0,1.2fr)]">
+        <ExistingDocumentsPicker
+          source="legacy"
+          title="Legacy Documents"
+          description="기존 documents 컬렉션에 남아 있는 이전 실행 결과를 읽기 전용으로 엽니다."
+          emptyMessage="기존 documents 컬렉션에서 문서를 찾지 못했습니다."
+          onSelected={handleSelectedLegacy}
+        />
+
+        <section className="rounded-xl border border-zinc-200 bg-white p-5">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 className="text-sm font-semibold text-zinc-800">Legacy Reader</h2>
+              <p className="mt-1 text-xs text-zinc-500">
+                새 실행은 documents_v2에 저장되고, 이 화면은 기존 documents 컬렉션을 수정하지 않습니다.
+              </p>
+            </div>
+            <span className="rounded-full bg-zinc-100 px-3 py-1 text-xs text-zinc-500">
+              read-only
+            </span>
+          </div>
+
+          {docId ? (
+            <div className="mt-5 flex flex-wrap items-center gap-3">
+              <button
+                type="button"
+                onClick={() => {
+                  const prev = chapters[selectedChapterIndex - 1]
+                  if (prev) handleChapterChange(prev.chapterId)
+                }}
+                disabled={selectedChapterIndex <= 0}
+                className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-700 hover:bg-zinc-50 disabled:opacity-40"
+              >
+                Prev
+              </button>
+              <select
+                value={selectedChapterId}
+                onChange={(event) => handleChapterChange(event.target.value)}
+                className="min-w-[320px] rounded-lg border border-zinc-200 bg-white px-3 py-2 text-base"
+              >
+                {chapters.map((chapter) => (
+                  <option key={chapter.chapterId} value={chapter.chapterId}>
+                    {`Chapter ${chapter.index + 1} - ${chapter.title}`}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                onClick={() => {
+                  const next = chapters[selectedChapterIndex + 1]
+                  if (next) handleChapterChange(next.chapterId)
+                }}
+                disabled={selectedChapterIndex < 0 || selectedChapterIndex >= chapters.length - 1}
+                className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-700 hover:bg-zinc-50 disabled:opacity-40"
+              >
+                Next
+              </button>
+              {runSelector}
+            </div>
+          ) : (
+            <div className="mt-5 rounded-lg border border-dashed border-zinc-300 px-4 py-8 text-center text-sm text-zinc-400">
+              왼쪽에서 legacy 문서를 선택하세요.
+            </div>
+          )}
+        </section>
+      </div>
+
+      {docId && selectedChapterId && (
+        <ReaderView
+          docId={docId}
+          chapterId={selectedChapterId}
+          runId={runId}
+          chapters={chapters}
+          loadingRuns={loadingRuns}
+          source="legacy"
+          onChapterChange={handleChapterChange}
+        />
+      )}
+    </div>
+  )
+}
+
 function ReaderView({
   docId,
   chapterId,
   runId,
   chapters,
   loadingRuns,
+  source,
+  extraControls,
   onChapterChange,
 }: {
   docId: string
@@ -401,6 +689,8 @@ function ReaderView({
   runId: string
   chapters: ChapterMeta[]
   loadingRuns: boolean
+  source?: DataSource
+  extraControls?: ReactNode
   onChapterChange: (chapterId: string) => void
 }) {
   const [final1, setFinal1] = useState<SceneReaderPackageLog | null>(null)
@@ -414,8 +704,8 @@ function ReaderView({
       setError(null)
       try {
         const [loadedFinal1, loadedFinal2] = await Promise.all([
-          loadStageResult<SceneReaderPackageLog>(docId, chapterId, runId, stageKey("FINAL.1")),
-          loadStageResult<OverlayRefinementResult>(docId, chapterId, runId, stageKey("FINAL.2")),
+          loadStageResult<SceneReaderPackageLog>(docId, chapterId, runId, stageKey("FINAL.1"), source),
+          loadStageResult<OverlayRefinementResult>(docId, chapterId, runId, stageKey("FINAL.2"), source),
         ])
 
         if (!loadedFinal1 && !loadedFinal2) {
@@ -443,7 +733,7 @@ function ReaderView({
     setFinal2(null)
     setLoading(false)
     setError(null)
-  }, [docId, chapterId, runId])
+  }, [docId, chapterId, runId, source])
 
   if (loading) {
     return (
@@ -454,6 +744,7 @@ function ReaderView({
           disabled={loadingRuns}
           onChapterChange={onChapterChange}
         />
+        {extraControls}
         <div className="rounded-lg border border-dashed border-zinc-300 bg-white px-4 py-3 text-sm text-zinc-500">
           Loading reader data...
         </div>
@@ -470,6 +761,7 @@ function ReaderView({
           disabled={loadingRuns}
           onChapterChange={onChapterChange}
         />
+        {extraControls}
         <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">
           {error}
         </div>
@@ -486,6 +778,7 @@ function ReaderView({
           disabled={loadingRuns}
           onChapterChange={onChapterChange}
         />
+        {extraControls}
         <div className="rounded-lg border border-dashed border-zinc-300 bg-white px-4 py-3 text-sm text-zinc-500">
           {loadingRuns ? "Loading reader data..." : "No saved runs for this chapter."}
         </div>
@@ -502,6 +795,7 @@ function ReaderView({
           disabled={loadingRuns}
           onChapterChange={onChapterChange}
         />
+        {extraControls}
         <div className="rounded-lg border border-dashed border-zinc-300 bg-white px-4 py-3 text-sm text-zinc-500">
           결과가 없습니다. 실행해주세요.
         </div>
@@ -514,12 +808,15 @@ function ReaderView({
       final1={final1}
       final2={final2 ?? undefined}
       topControls={(
-        <ReaderChapterControl
-          chapterId={chapterId}
-          chapters={chapters}
-          disabled={loadingRuns}
-          onChapterChange={onChapterChange}
-        />
+        <>
+          <ReaderChapterControl
+            chapterId={chapterId}
+            chapters={chapters}
+            disabled={loadingRuns}
+            onChapterChange={onChapterChange}
+          />
+          {extraControls}
+        </>
       )}
     />
   )

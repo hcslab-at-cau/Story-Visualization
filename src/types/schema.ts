@@ -31,6 +31,7 @@ export interface LLMRunDebug {
 }
 
 export interface ArtifactBase {
+  artifact_id?: string;
   run_id: string;
   doc_id: string;
   chapter_id: string;
@@ -784,6 +785,216 @@ export interface InterventionPackages extends ArtifactBase {
 }
 
 // ---------------------------------------------------------------------------
+// SUP.0-7 - Reader Support Branch
+// ---------------------------------------------------------------------------
+
+export type SupportUnitKind =
+  | "snapshot"
+  | "boundary_delta"
+  | "causal_bridge"
+  | "character_focus"
+  | "relation_delta"
+  | "reentry_recap"
+  | "reference_repair"
+  | "spatial_continuity"
+  | "visual_context";
+
+export type SupportDisplayMode = "inline_chip" | "side_card" | "popover" | "drawer";
+
+export interface SupportEvidenceRef {
+  scene_id: string;
+  subscene_id?: string;
+  pid?: number;
+  text?: string;
+  source_stage: StageId | string;
+}
+
+export interface SupportMemoryScene {
+  scene_id: string;
+  scene_title: string;
+  start_pid: number;
+  end_pid: number;
+  previous_scene_id?: string;
+  next_scene_id?: string;
+  summary: string;
+  place?: string;
+  mentioned_places: string[];
+  time?: string;
+  active_cast: string[];
+  actions: string[];
+  goals: string[];
+  objects: string[];
+  environment: string[];
+  relations: string[];
+  subscene_summaries: string[];
+  evidence: SupportEvidenceRef[];
+}
+
+export interface SupportMemoryEvent {
+  event_id: string;
+  scene_id: string;
+  subscene_id?: string;
+  label: string;
+  actors: string[];
+  place?: string;
+  action: string;
+  causal_input?: string;
+  causal_result?: string;
+  evidence: SupportEvidenceRef[];
+}
+
+export type SupportEdgeType =
+  | "same_character_thread"
+  | "same_place_thread"
+  | "place_shift"
+  | "cast_change"
+  | "causal_bridge"
+  | "relation_change";
+
+export interface SupportMemoryEdge {
+  edge_id: string;
+  type: SupportEdgeType;
+  from_scene_id: string;
+  to_scene_id: string;
+  from_event_id?: string;
+  to_event_id?: string;
+  label: string;
+  evidence: SupportEvidenceRef[];
+}
+
+export interface SupportMemory {
+  scenes: SupportMemoryScene[];
+  events: SupportMemoryEvent[];
+  edges: SupportMemoryEdge[];
+}
+
+export interface SupportMemoryLog extends ArtifactBase {
+  stage_id: "SUP.0";
+  method: "rule";
+  memory: SupportMemory;
+}
+
+export interface SupportSceneContext {
+  scene_id: string;
+  scene_title: string;
+  current_state: {
+    summary: string;
+    place?: string;
+    time?: string;
+    active_cast: string[];
+    goals: string[];
+  };
+  boundary_delta: {
+    place_changed: boolean;
+    cast_entered: string[];
+    cast_exited: string[];
+    time_changed: boolean;
+    labels: string[];
+  };
+  prior_threads: Array<{
+    kind: SupportEdgeType;
+    from_scene_id: string;
+    label: string;
+  }>;
+  candidate_units: SupportUnitKind[];
+  evidence: SupportEvidenceRef[];
+}
+
+export interface SharedSupportRepresentation extends ArtifactBase {
+  stage_id: "SUP.1";
+  method: "rule";
+  scenes: SupportSceneContext[];
+}
+
+export interface SupportUnit {
+  unit_id: string;
+  scene_id: string;
+  kind: SupportUnitKind;
+  label: string;
+  title: string;
+  body: string;
+  priority: number;
+  display_mode: SupportDisplayMode;
+  evidence: SupportEvidenceRef[];
+  source_stage_ids: string[];
+}
+
+export interface SupportSnapshotScene {
+  scene_id: string;
+  units: SupportUnit[];
+}
+
+export interface SupportSnapshots extends ArtifactBase {
+  stage_id: "SUP.2";
+  method: "rule";
+  scenes: SupportSnapshotScene[];
+}
+
+export interface SupportCausalBridgeScene {
+  scene_id: string;
+  units: SupportUnit[];
+}
+
+export interface SupportCausalBridges extends ArtifactBase {
+  stage_id: "SUP.3";
+  method: "rule";
+  scenes: SupportCausalBridgeScene[];
+}
+
+export interface SupportCharacterRelationScene {
+  scene_id: string;
+  units: SupportUnit[];
+}
+
+export interface SupportCharacterRelations extends ArtifactBase {
+  stage_id: "SUP.4";
+  method: "rule";
+  scenes: SupportCharacterRelationScene[];
+}
+
+export interface SupportReentryReferenceScene {
+  scene_id: string;
+  units: SupportUnit[];
+}
+
+export interface SupportReentryReference extends ArtifactBase {
+  stage_id: "SUP.5";
+  method: "rule";
+  scenes: SupportReentryReferenceScene[];
+}
+
+export interface SupportPolicyScene {
+  scene_id: string;
+  selected_units: SupportUnit[];
+  deferred_units: SupportUnit[];
+  policy_notes: string[];
+}
+
+export interface SupportPolicySelection extends ArtifactBase {
+  stage_id: "SUP.6";
+  method: "rule";
+  scenes: SupportPolicyScene[];
+}
+
+export interface ReaderSupportPacket {
+  scene_id: string;
+  scene_title: string;
+  primary_units: SupportUnit[];
+  overflow_units: SupportUnit[];
+  display_slots: {
+    before_text: SupportUnit[];
+    beside_visual: SupportUnit[];
+    on_demand: SupportUnit[];
+  };
+}
+
+export interface ReaderSupportPackageLog extends ArtifactBase {
+  stage_id: "SUP.7";
+  method: "rule";
+  packets: ReaderSupportPacket[];
+}
+
+// ---------------------------------------------------------------------------
 // FINAL.1 — Scene Reader Package
 // ---------------------------------------------------------------------------
 
@@ -860,6 +1071,7 @@ export interface SceneReaderPacket {
   scene_title: string;
   scene_summary: string;
   body_paragraphs: string[];
+  support?: ReaderSupportPacket;
   visual: VisualBlock;
   subscene_nav: SubsceneNavItem[];
   subscene_views: Record<string, SubsceneView>;
@@ -945,6 +1157,14 @@ export type PipelineArtifact =
   | SubsceneStates
   | ValidatedSubscenes
   | InterventionPackages
+  | SupportMemoryLog
+  | SharedSupportRepresentation
+  | SupportSnapshots
+  | SupportCausalBridges
+  | SupportCharacterRelations
+  | SupportReentryReference
+  | SupportPolicySelection
+  | ReaderSupportPackageLog
   | SceneReaderPackageLog
   | OverlayRefinementResult;
 
@@ -968,6 +1188,14 @@ export type StageId =
   | "SUB.2"
   | "SUB.3"
   | "SUB.4"
+  | "SUP.0"
+  | "SUP.1"
+  | "SUP.2"
+  | "SUP.3"
+  | "SUP.4"
+  | "SUP.5"
+  | "SUP.6"
+  | "SUP.7"
   | "FINAL.1"
   | "FINAL.2";
 
@@ -995,6 +1223,14 @@ export interface RunResults {
   "SUB.2"?: SubsceneStates;
   "SUB.3"?: ValidatedSubscenes;
   "SUB.4"?: InterventionPackages;
+  "SUP.0"?: SupportMemoryLog;
+  "SUP.1"?: SharedSupportRepresentation;
+  "SUP.2"?: SupportSnapshots;
+  "SUP.3"?: SupportCausalBridges;
+  "SUP.4"?: SupportCharacterRelations;
+  "SUP.5"?: SupportReentryReference;
+  "SUP.6"?: SupportPolicySelection;
+  "SUP.7"?: ReaderSupportPackageLog;
   "FINAL.1"?: SceneReaderPackageLog;
   "FINAL.2"?: OverlayRefinementResult;
 }

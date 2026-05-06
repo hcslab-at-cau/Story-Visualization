@@ -1,23 +1,43 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useCallback, useEffect, useState } from "react"
+import type { DataSource } from "@/lib/client-data"
 import type { ChapterMeta, DocumentMeta } from "@/types/ui"
 
 interface Props {
   onSelected: (docId: string, chapters: ChapterMeta[]) => void
+  source?: DataSource
+  title?: string
+  description?: string
+  emptyMessage?: string
 }
 
-export default function ExistingDocumentsPicker({ onSelected }: Props) {
+function sourceParam(source?: DataSource): string {
+  return source ? `?source=${encodeURIComponent(source)}` : ""
+}
+
+function appendSource(url: string, source?: DataSource): string {
+  if (!source) return url
+  return `${url}${url.includes("?") ? "&" : "?"}source=${encodeURIComponent(source)}`
+}
+
+export default function ExistingDocumentsPicker({
+  onSelected,
+  source,
+  title = "Existing Files",
+  description = "Pick a previously uploaded document and continue from its saved chapters.",
+  emptyMessage = "No uploaded documents found yet.",
+}: Props) {
   const [documents, setDocuments] = useState<DocumentMeta[]>([])
   const [loading, setLoading] = useState(true)
   const [selectingDocId, setSelectingDocId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
-  async function loadDocuments() {
+  const loadDocuments = useCallback(async function loadDocuments() {
     setLoading(true)
     setError(null)
     try {
-      const res = await fetch("/api/documents")
+      const res = await fetch(`/api/documents${sourceParam(source)}`)
       const data = await res.json() as { documents?: DocumentMeta[]; error?: string }
       if (!res.ok) throw new Error(data.error ?? "Failed to load documents")
       setDocuments(data.documents ?? [])
@@ -26,17 +46,17 @@ export default function ExistingDocumentsPicker({ onSelected }: Props) {
     } finally {
       setLoading(false)
     }
-  }
+  }, [source])
 
   useEffect(() => {
     void loadDocuments()
-  }, [])
+  }, [loadDocuments])
 
   async function handleSelect(docId: string) {
     setSelectingDocId(docId)
     setError(null)
     try {
-      const res = await fetch(`/api/chapters?docId=${encodeURIComponent(docId)}`)
+      const res = await fetch(appendSource(`/api/chapters?docId=${encodeURIComponent(docId)}`, source))
       const data = await res.json() as { chapters?: ChapterMeta[]; error?: string }
       if (!res.ok) throw new Error(data.error ?? "Failed to load chapters")
       onSelected(docId, data.chapters ?? [])
@@ -51,9 +71,9 @@ export default function ExistingDocumentsPicker({ onSelected }: Props) {
     <div className="rounded-xl border border-zinc-200 bg-white p-5">
       <div className="flex items-center justify-between gap-3">
         <div>
-          <h2 className="text-sm font-semibold text-zinc-800">Existing Files</h2>
+          <h2 className="text-sm font-semibold text-zinc-800">{title}</h2>
           <p className="mt-1 text-xs text-zinc-500">
-            Pick a previously uploaded document and continue from its saved chapters.
+            {description}
           </p>
         </div>
         <button
@@ -69,7 +89,7 @@ export default function ExistingDocumentsPicker({ onSelected }: Props) {
       {loading ? (
         <p className="mt-4 text-sm text-zinc-500">Loading saved documents...</p>
       ) : documents.length === 0 ? (
-        <p className="mt-4 text-sm text-zinc-400">No uploaded documents found yet.</p>
+        <p className="mt-4 text-sm text-zinc-400">{emptyMessage}</p>
       ) : (
         <div className="mt-4 space-y-2">
           {documents.map((document) => (

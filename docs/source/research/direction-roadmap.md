@@ -1,82 +1,86 @@
-# Research Direction and Milestone Roadmap
+# 연구 방향 및 마일스톤 로드맵
 
-## 1. Current Reality
+## 1. 현재 현실
 
-The current implementation is a useful prototype, but it is not yet a strong technical contribution.
+현재 구현은 유용한 prototype이지만, 아직 강한 기술적 기여라고 보기는 어렵다.
 
-Current system shape:
-
-```text
-EPUB parsing
-  -> staged LLM calls
-  -> JSON cleanup
-  -> artifact storage
-  -> inspection UI
-  -> optional image generation
-```
-
-This is good engineering infrastructure, but weak as a research claim.
-
-The next research step should not be:
-
-- improve prompts only
-- generate better scene images
-- add more final reader cards directly from LLM output
-
-The next research step should be:
-
-`convert noisy LLM/stage outputs into a reliable, evidence-grounded, reader-position-aware narrative relation graph`
-
-Then generate multiple reader supports as graph projections.
-
-## 2. Proposed Research Thesis
-
-Working thesis:
-
-> We construct a reader-position-aware narrative relation graph from validated fiction-analysis artifacts. Instead of directly prompting LLMs to generate reader supports, the system first derives candidate narrative relations from scene-state differences, verifies them with evidence and narrative-scope constraints, and then generates multiple spoiler-safe reader-support artifacts from the graph.
-
-Short version:
+현재 시스템의 큰 형태:
 
 ```text
-validated scene artifacts
-  -> state-diff relation candidates
-  -> scope/evidence correction
-  -> reader-position-aware narrative graph
-  -> multiple support artifacts
+EPUB 파싱
+  -> 단계별 LLM 호출
+  -> JSON 정리
+  -> 산출물 저장
+  -> 점검 UI
+  -> 선택적 이미지 생성
 ```
 
-This makes the contribution more than API orchestration.
+이 구조는 좋은 engineering infrastructure이지만,
+연구 주장으로는 아직 약하다.
 
-## 3. Candidate Technical Contributions
+다음 연구 단계는 단순히
 
-## 3.1 Reader-position-aware Narrative Relation Graph
+- prompt만 개선
+- scene image만 더 잘 생성
+- LLM 출력에서 final reader card를 더 많이 뽑기
 
-A graph where every node, edge, and support claim has:
+가 되어서는 안 된다.
 
-- evidence references
+대신 다음으로 가야 한다.
+
+`noisy한 LLM/stage output을 reliable하고 evidence-grounded하며 reader-position-aware한 narrative relation graph로 변환`
+
+그리고 여러 support를 graph projection으로 생성해야 한다.
+
+## 2. 제안하는 연구 논지
+
+작업 가설:
+
+> 우리는 검증된 fiction-analysis artifact로부터 reader-position-aware narrative relation graph를 구성한다. LLM이 바로 reader support를 생성하게 하지 않고, 먼저 scene-state difference에서 narrative relation candidate를 도출하고, evidence와 narrative-scope 제약으로 검증한 뒤, 그 graph에서 여러 spoiler-safe reader-support artifact를 생성한다.
+
+짧게 쓰면:
+
+```text
+검증된 scene 산출물
+  -> 상태 차이 기반 관계 후보
+  -> 범위/근거 보정
+  -> 독자 위치 인지형 narrative graph
+  -> 다중 support 산출물
+```
+
+이렇게 해야 기여가 단순 API orchestration을 넘어간다.
+
+## 3. 가능한 기술적 기여
+
+### 3.1 Reader-position-aware Narrative Relation Graph
+
+모든 node, edge, support claim이 다음을 가지는 graph:
+
+- evidence reference
 - confidence
 - reveal timing
 - spoiler risk
 - source run
 
-This distinguishes the graph from a generic story knowledge graph.
+이 점이 generic story knowledge graph와 다르다.
 
-## 3.2 State-diff Guided Relation Candidate Generation
+### 3.2 State-diff Guided Relation Candidate Generation
 
-Instead of asking an LLM to find all relations, the system derives candidate edges from structured state changes:
+관계를 전부 LLM에게 찾게 하는 대신,
+구조화된 state 변화에서 edge candidate를 먼저 도출한다.
 
 - place change -> `place_shift`
 - time change -> `time_shift`
 - cast turnover -> `cast_shift`
-- goal/thread change -> `goal_shift` or `thread_continuation`
+- goal/thread change -> `goal_shift`, `thread_continuation`
 - relation change -> `relationship_delta`
 - event/result link -> `causal`, `enables`, `blocks`, `resolves`
 
-The LLM becomes a verifier/classifier, not the only generator.
+이렇게 하면 LLM은 주 생성기가 아니라 verifier/classifier가 된다.
 
-## 3.3 Narrative Scope-aware Correction
+### 3.3 Narrative Scope-aware Correction
 
-The system separates:
+다음 범주를 구분해야 한다.
 
 - actual storyworld state
 - memory
@@ -86,22 +90,22 @@ The system separates:
 - dialogue claim
 - unreliable claim
 
-This directly targets observed errors such as imagined places being stored as actual locations.
+예를 들어 imagined place가 actual location처럼 저장되는 오류를 줄이는 데 직접 연결된다.
 
-## 3.4 Evidence-grounded Correction Loop
+### 3.4 Evidence-grounded Correction Loop
 
-Before a graph claim is saved, the system checks:
+graph claim을 저장하기 전에 다음을 체크한다.
 
-- evidence exists
-- evidence supports the claim
-- claim does not violate scope
-- claim is safe at the current reader position
-- entity/place IDs are canonical
-- duplicate edges are avoided
+- evidence가 존재하는가
+- evidence가 claim을 실제로 지지하는가
+- claim이 scope를 위반하지 않는가
+- current reader position에서 안전한가
+- entity/place ID가 canonical한가
+- duplicate edge가 아닌가
 
-## 3.5 One Graph, Many Supports
+### 3.5 One Graph, Many Supports
 
-The same graph should generate:
+같은 graph에서 여러 support를 생성해야 한다.
 
 - Resume Card
 - Shift Bridge
@@ -110,465 +114,79 @@ The same graph should generate:
 - Relation Delta
 - Spatial Map
 - Visual Support Spec
-- Interaction Buttons
+- Interaction Button
 
-The research claim is not one support form. The claim is a reusable support-generation layer.
+즉 연구 기여는 "support 하나"가 아니라 "재사용 가능한 support-generation layer"에 있다.
 
-## 4. Research Questions
+## 4. 핵심 연구 질문
 
-Recommended primary research questions:
+권장 primary RQ:
 
-1. Can state-diff guided relation extraction produce more stable narrative edges than direct LLM relation generation?
-2. Can narrative-scope correction reduce false place/entity/state updates in fiction analysis?
-3. Can evidence-grounded graph construction improve consistency across repeated LLM runs?
-4. Can a single reader-position-aware graph generate multiple useful reader-support artifacts?
-5. Do graph-derived supports improve reader situation-model recovery compared with direct summaries or direct LLM supports?
+- validated fiction-analysis artifact에서 reader-position-aware relation graph를 안정적으로 구성할 수 있는가?
+- graph-derived support가 generic summary나 direct LLM support보다 recovery에 더 유용한가?
+- reveal timing과 scope 제약이 spoiler risk를 실제로 줄이는가?
 
-## 5. Baselines
+권장 secondary RQ:
 
-The project needs baselines to make the technical contribution visible.
+- place / time / cast / goal / relation / causal edge 중 어떤 축이 support quality에 가장 크게 기여하는가?
+- graph를 만들 때 rule-first + LLM-verify가 direct LLM generation보다 안정적인가?
 
-## 5.1 Direct LLM Support Baseline
+## 5. 제안하는 마일스톤
 
-Prompt an LLM directly:
+### M1. Evidence + Reveal Index
 
-- summarize current scene
-- explain transition from previous scene
-- generate timeline
-- generate relation card
+- paragraph / pid 기반 evidence index 구축
+- reveal timing과 reader position 제약 정의
 
-Compare against graph-derived supports.
+### M2. Canonical Scene State Ledger
 
-## 5.2 Direct LLM Relation Baseline
+- scene/subscene memory 정규화
+- place / cast / goal / relation state를 stable하게 기록
 
-Prompt an LLM:
+### M3. Narrative Relation Candidate Layer
 
-- find all scene relations
-- find causal links
-- find chapter links
+- state diff 기반 edge candidate 도출
+- place_shift / goal_shift / relation_delta / causal link 후보 생성
 
-Compare against state-diff candidate + verifier pipeline.
+### M4. Scope + Evidence Correction Loop
 
-## 5.3 No-scope-correction Baseline
+- 잘못된 edge와 unsafe edge 제거
+- confidence / support_level 정리
 
-Run graph construction without narrative scope handling.
+### M5. Reader-position-aware Narrative Graph
 
-Compare:
+- scene / chapter / thread 단위 그래프 완성
+- support branch와 연결
 
-- false actual places
-- false state updates
-- unsupported edges
+### M6. Graph-derived Support Evaluation
 
-## 5.4 No-evidence-validation Baseline
+- generic summary, direct LLM support, graph-derived support 비교
 
-Accept LLM claims without evidence checks.
+## 6. 지금 구현과의 연결
 
-Compare:
+현재 코드에서 graph 입력으로 특히 중요한 것은:
 
-- evidence support rate
-- contradiction rate
-- duplicate edge rate
-
-## 6. Evaluation Metrics
-
-## 6.1 Graph Quality
-
-- scene edge precision
-- thread event precision
-- chapter edge precision
-- duplicate entity rate
-- duplicate edge rate
-- evidence support rate
-- unsupported claim rate
-- spoiler violation rate
-
-## 6.2 Scope and Correction Quality
-
-- imagined/hypothetical place false-positive rate
-- memory vs present-state confusion rate
-- dialogue-claim-as-fact error rate
-- correction acceptance/rejection accuracy
-
-## 6.3 Consistency
-
-- trial-to-trial edge stability
-- canonical entity stability
-- thread status stability
-- support text consistency for the same graph
-
-## 6.4 Reader Support Quality
-
-- usefulness rating
-- correctness rating
-- conciseness rating
-- current-state recovery accuracy
-- transition understanding accuracy
-- time to recover context
-
-## 7. Milestones
-
-## M0. Research Framing Freeze
-
-Goal:
-
-- stop treating image generation as the main contribution
-- define the contribution around graph construction and correction
-
-Deliverables:
-
-- final system diagram
-- contribution statement
-- baseline list
-- first evaluation chapter selection
-
-Exit criteria:
-
-- the team can explain the project in one sentence without mentioning image generation first
-
-## M1. Evidence + Reveal Index
-
-Goal:
-
-- create the grounding layer used by all later graph claims
-
-Inputs:
-
-- `PRE.1`
-- `PRE.2`
-- raw chapter text
-- paragraph/text-unit IDs
-
-Deliverables:
-
-- text unit index
-- story/non-story flags
-- evidence reference format
-- reveal-order model
-
-Todo:
-
-- define `EvidenceRef`
-- define `TextUnitRef`
-- define `revealAtTextUnitId`
-- map paragraph IDs to scene/subscene IDs
-- build retrieval helper for evidence spans
-
-Exit criteria:
-
-- every stage artifact can point back to stable text units
-
-## M2. Scene State Ledger
-
-Goal:
-
-- convert existing scene and subscene artifacts into entry/exit state records
-
-Primary inputs:
-
+- `ENT.3`
+- `STATE.2`
+- `STATE.3`
 - `SCENE.1`
 - `SCENE.3`
 - `SUB.2`
 - `SUB.3`
 
-Supporting inputs:
+반대로 직접 graph canonical input으로 쓰기보다 보조적으로 보는 것이 나은 것:
 
-- `STATE.2`
-- `STATE.3`
-- `ENT.3`
-- Evidence + Reveal Index
+- `ENT.1`
+- `ENT.2`
+- `SCENE.2`
+- `SUB.4`
 
-Deliverables:
+즉, 지금 파이프라인은 버릴 것이 아니라 graph-building 이전 단계로 재해석하면 된다.
 
-- `SceneState`
-- `SituationState`
-- `SceneEntryState`
-- `SceneExitState`
+## 7. 최종 권장 방향
 
-Todo:
+가장 강한 연구 방향은 다음 한 줄로 요약된다.
 
-- define state schema
-- build state extraction/merge function
-- distinguish scene-level and subscene-level state
-- attach evidence refs
-- store confidence and source stage
+`stage output을 곧바로 support로 쓰지 말고, evidence-linked narrative relation graph로 한 번 더 정제한 뒤 support를 생성한다.`
 
-Exit criteria:
-
-- each scene has a compact, evidence-linked entry and exit state
-
-## M3. State Delta Builder
-
-Goal:
-
-- compute deterministic relation candidates from adjacent scene states
-
-Deliverables:
-
-- `StateDelta`
-- candidate edge generator
-- delta scoring
-
-Todo:
-
-- implement place delta
-- implement time delta
-- implement cast delta
-- implement goal/thread delta
-- implement relation delta candidate
-- rank deltas by salience
-
-Exit criteria:
-
-- adjacent scene pairs produce inspectable candidate edges without LLM generation
-
-## M4. Narrative Scope Layer
-
-Goal:
-
-- prevent imagined, remembered, hypothetical, or dialogue-only claims from corrupting actual story state
-
-Deliverables:
-
-- `NarrativeScope`
-- scope classifier
-- scope-aware state update rules
-
-Todo:
-
-- define scope vocabulary
-- detect actual vs memory vs imagination vs hypothetical vs dialogue claim
-- mark whether a mention affects current scene state
-- add correction rule for false place updates
-- add correction rule for claim-as-fact errors
-
-Exit criteria:
-
-- known false-place cases can be caught or downgraded before graph writing
-
-## M5. Thread Ledger
-
-Goal:
-
-- track narrative continuity through goal, conflict, mystery, relationship, and object-clue threads
-
-Deliverables:
-
-- `NarrativeThread`
-- `ThreadEvent`
-- open/resolved thread status
-
-Todo:
-
-- define thread type vocabulary
-- create thread candidate generation from `SCENE.3` and `SUB.2`
-- link thread events to scenes
-- update thread status conservatively
-- attach evidence and reveal timing
-
-Exit criteria:
-
-- the system can say which threads are open, continuing, blocked, reframed, or resolved at a scene
-
-## M6. Scene Relation Graph MVP
-
-Goal:
-
-- build the first real technical contribution layer
-
-MVP edge types:
-
-- `sequence`
-- `place_shift`
-- `time_shift`
-- `cast_shift`
-- `goal_shift`
-- `causal`
-- `enables`
-- `blocks`
-- `resolves`
-- `thread_continuation`
-- `relationship_delta`
-
-Deliverables:
-
-- scene edge schema
-- candidate edge generator
-- LLM verifier/classifier
-- correction loop
-- graph store
-
-Todo:
-
-- generate candidate edges from M3/M5
-- verify each edge one at a time
-- require evidence before save
-- reject scope violations
-- deduplicate similar edges
-- compute confidence and importance
-
-Exit criteria:
-
-- one chapter has a sparse, evidence-linked scene relation graph
-
-## M7. Chapter Relation Aggregation
-
-Goal:
-
-- derive chapter-level relations from scene edges and thread events
-
-Deliverables:
-
-- `ChapterEdge`
-- aggregation rules
-- chapter bridge summary
-
-Todo:
-
-- aggregate repeated thread continuation
-- aggregate setup/resolution links
-- aggregate callbacks
-- aggregate relation progression
-- enforce reveal timing
-
-Exit criteria:
-
-- chapter-level links can be explained through supporting scene edges
-
-## M8. First Graph-derived Supports
-
-Goal:
-
-- demonstrate that one graph can generate multiple supports
-
-First support artifacts:
-
-- Current-State Snapshot
-- Shift Bridge
-- Resume Card
-- simple Timeline
-- Relation Delta
-
-Todo:
-
-- define artifact schemas
-- generate supports from graph queries
-- keep generation short and evidence-linked
-- compare with direct LLM baseline
-
-Exit criteria:
-
-- the same graph produces at least three useful supports for one chapter
-
-## M9. Evaluation Pack
-
-Goal:
-
-- prepare evidence that the method is better than direct LLM generation
-
-Deliverables:
-
-- annotated evaluation set
-- baseline outputs
-- graph outputs
-- scoring spreadsheet or evaluation UI
-
-Todo:
-
-- select 2 to 3 chapters
-- annotate scene states
-- annotate true/false relation edges
-- annotate scope cases
-- score baseline vs graph outputs
-- measure trial consistency
-
-Exit criteria:
-
-- the project can report quantitative graph quality and qualitative support usefulness
-
-## M10. Reader-facing Integration
-
-Goal:
-
-- integrate graph-derived supports into the existing reader without turning it into a dashboard
-
-Deliverables:
-
-- support display policy
-- updated `FINAL.1`
-- reader UI support slots
-- optional visual support generator
-
-Todo:
-
-- define always-visible vs expandable vs trigger-only supports
-- make visual support optional
-- keep `SUB.4` as legacy/local support until replaced
-- run UI checks on one chapter
-
-Exit criteria:
-
-- ReaderScreen displays graph-derived support artifacts selectively
-
-## 8. Near-term Todo List
-
-Do these first:
-
-1. Freeze the revised architecture diagram without standalone VIS.
-2. Define `EvidenceRef`, `TextUnitRef`, and `RevealPosition`.
-3. Define `SceneState`, `SituationState`, and `StateDelta`.
-4. Build a script/stage that converts current `SCENE.1`, `SCENE.3`, `SUB.2`, `SUB.3` into scene state records.
-5. Implement deterministic adjacent-scene delta detection.
-6. Add `NarrativeScope` fields and correction rules for imagined/hypothetical places.
-7. Define `NarrativeThread` and `ThreadEvent`.
-8. Generate MVP scene edge candidates from state deltas and threads.
-9. Build a one-edge-at-a-time LLM verifier.
-10. Create an inspection table for scene states, deltas, threads, and edges.
-11. Generate three supports from the graph: Snapshot, Shift Bridge, Resume Card.
-12. Compare against direct LLM outputs for the same scenes.
-
-## 9. What to Avoid for Now
-
-Avoid:
-
-- optimizing image prompts
-- building a full graph viewer
-- adding many support forms at once
-- moving to Neo4j early
-- building personalization before graph quality is known
-- using LLM direct generation as the main path for every support
-
-These can come later, after the graph and correction layer works.
-
-## 10. Recommended Paper Framing
-
-Weak framing:
-
-> We use LLMs to extract story structure and generate reader support.
-
-Stronger framing:
-
-> We propose a state-diff guided, scope-aware narrative relation graph construction method for fiction reader support. The method turns validated scene and subscene artifacts into evidence-grounded, spoiler-safe graph claims, then generates multiple reader-support artifacts as graph projections.
-
-Potential title direction:
-
-- `State-Diff Guided Narrative Relation Graphs for Fiction Reader Support`
-- `Evidence-grounded Narrative Graph Construction for Situation-model Recovery`
-- `Reader-position-aware Narrative Relation Graphs for Spoiler-safe Fiction Support`
-
-## 11. Final Recommendation
-
-The next research phase should focus on this sequence:
-
-```text
-Evidence Index
-  -> Scene Entry/Exit State
-  -> State Delta
-  -> Narrative Scope
-  -> Thread Ledger
-  -> Scene Relation Graph
-  -> Graph-derived Supports
-  -> Baseline Comparison
-```
-
-This is the shortest path from the current prototype to a defensible technical contribution.
-
+이 방향이 engineering prototype을 더 강한 research contribution으로 바꿔줄 가능성이 가장 크다.

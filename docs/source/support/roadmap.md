@@ -1,241 +1,207 @@
-# Support System Roadmap
+# Support System 로드맵
 
-## 1. Purpose
+## 1. 목적
 
-This document turns the support-design discussion into an execution roadmap.
+이 문서는 support-design 논의를 실제 실행 로드맵으로 바꾸기 위한 문서다.
 
-The goal is to help the project move from:
+목표는 프로젝트를
 
-- a strong extraction pipeline
+- 구조를 잘 뽑는 extraction pipeline
 
-to:
+에서
 
-- a document-aware reader-support system
+- 문서 전역 맥락을 기억하는 reader-support system
 
-with:
+으로 발전시키는 것이다.
 
-- stable data structures
-- explicit implementation order
-- decision gates
-- evaluation milestones
+이 로드맵은 특히 다음을 분명히 하려는 목적을 가진다.
 
-This roadmap is intentionally practical.
-It focuses on what should be built next, in what order, and why.
+- 어떤 것을 먼저 구현할지
+- 어떤 구조를 먼저 안정화해야 하는지
+- 어떤 단계에서 평가로 넘어갈지
 
 ---
 
-## 2. Strategic Direction
+## 2. 전략적 방향
 
-The next stage should not be:
+다음 단계는 단순히
 
-- "add one more prompt"
-- "make images prettier"
-- "show more metadata"
+- prompt 하나 더 추가하기
+- 이미지 품질만 높이기
+- metadata를 더 많이 보여주기
 
-The next stage should be:
+가 되어서는 안 된다.
 
-1. build document-level memory
-2. derive support-ready intermediate representations
-3. generate a small number of high-value support forms
-4. choose when to show them
-5. evaluate whether they actually help reading recovery
+대신 다음 순서로 가는 편이 맞다.
 
-In short:
+1. 문서 전역 memory 구축
+2. support-ready intermediate representation 구성
+3. 소수의 고가치 support form 생성
+4. 언제 어떤 support를 보여줄지 정책화
+5. 실제 독해 복구에 도움이 되는지 평가
+
+즉 큰 흐름은 다음과 같다.
 
 `pipeline completion -> support architecture -> interface behavior -> evaluation`
 
 ---
 
-## 3. Workstreams
-
-The project can be split into six workstreams.
+## 3. 작업 흐름(Workstreams)
 
 ## 3.1 Workstream A: Data Foundation
 
-Main question:
+핵심 질문:
 
-- can the system remember story state across scenes and chapters?
+- 시스템이 장면과 챕터를 넘어서 이야기 상태를 기억할 수 있는가?
 
-Includes:
+포함 내용:
 
 - document-level memory schema
 - event graph
 - place graph
 - relation timeline
-- evidence indexing
+- evidence index
 
 ## 3.2 Workstream B: Support Generation
 
-Main question:
+핵심 질문:
 
-- can the system generate multiple useful support forms from shared structure?
+- 공유된 구조에서 여러 support form을 안정적으로 만들 수 있는가?
 
-Includes:
+포함 내용:
 
 - shared support representation
-- snapshot generation
+- snapshot 생성
 - delta chips
 - causal bridge
-- character/relation cards
+- character / relation card
 - re-entry support
 
 ## 3.3 Workstream C: VIS Repositioning
 
-Main question:
+핵심 질문:
 
-- when is visual support actually helpful, and how should it behave?
+- visual support는 언제 유용하고, 어떻게 동작해야 하는가?
 
-Includes:
+포함 내용:
 
 - usefulness scoring
 - visual metadata
-- continuity control
+- continuity 제어
 - schematic fallback
 
 ## 3.4 Workstream D: Reader UI Policy
 
-Main question:
+핵심 질문:
 
-- which support should appear by default, on hover, on click, or only on trigger?
+- 어떤 support를 기본 노출하고, 어떤 것은 hover / click / trigger-only로 둘 것인가?
 
-Includes:
+포함 내용:
 
 - support exposure rules
-- trigger definitions
-- non-overwhelming UI composition
-- integration into `FINAL.1` and `ReaderScreen`
+- trigger 정의
+- 과도하지 않은 UI 조합
+- `FINAL.1`, `ReaderScreen` 통합
 
 ## 3.5 Workstream E: Reliability and Operations
 
-Main question:
+핵심 질문:
 
-- can the system stay grounded, debuggable, and stable enough for iteration?
+- 시스템이 grounding, debugging, 반복 실행 측면에서 충분히 안정적인가?
 
-Includes:
+포함 내용:
 
 - prompt versioning
 - artifact validation
 - regression review
-- latency/cost control
+- latency / cost 제어
 - observability
 
 ## 3.6 Workstream F: Research Evaluation
 
-Main question:
+핵심 질문:
 
-- do the supports improve recovery, continuity, and re-entry?
+- support가 실제로 recovery, continuity, re-entry를 개선하는가?
 
-Includes:
+포함 내용:
 
 - offline evaluation
-- annotation tasks
-- prototype user study
-- logging and analysis
+- annotation task
+- pilot user study
+- logging / analysis
 
 ---
 
-## 4. Recommended Build Order
+## 4. 권장 구현 순서
 
-## Phase 0. Clarify decisions before implementation
+## Phase 0. 구현 전 결정 정리
 
-Deliverables:
+산출물:
 
-- freeze core support forms for first build
-- freeze doc-level memory schema
-- define support branch stage names
+- 1차 support form 범위 확정
+- doc-level memory schema 확정
+- support branch stage 이름 확정
 
-Must decide:
+우선 결정할 것:
 
-- which first support forms are in scope
-- whether support artifacts are per-run or canonicalized across runs
-- whether the reader UI should stay chapter-local initially
+- 어떤 support를 1차 범위로 볼지
+- support artifact를 run 단위로 둘지 canonical document memory로 둘지
+- reader UI를 처음에는 chapter-local로 유지할지
 
-Recommendation:
+권장 1차 범위:
 
-- first support set:
-  - current-state snapshot
-  - boundary delta chips
-  - causal bridge
-  - character focus
-  - re-entry recap
+- current-state snapshot
+- boundary delta chips
+- causal bridge
+- character focus
+- re-entry recap
 
----
+## Phase 1. 문서 전역 memory 구축
 
-## Phase 1. Build document-level memory
+우선순위:
 
-Priority:
+- 최우선
 
-- highest
+이유:
 
-Why:
+- 이후 대부분의 support는 이전 장면/사건 retrieval이 필요함
 
-- almost every future support depends on retrieval from prior scenes/events
+작업:
 
-Tasks:
+- `documents/{docId}/memory/...` 컬렉션 추가
+- scene ledger writer
+- event node writer
+- place graph writer
+- relation timeline writer
+- evidence index writer
 
-- add `documents/{docId}/memory/...` collections
-- build scene ledger writer
-- build event node writer
-- build place graph writer
-- build relation timeline writer
-- build evidence index
+완료 기준:
 
-Completion criteria:
+- 현재 scene에서 이전 place state, event, character history, relation history를 retrieval할 수 있어야 함
 
-- any scene can retrieve earlier:
-  - place state
-  - relevant event nodes
-  - active character history
-  - relation history
+## Phase 2. shared support representation 구축
 
-Main risk:
+우선순위:
 
-- overcomplicated schema before real usage
+- memory 다음으로 가장 높음
 
-Mitigation:
+이유:
 
-- start with small normalized records and append-only history
+- support form을 raw artifact에서 각각 직접 만들면 구조가 금방 흩어짐
 
----
+작업:
 
-## Phase 2. Build shared support representation
+- `SharedSupportUnit` 정의
+- scene/subscene + retrieved memory를 하나의 support context로 합치기
+- evidence와 confidence 연결
 
-Priority:
+완료 기준:
 
-- highest after memory
+- 한 scene/subscene이 UI 특정 형식에 묶이지 않은 support-ready unit으로 변환되어야 함
 
-Why:
+## Phase 3. 1차 support artifact 구축
 
-- support forms should not be generated independently from raw pipeline artifacts
-
-Tasks:
-
-- define `SharedSupportUnit`
-- merge scene/subscene/memory retrieval into one support context
-- attach evidence and confidence
-- store per scene and subscene
-
-Completion criteria:
-
-- one scene/subscene can be converted into a stable support unit without UI-specific assumptions
-
-Main risk:
-
-- making the representation too presentation-specific
-
-Mitigation:
-
-- keep it content-first, not UI-first
-
----
-
-## Phase 3. Build first-wave support artifacts
-
-Priority:
-
-- high
-
-Tasks:
+작업:
 
 - `Current-State Snapshot`
 - `Boundary Delta Chips`
@@ -243,222 +209,129 @@ Tasks:
 - `Character Focus`
 - `Reference Repair`
 
-Completion criteria:
+완료 기준:
 
-- each support type can be generated as an artifact with evidence and confidence
+- 각 support type이 evidence와 confidence를 가진 artifact로 생성되어야 함
 
-Decision gate:
+## Phase 4. support policy를 final 조립에 연결
 
-- if one support type is rarely useful or hard to ground, it should not be forced into the first release
+작업:
 
----
+- support policy layer 추가
+- `FINAL.1` 갱신
+- reader UI 노출 규칙 적용
 
-## Phase 4. Integrate support policy into final reader assembly
+트리거 예시:
 
-Priority:
+- scene boundary 진입
+- 긴 휴지 후 복귀
+- 큰 cast turnover
+- 높은 reference ambiguity
 
-- high
+완료 기준:
 
-Tasks:
+- 항상 보이는 support, 확장형 support, trigger-only support가 구분되어야 함
 
-- add support policy layer
-- update `FINAL.1` builder
-- update reader UI composition
-- add trigger handling for:
-  - boundary entry
-  - re-entry
-  - high ambiguity
-  - high spatial shift
+## Phase 5. VIS 재배치
 
-Completion criteria:
+작업:
 
-- the reader screen can show:
-  - compact always-on supports
-  - expandable supports
-  - trigger-only supports
+- usefulness score
+- visual metadata
+- place continuity memory
+- schematic fallback
+- final display policy와 연결
 
-Main risk:
+완료 기준:
 
-- turning the interface into a dashboard
+- 왜 image를 보여주는지 설명 가능해야 함
+- low-value image는 suppress 가능해야 함
 
-Mitigation:
+## Phase 6. 2차 support 확장
 
-- strict display hierarchy and exposure rules
-
----
-
-## Phase 5. Reposition VIS
-
-Priority:
-
-- medium
-
-Tasks:
-
-- add usefulness score
-- add visual support metadata
-- add place continuity memory
-- add schematic fallback
-- integrate VIS confidence into final display policy
-
-Completion criteria:
-
-- the system can justify why an image is shown
-- the system can suppress low-value images
-
----
-
-## Phase 6. Expand second-wave supports
-
-Priority:
-
-- medium
-
-Tasks:
+작업:
 
 - relation delta card
 - spatial continuity card
 - goal-problem tracker
 - evidence quote card
-- optional retrospective tools
+- retrospective 도구
 
-Completion criteria:
+## Phase 7. 평가와 실험 준비
 
-- support system can handle more than immediate state recovery
+작업:
 
----
-
-## Phase 7. Evaluation and study preparation
-
-Priority:
-
-- medium to high once first-wave supports are stable
-
-Tasks:
-
-- build offline evaluation datasets
-- build inspection screens
-- define study conditions
-- add logging
-
-Completion criteria:
-
-- the system is ready for pilot study or internal reading sessions
+- offline evaluation set 구성
+- inspection screen 보강
+- study condition 설계
+- logging 추가
 
 ---
 
-## 5. Milestones
+## 5. 마일스톤
 
-## Milestone M1: Support Memory Exists
+## M1: Support Memory Exists
 
-Meaning:
+의미:
 
-- the system can retrieve story-relevant context from earlier scenes
+- 시스템이 이전 장면의 맥락을 retrieval할 수 있음
 
-Required:
+## M2: First Useful Supports Exist
 
-- scene ledger
-- event nodes
-- causal edges
-- place records
+의미:
 
-## Milestone M2: First Useful Supports Exist
+- generic summary가 아니라 targeted support가 실제로 생성됨
 
-Meaning:
+## M3: Reader Policy Exists
 
-- the project can produce more than image or local hint text
+의미:
 
-Required:
+- 어떤 support를 언제 보여줄지 시스템이 결정할 수 있음
 
-- snapshot
-- chips
-- causal bridge
+## M4: VIS Becomes Optional but Smarter
 
-## Milestone M3: Reader Policy Exists
+의미:
 
-Meaning:
+- image가 항상 기본 답이 아니라 usefulness 기반으로 선택됨
 
-- the system knows when and how to show each support
+## M5: Evaluation Readiness
 
-Required:
+의미:
 
-- support policy artifact
-- final assembly integration
-
-## Milestone M4: VIS Becomes Optional but Smarter
-
-Meaning:
-
-- image support is no longer assumed to be universally useful
-
-Required:
-
-- usefulness score
-- continuity logic
-- fallback mode
-
-## Milestone M5: Evaluation Readiness
-
-Meaning:
-
-- the project can move from ideation to evidence
-
-Required:
-
-- evaluation set
-- logging
-- study protocol draft
+- artifact quality와 UI가 pilot study로 갈 만큼 안정화됨
 
 ---
 
-## 6. Immediate Next Tasks
+## 6. 당장 다음에 할 일
 
-If implementation starts now, the best next tasks are:
+지금 바로 구현을 시작한다면 가장 좋은 순서는 다음과 같다.
 
-1. create the doc-level memory schema and write path
-2. define `SharedSupportUnit` in `schema.ts`
-3. create a first support branch skeleton:
-   - `SUP.0 memory builder`
-   - `SUP.1 support representation`
-   - `SUP.2 snapshot`
-   - `SUP.3 delta chips`
-4. update `FINAL.1` so it can receive support artifacts
-5. postpone major VIS redesign until support branch basics are working
-
-Reason:
-
-- without memory and support representation, support forms will remain ad hoc
+1. doc-level memory schema 구현
+2. `schema.ts`에 `SharedSupportUnit` 초안 추가
+3. support branch skeleton 추가
+   - `SUP.0`
+   - `SUP.1`
+   - `SUP.2`
+   - `SUP.3`
+4. `FINAL.1`이 support artifact를 받을 수 있도록 확장
+5. VIS 대규모 재설계는 support branch 기초가 잡힌 뒤로 미루기
 
 ---
 
-## 7. What to Document Next
+## 7. 지금 단계에서 너무 일찍 하지 말아야 할 것
 
-The project should continue documentation in the following order:
-
-1. memory schema and write/update policy
-2. support branch stage specification
-3. support policy and UI exposure rules
-4. reliability and evaluation rules
-5. annotation guide for causal and support usefulness judgments
+- 거대한 global graph UI
+- 과한 personalization logic
+- support form을 한꺼번에 너무 많이 추가하는 것
+- support policy 없이 VIS prompt만 과도하게 다듬는 것
+- artifact 안정화 전에 user study로 바로 가는 것
 
 ---
 
-## 8. What Not to Do Too Early
+## 8. 최종 권장 방향
 
-Avoid these early:
+가장 중요한 전략적 결정은 다음이다.
 
-- large global graph UI
-- complicated personalization logic
-- too many support types at once
-- deep VIS prompt over-optimization before support policy exists
-- user study before artifact quality and reliability are stable
+`support generation을 SUB나 FINAL의 얇은 확장이 아니라, 별도 파이프라인 브랜치로 취급한다.`
 
----
-
-## 9. Final Recommendation
-
-The best strategic move is:
-
-`Treat support generation as a new branch of the pipeline, not as a thin extension of SUB or FINAL.`
-
-That architectural decision will make later ideation, implementation, and evaluation much cleaner.
+이 결정이 이후 구현, 문서화, 평가를 가장 깔끔하게 만든다.

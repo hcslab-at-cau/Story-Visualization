@@ -1,160 +1,156 @@
-# Reliability and Operations Plan
+# Reliability and Operations 계획
 
-## 1. Why This Matters
+## 1. 왜 중요한가
 
-As the system moves from extraction to reader support, failures become more visible.
+시스템이 extraction에서 reader support로 넘어갈수록 실패가 더 눈에 띄게 된다.
 
-A wrong mention cluster is bad.
-A wrong causal bridge shown to a reader is worse.
+잘못된 mention cluster도 문제지만,
+잘못된 causal bridge가 reader에게 직접 보이면 더 큰 문제다.
 
-So the project needs an explicit quality and operations layer for:
+그래서 support branch에는 다음을 위한 명시적인 품질/운영 계층이 필요하다.
 
 - grounding
 - debugging
-- prompt/version tracking
-- cost/latency awareness
-- regression control
-
-This document proposes that layer.
+- prompt / version 추적
+- cost / latency 관리
+- regression 제어
 
 ---
 
-## 2. Reliability Targets
+## 2. 신뢰성 목표
 
-The system should aim for:
+시스템은 다음을 목표로 해야 한다.
 
-- support claims that can be traced back to evidence
-- low hallucination in causal and relation supports
-- controlled verbosity
-- stable UI behavior across repeated runs
-- explainable suppression when support is uncertain
+- support claim을 evidence로 추적 가능
+- causal / relation support에서 hallucination 최소화
+- 과도하지 않은 길이
+- 반복 실행 시 UI 동작 안정성
+- uncertain support를 왜 숨겼는지 설명 가능
 
-The system does not need:
+반대로 필요하지 않은 것:
 
-- perfect literary interpretation
-- maximal inference depth at all times
+- 완벽한 문학 해석
+- 항상 최대 추론 깊이
 
-The goal is reader recovery, not omniscient criticism.
-
----
-
-## 3. Failure Taxonomy
-
-Support-specific failures should be tracked explicitly.
-
-## 3.1 Grounding failures
-
-Examples:
-
-- cites the wrong character
-- cites a place that was only mentioned
-- causal parent does not support current event
-
-## 3.2 Overreach failures
-
-Examples:
-
-- adds motive not grounded in text
-- claims strong relation shift from weak evidence
-- infers future importance too strongly
-
-## 3.3 Compression failures
-
-Examples:
-
-- support is too long
-- support repeats what is already visible
-- support does not emphasize the changed state
-
-## 3.4 Retrieval failures
-
-Examples:
-
-- relevant earlier event not retrieved
-- wrong earlier scene retrieved
-- stale place or relation state selected
-
-## 3.5 UI policy failures
-
-Examples:
-
-- too many supports shown at once
-- important support hidden
-- image shown when low-value
-
-## 3.6 VIS-specific failures
-
-Examples:
-
-- image suggests wrong current place
-- image is decorative but not useful
-- overlay implies unsupported character presence
+목표는 literary criticism이 아니라 reader recovery다.
 
 ---
 
-## 4. Validation Layers
+## 3. 실패 유형 정리
 
-The support system should validate at multiple layers.
+support-specific failure를 명시적으로 분류해야 한다.
 
-## 4.1 Schema validation
+### 3.1 Grounding failure
 
-Use:
+예:
 
-- zod schemas for new support artifacts
-- strict enums where possible
+- 잘못된 character를 가리킴
+- 언급만 된 place를 current place처럼 사용
+- causal parent가 실제로 현재 event를 지지하지 않음
 
-Check:
+### 3.2 Overreach failure
 
-- required fields
-- confidence range
-- evidence references exist
-- IDs resolve
+예:
 
-## 4.2 Rule validation
+- 근거 없는 motive 추가
+- 약한 evidence로 강한 relation shift 주장
+- 미래 중요도를 과하게 추론
 
-Check:
+### 3.3 Compression failure
 
-- mentioned place is not used as current place
-- causal bridges refer to linked events
-- relation delta compares against previous state
-- snapshot fields match available memory
+예:
 
-## 4.3 Prompt-output validation
+- support가 너무 김
+- 이미 보이는 내용을 반복
+- changed state를 강조하지 못함
 
-For LLM-generated supports:
+### 3.4 Retrieval failure
 
-- enforce short output shapes
-- reject unsupported fields
-- clamp or downgrade overconfident output
+예:
 
-## 4.4 UI validation
+- relevant earlier event를 못 찾음
+- 잘못된 prior scene을 가져옴
+- stale place / relation state를 선택
 
-Check:
+### 3.5 UI policy failure
 
-- support bundle size
+예:
+
+- support가 한꺼번에 너무 많이 보임
+- 중요한 support가 숨겨짐
+- low-value image가 기본 노출됨
+
+### 3.6 VIS-specific failure
+
+예:
+
+- image가 잘못된 current place를 암시
+- 보기에는 그럴듯하지만 실제 도움은 없음
+- overlay가 unsupported character presence를 암시
+
+---
+
+## 4. 검증 계층
+
+support system은 여러 층에서 검증되어야 한다.
+
+### 4.1 Schema validation
+
+사용:
+
+- 새 support artifact에 대한 zod schema
+- 가능하면 strict enum
+
+검사:
+
+- 필수 필드 존재
+- confidence 범위
+- evidence reference 존재
+- ID resolve 가능 여부
+
+### 4.2 Rule validation
+
+검사:
+
+- mentioned place가 current place로 쓰이지 않았는지
+- causal bridge가 실제 linked event를 참조하는지
+- relation delta가 previous state와 비교되었는지
+- snapshot field가 available memory와 맞는지
+
+### 4.3 Prompt-output validation
+
+LLM 생성 support에 대해:
+
+- 짧은 출력 형식 강제
+- unsupported field 제거
+- overconfident output downgrade 또는 reject
+
+### 4.4 UI validation
+
+검사:
+
+- support bundle 크기
 - priority ordering
-- no duplicate support with same message
+- 동일 메시지 중복 여부
 
 ---
 
 ## 5. Prompt Governance
 
-Prompting will become harder as support forms multiply.
+support form이 늘어나면 prompting 관리가 더 어려워진다.
 
-The project should document prompt governance early.
+### 5.1 Prompt versioning
 
-## 5.1 Prompt versioning
-
-Every support prompt should store:
+각 support prompt는 최소한 다음을 가져야 한다.
 
 - template name
 - template version
 - prompt role
 - output schema version
 
-## 5.2 Prompt categories
+### 5.2 Prompt categories
 
-Separate prompts by purpose:
+purpose에 따라 prompt를 분리한다.
 
 - extraction
 - validation
@@ -162,16 +158,16 @@ Separate prompts by purpose:
 - support compression
 - policy selection
 
-## 5.3 Prompt principles
+### 5.3 Prompt 원칙
 
-Support prompts should prefer:
+support prompt는 다음을 선호해야 한다.
 
-- short outputs
-- explicit evidence use
+- 짧은 출력
+- 명시적 evidence 사용
 - local scope
 - contrastive framing
 
-Support prompts should avoid:
+피해야 하는 것:
 
 - whole-scene retelling
 - literary commentary
@@ -181,98 +177,96 @@ Support prompts should avoid:
 
 ## 6. Observability
 
-The system should be inspectable at support level, not only pipeline level.
+support level에서도 system을 inspect할 수 있어야 한다.
 
-## 6.1 What to log
+### 6.1 무엇을 로그로 남길지
 
-For each support artifact:
+각 support artifact마다:
 
 - source run ID
-- memory retrieval inputs
-- selected candidate records
-- prompt template/version
+- memory retrieval input
+- selected candidate record
+- prompt template / version
 - output
-- validation warnings
+- validation warning
 - suppression decision
 
-## 6.2 What to inspect in UI
+### 6.2 UI에서 나중에 보고 싶은 것
 
-Add support-oriented inspectors later for:
-
-- retrieved memory nodes
+- retrieved memory node
 - causal edge path
 - place continuity chain
 - support usefulness score
 - suppression reason
 
-Current `PipelineRunner` is strong for stage inspection.
-Later, it should gain support-specific views.
+현재 `PipelineRunner`는 stage inspection에 강하다.
+앞으로는 support-specific view가 추가될 필요가 있다.
 
 ---
 
-## 7. Regression Strategy
+## 7. Regression 전략
 
-The project should build a small regression set before scaling support generation.
+support generation을 확장하기 전에 작은 regression set가 필요하다.
 
-## 7.1 Regression sample composition
+### 7.1 샘플 구성
 
-Include scenes with:
+다음 유형을 포함:
 
-- clear place shifts
-- heavy dialogue and ambiguous references
-- important causal linkage
-- recurring locations
-- relation changes
+- clear place shift
+- 긴 dialogue와 ambiguous reference
+- 중요한 causal linkage
+- recurring location
+- relation change
 - re-entry difficulty
 
-## 7.2 Expected outputs
+### 7.2 기대 출력
 
-Store human-checked expectations for:
+human-checked expectation으로 저장할 것:
 
-- snapshot fields
+- snapshot field
 - chips
-- causal bridge presence/absence
-- reference repairs
+- causal bridge 유무
+- reference repair
 - VIS usefulness
 
-## 7.3 Regression checks
+### 7.3 regression 체크
 
-On prompt or schema changes, check:
+prompt나 schema를 바꿀 때 다음을 본다.
 
-- output structure stability
-- support length
+- output 구조 안정성
+- support 길이
 - evidence integrity
-- non-duplication
+- 중복 없는지
 
 ---
 
-## 8. Cost and Latency Strategy
+## 8. Cost / Latency 전략
 
-The support branch can become expensive if every support is LLM-generated.
+모든 support를 LLM 생성으로 두면 branch가 금방 비싸진다.
 
-Recommendation:
+권장 방향:
 
-- deterministic retrieval and diff logic first
-- LLM only for compact wording or ambiguous cases
+- retrieval과 diff logic은 deterministic 우선
+- LLM은 compact wording이나 ambiguous case에만 사용
 
-Suggested budgeting:
+대략적인 배치:
 
-- `SUP.0`, `SUP.1`, `SUP.3`, `SUP.7`: no LLM by default
-- `SUP.2`, `SUP.5`, `SUP.6`: small models okay
-- `SUP.4`: stronger model only when needed
+- `SUP.0`, `SUP.1`, `SUP.3`, `SUP.7`: 기본적으로 non-LLM
+- `SUP.2`, `SUP.5`, `SUP.6`: 소형 모델 가능
+- `SUP.4`: 필요 시 stronger model
 
-Also:
+추가로:
 
-- cache support memory
-- avoid regenerating support artifacts unnecessarily when upstream content has not changed
+- support memory cache
+- upstream content가 안 바뀌면 support artifact를 재생성하지 않기
 
 ---
 
 ## 9. Human Review Workflow
 
-Before formal evaluation, internal review should be easy.
+정식 평가 전에 내부 리뷰가 쉬워야 한다.
 
-Suggested review dimensions:
+추천 리뷰 기준:
 
 - useful / not useful
 - correct / partially correct / wrong
@@ -280,33 +274,31 @@ Suggested review dimensions:
 - redundant / distinct
 - well-timed / poorly timed
 
-Suggested review artifacts:
+리뷰 시 같이 볼 것:
 
 - scene text
 - support output
-- evidence refs
-- source memory nodes
+- evidence ref
+- source memory node
 
 ---
 
-## 10. Reliability Gates Before User Study
+## 10. User Study 전 신뢰성 게이트
 
-Do not move to user study until these are true:
+다음 조건이 맞기 전에는 user study로 넘어가지 않는 것이 좋다.
 
-- support memory retrieval is stable
-- first-wave supports have evidence links
-- obvious grounding failures are rare
-- support UI is not overloaded
-- VIS usefulness suppression works at least coarsely
+- support memory retrieval이 안정적임
+- first-wave support가 evidence link를 가짐
+- 명백한 grounding failure가 드묾
+- UI가 support overload 상태가 아님
+- VIS usefulness suppression이 최소한 거칠게라도 작동함
 
 ---
 
-## 11. Final Recommendation
+## 11. 최종 권장 방향
 
-The project should treat reliability as a first-class design problem.
+이 프로젝트는 reliability를 별도 engineering detail이 아니라 핵심 설계 문제로 취급해야 한다.
 
-The most important principle is:
+가장 중요한 원칙은 다음이다.
 
-`If a support cannot be trusted enough to help, it should be shortened, downgraded, or hidden.`
-
-That is better than showing a confident but unstable scaffold.
+`도움이 되기에는 신뢰할 수 없는 support라면, 더 길게 보여주기보다 짧게 만들거나 낮추거나 숨기는 편이 낫다.`

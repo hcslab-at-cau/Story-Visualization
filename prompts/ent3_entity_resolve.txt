@@ -151,6 +151,8 @@ If the evidence is weak, leave them separate.
 ## Output Format
 
 Return ONLY valid JSON in this exact structure:
+Your entire response must start with "{" and end with "}".
+Do not write analysis such as "I'll analyze", explanations, comments, or markdown fences.
 
 {{
   "resolutions": [

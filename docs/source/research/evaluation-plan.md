@@ -1,80 +1,82 @@
-# Evaluation Plan for Reader Support
+# Reader Support 평가 계획
 
-## 1. Why Evaluation Needs to Start Early
+## 1. 왜 평가를 일찍 시작해야 하는가
 
-The project is approaching a stage where many support forms are plausible.
+프로젝트는 이제 "가능한 support form이 많아지는 단계"에 들어왔다.
 
-Without evaluation, it becomes too easy to optimize for:
+평가 없이 가면 다음에 최적화하기 쉽다.
 
 - novelty
 - visual appeal
 - prompt cleverness
 
-instead of:
+대신 정말 봐야 하는 것은
 
-- actual reading recovery
+- 실제 독해 복구에 도움이 되는가
 
-So evaluation planning should begin before all support forms are built.
+이다.
 
----
-
-## 2. Main Research Question
-
-Core question:
-
-`Which support forms help readers recover the current scene state with the least disruption?`
-
-This can be broken into smaller questions:
-
-- which forms are most useful during confusion?
-- which forms are most useful after re-entry?
-- when is image support genuinely helpful?
-- when is causal support more valuable than visual support?
-- does selective support beat one generic summary?
+그래서 모든 support form이 완성되기 전부터 평가 계획을 잡는 편이 맞다.
 
 ---
 
-## 3. Evaluation Layers
+## 2. 메인 연구 질문
 
-The project should evaluate at three layers.
+핵심 질문:
 
-## 3.1 Artifact Quality Evaluation
+`어떤 support form이 독자의 현재 scene state를 가장 적은 방해로 복구해 주는가?`
 
-Question:
+세부 질문으로 나누면:
 
-- is the support output itself grounded and useful?
-
-Judged by:
-
-- expert/internal annotators
-
-## 3.2 Interface Usefulness Evaluation
-
-Question:
-
-- does support placement/timing help during reading?
-
-Judged by:
-
-- prototype users or pilot participants
-
-## 3.3 End-Task Reading Evaluation
-
-Question:
-
-- does the system improve recovery, continuity, and re-entry?
-
-Judged by:
-
-- comprehension and recovery tasks
+- confusion 상황에서 어떤 form이 가장 유용한가?
+- re-entry 상황에서 어떤 form이 가장 유용한가?
+- image support는 언제 실제로 도움이 되는가?
+- causal support는 언제 visual support보다 가치가 큰가?
+- generic summary 하나보다 selective support가 더 나은가?
 
 ---
 
-## 4. Metrics by Layer
+## 3. 평가 층위
 
-## 4.1 Artifact quality metrics
+평가는 세 층으로 나누는 것이 좋다.
 
-For each support artifact, rate:
+### 3.1 Artifact Quality Evaluation
+
+질문:
+
+- support output 자체가 grounded하고 useful한가?
+
+평가 주체:
+
+- 내부 annotator / expert reviewer
+
+### 3.2 Interface Usefulness Evaluation
+
+질문:
+
+- support의 위치와 timing이 실제 reading 중 도움이 되는가?
+
+평가 주체:
+
+- prototype 사용자 또는 pilot 참여자
+
+### 3.3 End-Task Reading Evaluation
+
+질문:
+
+- 시스템이 recovery, continuity, re-entry를 실제로 개선하는가?
+
+평가 주체:
+
+- comprehension / recovery task 기반 평가
+
+---
+
+## 4. 층위별 지표
+
+### 4.1 Artifact quality 지표
+
+각 support artifact마다 평가:
 
 - grounding correctness
 - usefulness
@@ -82,201 +84,204 @@ For each support artifact, rate:
 - distinctiveness
 - timing appropriateness
 
-Suggested scale:
+권장 척도:
 
-- 1 to 5
+- 1 ~ 5
 
-Additional binary checks:
+추가 binary check:
 
-- wrong factual support?
-- unsupported inference?
-- redundant with another support?
+- factual error가 있는가?
+- unsupported inference인가?
+- 다른 support와 redundant한가?
 
-## 4.2 Interface-level metrics
+### 4.2 Interface-level 지표
 
-Possible measures:
+예시:
 
 - support open rate
-- time to first useful support click
+- first useful support click까지 걸린 시간
 - abandonment rate
-- support overload complaints
-- preference between support conditions
+- support overload complaint
+- support condition 선호도
 
-## 4.3 Reading outcome metrics
+### 4.3 Reading outcome 지표
 
-Possible measures:
+예시:
 
 - scene-state reconstruction accuracy
 - causal linkage recall
 - place continuity accuracy
 - character-role recovery
 - re-entry time
-- confidence in "I know what is going on now"
+- "지금 무슨 일이 벌어지고 있는지 안다"는 자기 확신 정도
 
 ---
 
-## 5. Recommended Experimental Conditions
+## 5. 권장 실험 조건
 
-Do not test too many conditions at once.
+처음부터 조건을 너무 많이 두지 않는 편이 좋다.
 
-Suggested staged comparison:
+### Study A. 최소 support 비교
 
-## Study A. Minimal support comparison
-
-Conditions:
+조건:
 
 - no support
 - generic summary
 - current-state snapshot + chips
 
-Goal:
+목표:
 
-- verify that targeted local repair beats generic summary
+- targeted local repair가 generic summary보다 나은지 확인
 
-## Study B. Modality comparison
+### Study B. modality 비교
 
-Conditions:
+조건:
 
 - text support only
 - VIS only
 - text + VIS
 
-Goal:
+목표:
 
-- determine when image helps and when it does not
+- image가 언제 도움이 되고 언제 아닌지 확인
 
-## Study C. Causal support comparison
+### Study C. causal support 비교
 
-Conditions:
+조건:
 
 - snapshot only
 - snapshot + causal bridge
 
-Goal:
+목표:
 
-- test whether explicit causal repair helps in "why did this happen?" scenes
+- "왜 이렇게 됐지?" 유형 scene에서 causal repair 효과 측정
 
-## Study D. Re-entry comparison
+### Study D. re-entry 비교
 
-Conditions:
+조건:
 
 - no recap
 - generic recap
 - re-entry recap
 
-Goal:
+목표:
 
-- test whether present-anchored re-entry support beats plain retrospective summary
-
----
-
-## 6. Scene Sampling Strategy
-
-Evaluation should not use random scenes only.
-
-Sample across failure types:
-
-- place shift scenes
-- time shift scenes
-- cast-heavy scenes
-- dialogue-heavy scenes
-- reflective scenes
-- strongly causal scenes
-- scenes with recurring location
-- scenes where image is likely low-value
-
-This matters because support usefulness is type-dependent.
+- present-anchored recap이 일반 retrospective summary보다 나은지 확인
 
 ---
 
-## 7. Annotation Tasks for Internal Evaluation
+## 6. scene sampling 전략
 
-Before user studies, create internal annotation tasks.
+평가용 scene은 무작위로만 뽑으면 안 된다.
 
-## 7.1 Support usefulness annotation
+다음 failure type을 골고루 포함해야 한다.
 
-Prompt:
+- place shift scene
+- time shift scene
+- cast-heavy scene
+- dialogue-heavy scene
+- reflective scene
+- strongly causal scene
+- recurring location scene
+- image usefulness가 낮을 가능성이 큰 scene
 
-- if a reader were confused here, would this support help them recover?
+이유:
 
-Rate:
+- support usefulness는 scene type에 따라 크게 달라지기 때문이다.
+
+---
+
+## 7. 내부 annotation task
+
+formal user study 전에 내부 annotation task를 먼저 만드는 것이 좋다.
+
+### 7.1 Support usefulness annotation
+
+질문:
+
+- 독자가 여기서 헷갈렸다면 이 support가 recovery에 도움이 되는가?
+
+평가:
 
 - useful / partly useful / not useful
 
-## 7.2 Causal validity annotation
+### 7.2 Causal validity annotation
 
-Prompt:
+질문:
 
-- does this causal bridge connect the right earlier event to the current state?
+- 이 causal bridge가 현재 상태를 설명하는 올바른 earlier event를 연결하는가?
 
-Rate:
+평가:
 
 - correct / weak / wrong
 
-## 7.3 VIS usefulness annotation
+### 7.3 VIS usefulness annotation
 
-Prompt:
+질문:
 
-- does this image help reconstruct the current scene state?
+- 이 image가 현재 scene state 복구에 도움이 되는가?
 
-Rate:
+평가:
 
 - high / medium / low / misleading
 
-## 7.4 Timing annotation
+### 7.4 Timing annotation
 
-Prompt:
+질문:
 
-- should this support be always visible, optional, or trigger-only?
+- 이 support는 always-visible, optional, trigger-only 중 어디에 두는 것이 맞는가?
 
-These annotations will help policy design later.
-
----
-
-## 8. Logging Recommendations
-
-To support evaluation later, log:
-
-- scene and subscene IDs
-- support artifacts available
-- support artifacts shown
-- user interactions with supports
-- whether user resumed after pause
-- time spent before next navigation
-
-Keep logs aligned with evaluation questions, not generic analytics only.
+이 annotation은 나중 support policy 설계에도 직접 도움을 준다.
 
 ---
 
-## 9. Success Criteria for First Prototype
+## 8. Logging 권장 사항
 
-The first support prototype can be considered promising if:
+나중 평가를 위해 최소한 다음은 로그로 남겨야 한다.
 
-- targeted supports outperform generic summary in scene-state recovery
-- causal bridge improves performance in causally difficult scenes
-- VIS is helpful in some scene types but not forced in all
-- users do not report interface overload
+- scene / subscene ID
+- available support artifact
+- 실제로 노출된 support artifact
+- user interaction with support
+- pause 후 resume 여부
+- 다음 navigation까지 걸린 시간
 
----
+중요한 점:
 
-## 10. What Not to Overclaim
-
-The system should not immediately claim:
-
-- overall reading comprehension improvement
-- literacy improvement in general
-- universal usefulness of image support
-
-The most defensible early claims are narrower:
-
-- faster current-state recovery
-- better re-entry support
-- better causal continuity recovery in selected cases
+- generic analytics가 아니라 평가 질문과 맞닿은 로그여야 한다.
 
 ---
 
-## 11. Final Recommendation
+## 9. 1차 prototype 성공 기준
 
-The project should evaluate support not by how impressive it looks, but by whether it reduces the cost of reconnecting to the story's present.
+다음 정도가 보이면 1차 prototype은 유망하다고 볼 수 있다.
 
-That should remain the central criterion across artifact design, UI design, and study design.
+- targeted support가 generic summary보다 scene-state recovery에서 더 좋음
+- causally difficult scene에서 causal bridge가 추가 이득을 줌
+- VIS는 일부 scene type에서 유의미하지만 모든 장면에서 강제되지 않음
+- 사용자들이 interface overload를 강하게 느끼지 않음
+
+---
+
+## 10. 지금 단계에서 과장하면 안 되는 주장
+
+처음부터 다음을 크게 주장하는 것은 피하는 편이 낫다.
+
+- 전반적 reading comprehension 향상
+- literacy 자체 향상
+- image support의 보편적 유용성
+
+초기 단계에서 가장 방어 가능한 주장은 더 좁다.
+
+- 현재 상태 복구 속도 개선
+- re-entry support 개선
+- 특정 유형 장면에서 causal continuity recovery 개선
+
+---
+
+## 11. 최종 권장 방향
+
+support는 "얼마나 인상적인가"보다
+"독자가 이야기의 현재에 다시 접속하는 비용을 얼마나 줄여주는가"로 평가해야 한다.
+
+이 기준이 artifact 설계, UI 설계, user study 설계를 모두 묶는 중심축이 되어야 한다.

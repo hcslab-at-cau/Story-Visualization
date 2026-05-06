@@ -1,10 +1,12 @@
 /**
  * Firebase Storage helpers for uploaded source files and generated assets.
+ *
+ * This module is server-only in practice: API routes use Firebase Admin SDK so
+ * Storage rules do not block uploads from the application backend.
  */
 
-import { getDownloadURL, ref, uploadBytes } from "firebase/storage"
-import { getStorageClient } from "./firebase"
-import { createHash } from "crypto"
+import { createHash, randomUUID } from "crypto"
+import { explainAdminCredentialError, getAdminStorageBucket } from "./firebase-admin"
 
 export interface StoredSourceFile {
   bucket: string
@@ -19,38 +21,14 @@ export interface StoredGeneratedImage extends StoredSourceFile {
   downloadUrl: string
 }
 
+const CURRENT_STORAGE_PREFIX = "documents_v2"
+
 function sanitizeFileName(fileName: string): string {
   const cleaned = fileName
     .trim()
     .replace(/[^\w.\-]+/g, "_")
     .replace(/_+/g, "_")
   return cleaned || "original.epub"
-}
-
-export async function uploadSourceEpub(
-  docId: string,
-  fileName: string,
-  buffer: Buffer,
-  contentType = "application/epub+zip",
-): Promise<StoredSourceFile> {
-  const storage = getStorageClient()
-  const bucket = process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET ?? "story-visualization-cb0e2.firebasestorage.app"
-  const safeName = sanitizeFileName(fileName)
-  const storagePath = `documents/${docId}/source/${safeName}`
-  const storageRef = ref(storage, storagePath)
-
-  await uploadBytes(storageRef, new Uint8Array(buffer), {
-    contentType,
-  })
-
-  return {
-    bucket,
-    storagePath,
-    gsUri: `gs://${bucket}/${storagePath}`,
-    fileName,
-    contentType,
-    sizeBytes: buffer.byteLength,
-  }
 }
 
 function sanitizePathSegment(value: string, fallback: string): string {
@@ -62,6 +40,74 @@ function sanitizePathSegment(value: string, fallback: string): string {
   return cleaned || fallback
 }
 
+async function withStorageErrorContext<T>(operation: () => Promise<T>): Promise<T> {
+  try {
+    return await operation()
+  } catch (error) {
+    throw explainAdminCredentialError(error)
+  }
+}
+
+function bucketName(): string {
+  return (
+    process.env.FIREBASE_STORAGE_BUCKET ??
+    process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET ??
+    "story-visualization-cb0e2.firebasestorage.app"
+  )
+}
+
+async function saveBuffer(params: {
+  storagePath: string
+  buffer: Buffer
+  contentType: string
+  downloadToken?: string
+}): Promise<void> {
+  const bucket = getAdminStorageBucket()
+  const file = bucket.file(params.storagePath)
+  const metadata: Record<string, unknown> = {
+    contentType: params.contentType,
+  }
+  if (params.downloadToken) {
+    metadata.metadata = { firebaseStorageDownloadTokens: params.downloadToken }
+  }
+
+  await file.save(params.buffer, {
+    resumable: false,
+    metadata,
+  })
+}
+
+function firebaseDownloadUrl(storagePath: string, token: string): string {
+  return `https://firebasestorage.googleapis.com/v0/b/${encodeURIComponent(bucketName())}/o/${encodeURIComponent(storagePath)}?alt=media&token=${encodeURIComponent(token)}`
+}
+
+export async function uploadSourceEpub(
+  docId: string,
+  fileName: string,
+  buffer: Buffer,
+  contentType = "application/epub+zip",
+): Promise<StoredSourceFile> {
+  return withStorageErrorContext(async () => {
+    const safeName = sanitizeFileName(fileName)
+    const storagePath = `${CURRENT_STORAGE_PREFIX}/${docId}/source/${safeName}`
+
+    await saveBuffer({
+      storagePath,
+      buffer,
+      contentType,
+    })
+
+    return {
+      bucket: bucketName(),
+      storagePath,
+      gsUri: `gs://${bucketName()}/${storagePath}`,
+      fileName,
+      contentType,
+      sizeBytes: buffer.byteLength,
+    }
+  })
+}
+
 export async function uploadGeneratedImage(params: {
   docId: string
   chapterId: string
@@ -71,43 +117,44 @@ export async function uploadGeneratedImage(params: {
   contentType?: string
   fileExtension?: string
 }): Promise<StoredGeneratedImage> {
-  const storage = getStorageClient()
-  const bucket =
-    process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET ??
-    "story-visualization-cb0e2.firebasestorage.app"
-  const safeSceneId = sanitizePathSegment(params.sceneId, "scene")
-  const fileExtension = (params.fileExtension ?? "png").replace(/^\./, "") || "png"
-  const contentHash = createHash("sha256")
-    .update(params.buffer)
-    .digest("hex")
-    .slice(0, 16)
-  const fileName = `${safeSceneId}__${contentHash}.${fileExtension}`
-  const storagePath = [
-    "documents",
-    params.docId,
-    "chapters",
-    params.chapterId,
-    "assets",
-    "vis4",
-    safeSceneId,
-    fileName,
-  ].join("/")
-  const storageRef = ref(storage, storagePath)
-  const contentType = params.contentType ?? "image/png"
+  return withStorageErrorContext(async () => {
+    const safeSceneId = sanitizePathSegment(params.sceneId, "scene")
+    const fileExtension = (params.fileExtension ?? "png").replace(/^\./, "") || "png"
+    const contentHash = createHash("sha256")
+      .update(params.buffer)
+      .digest("hex")
+      .slice(0, 16)
+    const fileName = `${safeSceneId}__${contentHash}.${fileExtension}`
+    const storagePath = [
+      CURRENT_STORAGE_PREFIX,
+      params.docId,
+      "chapters",
+      params.chapterId,
+      "assets",
+      "vis4",
+      safeSceneId,
+      fileName,
+    ].join("/")
+    const contentType = params.contentType ?? "image/png"
+    const downloadToken = randomUUID()
 
-  await uploadBytes(storageRef, new Uint8Array(params.buffer), {
-    contentType,
+    await saveBuffer({
+      storagePath,
+      buffer: params.buffer,
+      contentType,
+      downloadToken,
+    })
+
+    const downloadUrl = firebaseDownloadUrl(storagePath, downloadToken)
+
+    return {
+      bucket: bucketName(),
+      storagePath,
+      gsUri: `gs://${bucketName()}/${storagePath}`,
+      fileName,
+      contentType,
+      sizeBytes: params.buffer.byteLength,
+      downloadUrl,
+    }
   })
-
-  const downloadUrl = await getDownloadURL(storageRef)
-
-  return {
-    bucket,
-    storagePath,
-    gsUri: `gs://${bucket}/${storagePath}`,
-    fileName,
-    contentType,
-    sizeBytes: params.buffer.byteLength,
-    downloadUrl,
-  }
 }
