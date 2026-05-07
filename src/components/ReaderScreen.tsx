@@ -8,6 +8,13 @@
 
 import { useEffect, useRef, useState, type ReactNode } from "react"
 import type {
+  BookEntityThread,
+  BookMemoryEdge,
+  BookMemoryEdgeType,
+  BookMemorySceneRef,
+  BookMemorySnapshot,
+} from "@/types/book-memory"
+import type {
   CompactHint,
   OverlayCharacter,
   OverlayRefinementCharacter,
@@ -239,6 +246,329 @@ const SUPPORT_KIND_LABEL: Record<string, string> = {
   visual_context: "Cues",
 }
 
+const MEMORY_EDGE_LABEL: Record<BookMemoryEdgeType, string> = {
+  chapter_sequence: "Sequence",
+  cross_chapter_character_thread: "Cast thread",
+  cross_chapter_same_place: "Same place",
+  cross_chapter_place_shift: "Place shift",
+  cross_chapter_causal_bridge: "Causal bridge",
+  entity_reappearance: "Reappearance",
+}
+
+const MEMORY_EDGE_STYLE: Record<BookMemoryEdgeType, string> = {
+  chapter_sequence: "border-zinc-200 bg-zinc-50 text-zinc-700",
+  cross_chapter_character_thread: "border-amber-200 bg-amber-50 text-amber-800",
+  cross_chapter_same_place: "border-emerald-200 bg-emerald-50 text-emerald-800",
+  cross_chapter_place_shift: "border-cyan-200 bg-cyan-50 text-cyan-800",
+  cross_chapter_causal_bridge: "border-rose-200 bg-rose-50 text-rose-800",
+  entity_reappearance: "border-sky-200 bg-sky-50 text-sky-800",
+}
+
+type MemoryTab = "bridges" | "threads" | "path"
+
+interface ReaderMemoryContext {
+  sceneKey: string
+  sceneRef?: BookMemorySceneRef
+  chapterRunId?: string
+  runMatchesBookMemory: boolean
+  incomingEdges: BookMemoryEdge[]
+  outgoingEdges: BookMemoryEdge[]
+  threads: Array<{
+    thread: BookEntityThread
+    currentOccurrence?: BookEntityThread["occurrences"][number]
+    firstSceneMatch: boolean
+  }>
+  nearbyScenes: BookMemorySceneRef[]
+}
+
+function sceneKeyFor(chapterId: string, sceneId: string): string {
+  return `${chapterId}:${sceneId}`
+}
+
+function sortBookScenes(scenes: BookMemorySceneRef[]): BookMemorySceneRef[] {
+  return [...scenes].sort((a, b) => {
+    if (a.chapterIndex !== b.chapterIndex) return a.chapterIndex - b.chapterIndex
+    if (a.startPid !== b.startPid) return a.startPid - b.startPid
+    return a.sceneId.localeCompare(b.sceneId)
+  })
+}
+
+function sortMemoryEdges(edges: BookMemoryEdge[]): BookMemoryEdge[] {
+  const priority: Record<BookMemoryEdgeType, number> = {
+    cross_chapter_causal_bridge: 0,
+    cross_chapter_place_shift: 1,
+    cross_chapter_same_place: 2,
+    cross_chapter_character_thread: 3,
+    entity_reappearance: 4,
+    chapter_sequence: 5,
+  }
+  return [...edges].sort((a, b) => {
+    const priorityDelta = priority[a.type] - priority[b.type]
+    if (priorityDelta !== 0) return priorityDelta
+    return b.weight - a.weight
+  })
+}
+
+function buildReaderMemoryContext(
+  bookMemory: BookMemorySnapshot | undefined,
+  final1: SceneReaderPackageLog,
+  packet: SceneReaderPacket,
+  readerRunId: string,
+): ReaderMemoryContext | null {
+  if (!bookMemory) return null
+
+  const sceneKey = sceneKeyFor(final1.chapter_id, packet.scene_id)
+  const sceneMap = new Map(bookMemory.sceneRefs.map((scene) => [scene.sceneKey, scene]))
+  const orderedScenes = sortBookScenes(bookMemory.sceneRefs)
+  const sceneIndex = orderedScenes.findIndex((scene) => scene.sceneKey === sceneKey)
+  const nearbyScenes = sceneIndex >= 0
+    ? orderedScenes.slice(Math.max(0, sceneIndex - 1), Math.min(orderedScenes.length, sceneIndex + 2))
+    : []
+  const chapterRunId = bookMemory.chapterRunIds[final1.chapter_id]
+
+  const threads = bookMemory.entityThreads
+    .map((thread) => {
+      const currentOccurrence = thread.occurrences.find(
+        (occurrence) => occurrence.chapterId === final1.chapter_id,
+      )
+      if (!currentOccurrence) return null
+      return {
+        thread,
+        currentOccurrence,
+        firstSceneMatch: currentOccurrence.firstSceneKey === sceneKey,
+      }
+    })
+    .filter((item): item is NonNullable<typeof item> => Boolean(item))
+    .sort((a, b) => {
+      if (a.firstSceneMatch !== b.firstSceneMatch) return a.firstSceneMatch ? -1 : 1
+      return b.thread.totalMentions - a.thread.totalMentions
+    })
+
+  return {
+    sceneKey,
+    sceneRef: sceneMap.get(sceneKey),
+    chapterRunId,
+    runMatchesBookMemory: !chapterRunId || chapterRunId === readerRunId,
+    incomingEdges: sortMemoryEdges(bookMemory.edges.filter((edge) => edge.toSceneKey === sceneKey)),
+    outgoingEdges: sortMemoryEdges(bookMemory.edges.filter((edge) => edge.fromSceneKey === sceneKey)),
+    threads,
+    nearbyScenes,
+  }
+}
+
+function compactSceneLabel(scene: BookMemorySceneRef | undefined, fallbackKey: string): string {
+  if (!scene) return fallbackKey
+  return `${scene.chapterTitle} / ${scene.sceneTitle || scene.sceneId}`
+}
+
+function MemoryEdgeCard({
+  edge,
+  direction,
+  sceneMap,
+}: {
+  edge: BookMemoryEdge
+  direction: "incoming" | "outgoing"
+  sceneMap: Map<string, BookMemorySceneRef>
+}) {
+  const otherSceneKey = direction === "incoming" ? edge.fromSceneKey : edge.toSceneKey
+  const otherScene = sceneMap.get(otherSceneKey)
+  const directionLabel = direction === "incoming" ? "이전 연결" : "다음 연결"
+
+  return (
+    <article className="rounded-xl border border-zinc-200 bg-white px-4 py-3 shadow-sm">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className={`rounded-full border px-2 py-0.5 text-[11px] font-semibold ${MEMORY_EDGE_STYLE[edge.type]}`}>
+          {MEMORY_EDGE_LABEL[edge.type]}
+        </span>
+        <span className="text-[11px] font-medium text-zinc-400">{directionLabel}</span>
+      </div>
+      <p className="mt-2 text-sm leading-6 text-zinc-700">{edge.label}</p>
+      <p className="mt-2 truncate text-xs text-zinc-400">
+        {direction === "incoming" ? "from " : "to "}
+        {compactSceneLabel(otherScene, otherSceneKey)}
+      </p>
+      {edge.evidence.length > 0 && (
+        <p className="mt-1 text-[11px] text-zinc-400">evidence {edge.evidence.length}</p>
+      )}
+    </article>
+  )
+}
+
+function ThreadChip({
+  item,
+}: {
+  item: ReaderMemoryContext["threads"][number]
+}) {
+  return (
+    <div className={`rounded-xl border px-3 py-2 ${
+      item.firstSceneMatch
+        ? "border-sky-200 bg-sky-50"
+        : "border-zinc-200 bg-white"
+    }`}>
+      <div className="flex items-center justify-between gap-3">
+        <p className="truncate text-sm font-semibold text-zinc-800">{item.thread.canonicalName}</p>
+        <span className="shrink-0 rounded-full bg-zinc-100 px-2 py-0.5 text-[11px] text-zinc-500">
+          {item.thread.chapters.length} ch
+        </span>
+      </div>
+      <p className="mt-1 text-xs text-zinc-500">
+        {item.thread.mentionType} / mentions {item.thread.totalMentions}
+      </p>
+      {item.firstSceneMatch && (
+        <p className="mt-1 text-[11px] font-medium text-sky-700">이 장면에서 다시 등장</p>
+      )}
+    </div>
+  )
+}
+
+function CrossChapterMemoryPanel({
+  bookMemory,
+  context,
+  activeTab,
+  onTabChange,
+}: {
+  bookMemory?: BookMemorySnapshot
+  context: ReaderMemoryContext | null
+  activeTab: MemoryTab
+  onTabChange: (tab: MemoryTab) => void
+}) {
+  if (!bookMemory) {
+    return (
+      <div className="rounded-xl border border-dashed border-zinc-300 bg-white px-4 py-4 text-sm text-zinc-500">
+        Cross-chapter memory가 아직 로드되지 않았습니다. Graph 탭에서 BOOK.0을 만든 뒤 다시 확인하세요.
+      </div>
+    )
+  }
+
+  if (!context) return null
+
+  const sceneMap = new Map(bookMemory.sceneRefs.map((scene) => [scene.sceneKey, scene]))
+  const bridgeEdges = [...context.incomingEdges, ...context.outgoingEdges]
+  const tabs: Array<{ key: MemoryTab; label: string; count: number }> = [
+    { key: "bridges", label: "Bridges", count: bridgeEdges.length },
+    { key: "threads", label: "Threads", count: context.threads.length },
+    { key: "path", label: "Path", count: context.nearbyScenes.length },
+  ]
+
+  return (
+    <section className="overflow-hidden rounded-2xl border border-zinc-200 bg-gradient-to-br from-stone-50 via-white to-sky-50 shadow-sm">
+      <div className="border-b border-zinc-200 px-4 py-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">Cross-chapter Memory</p>
+            <h3 className="mt-1 text-base font-semibold text-zinc-900">
+              {context.sceneRef?.sceneTitle ?? context.sceneKey}
+            </h3>
+          </div>
+          <span className="rounded-full bg-white px-2.5 py-1 text-[11px] text-zinc-500 shadow-sm">
+            BOOK.0
+          </span>
+        </div>
+        {!context.runMatchesBookMemory && context.chapterRunId && (
+          <p className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+            현재 Reader run과 BOOK.0에 사용된 run이 다릅니다. BOOK.0 run: {context.chapterRunId}
+          </p>
+        )}
+      </div>
+
+      <div className="flex gap-1 border-b border-zinc-200 bg-white/70 px-3 py-2">
+        {tabs.map((tab) => (
+          <button
+            key={tab.key}
+            type="button"
+            onClick={() => onTabChange(tab.key)}
+            className={`rounded-full px-3 py-1.5 text-xs font-medium transition-colors ${
+              activeTab === tab.key
+                ? "bg-zinc-900 text-white"
+                : "text-zinc-500 hover:bg-white hover:text-zinc-800"
+            }`}
+          >
+            {tab.label} {tab.count}
+          </button>
+        ))}
+      </div>
+
+      <div className="p-4">
+        {activeTab === "bridges" && (
+          <div className="grid gap-3">
+            {context.incomingEdges.map((edge) => (
+              <MemoryEdgeCard
+                key={edge.edgeId}
+                edge={edge}
+                direction="incoming"
+                sceneMap={sceneMap}
+              />
+            ))}
+            {context.outgoingEdges.map((edge) => (
+              <MemoryEdgeCard
+                key={edge.edgeId}
+                edge={edge}
+                direction="outgoing"
+                sceneMap={sceneMap}
+              />
+            ))}
+            {bridgeEdges.length === 0 && (
+              <p className="rounded-xl border border-dashed border-zinc-300 bg-white px-4 py-5 text-sm text-zinc-500">
+                이 scene에 직접 연결된 cross-chapter edge는 아직 없습니다.
+              </p>
+            )}
+          </div>
+        )}
+
+        {activeTab === "threads" && (
+          <div className="grid gap-2 sm:grid-cols-2">
+            {context.threads.slice(0, 10).map((item) => (
+              <ThreadChip key={item.thread.threadId} item={item} />
+            ))}
+            {context.threads.length === 0 && (
+              <p className="rounded-xl border border-dashed border-zinc-300 bg-white px-4 py-5 text-sm text-zinc-500 sm:col-span-2">
+                현재 챕터와 연결된 반복 entity thread가 없습니다.
+              </p>
+            )}
+          </div>
+        )}
+
+        {activeTab === "path" && (
+          <div className="grid gap-2">
+            {context.nearbyScenes.map((scene) => {
+              const active = scene.sceneKey === context.sceneKey
+              return (
+                <div
+                  key={scene.sceneKey}
+                  className={`rounded-xl border px-4 py-3 ${
+                    active
+                      ? "border-zinc-900 bg-zinc-900 text-white"
+                      : "border-zinc-200 bg-white text-zinc-700"
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="truncate text-sm font-semibold">{scene.sceneTitle || scene.sceneId}</p>
+                    <span className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] ${
+                      active ? "bg-white/15 text-white" : "bg-zinc-100 text-zinc-500"
+                    }`}>
+                      {active ? "current" : scene.chapterTitle}
+                    </span>
+                  </div>
+                  <p className={`mt-1 line-clamp-2 text-xs leading-5 ${
+                    active ? "text-zinc-200" : "text-zinc-500"
+                  }`}>
+                    {scene.summary}
+                  </p>
+                </div>
+              )
+            })}
+            {context.nearbyScenes.length === 0 && (
+              <p className="rounded-xl border border-dashed border-zinc-300 bg-white px-4 py-5 text-sm text-zinc-500">
+                현재 scene을 BOOK.0 scene path에서 찾지 못했습니다.
+              </p>
+            )}
+          </div>
+        )}
+      </div>
+    </section>
+  )
+}
+
 function SupportUnitCard({
   unit,
   compact = false,
@@ -380,13 +710,16 @@ function resolveFocusContext(params: {
 interface Props {
   final1: SceneReaderPackageLog
   final2?: OverlayRefinementResult
+  bookMemory?: BookMemorySnapshot
+  readerRunId: string
   topControls?: ReactNode
 }
 
-export default function ReaderScreen({ final1, final2, topControls }: Props) {
+export default function ReaderScreen({ final1, final2, bookMemory, readerRunId, topControls }: Props) {
   const [sceneIdx, setSceneIdx] = useState(0)
   const [subsceneIdx, setSubsceneIdx] = useState(0)
   const [activePanel, setActivePanel] = useState<string | null>(null)
+  const [activeMemoryTab, setActiveMemoryTab] = useState<MemoryTab>("bridges")
   const [showSceneSummary, setShowSceneSummary] = useState(false)
   const [selectedCharacterIds, setSelectedCharacterIds] = useState<string[]>([])
   const imageFrameRef = useRef<HTMLDivElement | null>(null)
@@ -416,6 +749,9 @@ export default function ReaderScreen({ final1, final2, topControls }: Props) {
   const supportBeforeText = packet.support?.display_slots.before_text ?? []
   const supportBesideVisual = packet.support?.display_slots.beside_visual ?? []
   const supportOnDemand = packet.support?.display_slots.on_demand ?? []
+  const readerMemoryContext = packet
+    ? buildReaderMemoryContext(bookMemory, final1, packet, readerRunId)
+    : null
 
   const activeImageKey = packet?.visual.image_path ? `${packet.scene_id}:${packet.visual.image_path}` : ""
   const metricsForActiveImage =
@@ -708,6 +1044,13 @@ export default function ReaderScreen({ final1, final2, topControls }: Props) {
               </div>
             )}
           </div>
+
+          <CrossChapterMemoryPanel
+            bookMemory={bookMemory}
+            context={readerMemoryContext}
+            activeTab={activeMemoryTab}
+            onTabChange={setActiveMemoryTab}
+          />
 
           {subsceneView && (
             <div className="flex flex-col gap-4 rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">

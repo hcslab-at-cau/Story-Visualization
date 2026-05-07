@@ -10,6 +10,7 @@ import ReaderScreen from "@/components/ReaderScreen"
 import {
   deleteRun,
   listRuns,
+  loadBookMemory,
   loadStageResult,
   setRunFavorite,
   stageKey,
@@ -17,6 +18,7 @@ import {
   type RunMeta,
 } from "@/lib/client-data"
 import { createTimestampRunId } from "@/lib/run-id"
+import type { BookMemorySnapshot } from "@/types/book-memory"
 import type { OverlayRefinementResult, SceneReaderPackageLog } from "@/types/schema"
 import type { ChapterMeta } from "@/types/ui"
 
@@ -695,6 +697,8 @@ function ReaderView({
 }) {
   const [final1, setFinal1] = useState<SceneReaderPackageLog | null>(null)
   const [final2, setFinal2] = useState<OverlayRefinementResult | null>(null)
+  const [bookMemory, setBookMemory] = useState<BookMemorySnapshot | null>(null)
+  const [readerRunId, setReaderRunId] = useState("")
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -703,20 +707,40 @@ function ReaderView({
       setLoading(true)
       setError(null)
       try {
-        const [loadedFinal1, loadedFinal2] = await Promise.all([
-          loadStageResult<SceneReaderPackageLog>(docId, chapterId, runId, stageKey("FINAL.1"), source),
-          loadStageResult<OverlayRefinementResult>(docId, chapterId, runId, stageKey("FINAL.2"), source),
+        const loadedBookMemory = source === "legacy"
+          ? null
+          : await loadBookMemory(docId).catch(() => null)
+        const memoryRunId = loadedBookMemory?.chapterRunIds[chapterId]
+        const primaryRunId = memoryRunId ?? runId
+        let [loadedFinal1, loadedFinal2] = await Promise.all([
+          loadStageResult<SceneReaderPackageLog>(docId, chapterId, primaryRunId, stageKey("FINAL.1"), source),
+          loadStageResult<OverlayRefinementResult>(docId, chapterId, primaryRunId, stageKey("FINAL.2"), source),
         ])
+        let effectiveReaderRunId = primaryRunId
+
+        if (!loadedFinal1 && primaryRunId !== runId) {
+          const fallback = await Promise.all([
+            loadStageResult<SceneReaderPackageLog>(docId, chapterId, runId, stageKey("FINAL.1"), source),
+            loadStageResult<OverlayRefinementResult>(docId, chapterId, runId, stageKey("FINAL.2"), source),
+          ])
+          loadedFinal1 = fallback[0]
+          loadedFinal2 = fallback[1]
+          effectiveReaderRunId = runId
+        }
 
         if (!loadedFinal1 && !loadedFinal2) {
           setFinal1(null)
           setFinal2(null)
+          setBookMemory(loadedBookMemory)
+          setReaderRunId(effectiveReaderRunId)
           setError(null)
           return
         }
 
         setFinal1(loadedFinal1)
         setFinal2(loadedFinal2)
+        setBookMemory(loadedBookMemory)
+        setReaderRunId(effectiveReaderRunId)
       } catch (loadError: unknown) {
         setError(getErrorMessage(loadError))
       } finally {
@@ -731,6 +755,8 @@ function ReaderView({
 
     setFinal1(null)
     setFinal2(null)
+    setBookMemory(null)
+    setReaderRunId("")
     setLoading(false)
     setError(null)
   }, [docId, chapterId, runId, source])
@@ -807,6 +833,8 @@ function ReaderView({
     <ReaderScreen
       final1={final1}
       final2={final2 ?? undefined}
+      bookMemory={bookMemory ?? undefined}
+      readerRunId={readerRunId || runId}
       topControls={(
         <>
           <ReaderChapterControl
