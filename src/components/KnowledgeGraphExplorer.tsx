@@ -1,6 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useState } from "react"
+import { useUiStrings } from "@/components/LanguageProvider"
 import {
   loadKnowledgeGraph,
   rebuildKnowledgeGraph,
@@ -12,16 +13,6 @@ import type {
   KnowledgeGraphQueryResult,
 } from "@/types/graph"
 
-const NODE_KIND_OPTIONS: Array<{ value: KnowledgeGraphNodeKind | "all"; label: string }> = [
-  { value: "all", label: "All nodes" },
-  { value: "scene", label: "Scenes" },
-  { value: "event", label: "Events" },
-  { value: "character", label: "Characters" },
-  { value: "place", label: "Places" },
-  { value: "entity", label: "Entities" },
-  { value: "mention", label: "Mentions" },
-]
-
 const NODE_KIND_CLASS: Record<KnowledgeGraphNodeKind, string> = {
   scene: "border-sky-200 bg-sky-50 text-sky-800",
   event: "border-emerald-200 bg-emerald-50 text-emerald-800",
@@ -31,11 +22,14 @@ const NODE_KIND_CLASS: Record<KnowledgeGraphNodeKind, string> = {
   mention: "border-fuchsia-200 bg-fuchsia-50 text-fuchsia-800",
 }
 
-function nodeSummary(node: KnowledgeGraphNode): string {
+function nodeSummary(
+  node: KnowledgeGraphNode,
+  labels: { scene: string; event: string; entity: string },
+): string {
   const pieces = [
-    node.sceneId ? `scene ${node.sceneId}` : "",
-    node.eventId ? `event ${node.eventId}` : "",
-    node.entityId ? `entity ${node.entityId}` : "",
+    node.sceneId ? `${labels.scene} ${node.sceneId}` : "",
+    node.eventId ? `${labels.event} ${node.eventId}` : "",
+    node.entityId ? `${labels.entity} ${node.entityId}` : "",
   ].filter(Boolean)
   return pieces.join(" · ") || node.localId
 }
@@ -54,6 +48,7 @@ export default function KnowledgeGraphExplorer({
   chapterId: string
   runId: string
 }) {
+  const { t } = useUiStrings()
   const [queryText, setQueryText] = useState("")
   const [kind, setKind] = useState<KnowledgeGraphNodeKind | "all">("all")
   const [depth, setDepth] = useState(1)
@@ -63,6 +58,15 @@ export default function KnowledgeGraphExplorer({
   const [rebuilding, setRebuilding] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
+  const nodeKindOptions: Array<{ value: KnowledgeGraphNodeKind | "all"; label: string }> = [
+    { value: "all", label: t.graphExplorer.allNodes },
+    { value: "scene", label: t.graphExplorer.scenes },
+    { value: "event", label: t.graphExplorer.events },
+    { value: "character", label: t.graphExplorer.characters },
+    { value: "place", label: t.graphExplorer.places },
+    { value: "entity", label: t.graphExplorer.entities },
+    { value: "mention", label: t.graphExplorer.mentions },
+  ]
 
   const loadGraph = useCallback(async (nextSelectedNodeId = selectedNodeId) => {
     if (!docId || !chapterId || !runId) return
@@ -104,7 +108,10 @@ export default function KnowledgeGraphExplorer({
     try {
       const result = await rebuildKnowledgeGraph(docId, chapterId, runId)
       setNotice(
-        `Projected ${result.nodes} nodes and ${result.edges} edges from ${result.projectedStages.join(", ") || "no graph stages"}.`,
+        t.graphExplorer.projected
+          .replace("{nodes}", String(result.nodes))
+          .replace("{edges}", String(result.edges))
+          .replace("{stages}", result.projectedStages.join(", ") || t.graphExplorer.noGraphStages),
       )
       setSelectedNodeId(null)
       await loadGraph(null)
@@ -126,22 +133,25 @@ export default function KnowledgeGraphExplorer({
     <section className="flex min-h-0 flex-col gap-5 rounded-2xl border border-zinc-200 bg-white p-5">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">Knowledge Graph</p>
-          <h2 className="mt-1 text-xl font-semibold text-zinc-900">Queryable graph projection</h2>
+          <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">{t.graphExplorer.eyebrow}</p>
+          <h2 className="mt-1 text-xl font-semibold text-zinc-900">{t.graphExplorer.title}</h2>
           <p className="mt-2 max-w-3xl text-sm leading-6 text-zinc-500">
+            {t.graphExplorer.description}
+          </p>
+          <p className="hidden" aria-hidden="true">
             SUP.0/ENT.3 artifact를 node와 edge로 투영해 현재 run 기준으로 검색하고, 선택 node의 주변 hop을 확인합니다.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2 text-xs text-zinc-500">
-          <span className="rounded-full bg-zinc-100 px-3 py-1">nodes {graph?.totalNodes ?? 0}</span>
-          <span className="rounded-full bg-zinc-100 px-3 py-1">edges {graph?.totalEdges ?? 0}</span>
+          <span className="rounded-full bg-zinc-100 px-3 py-1">{t.common.nodes} {graph?.totalNodes ?? 0}</span>
+          <span className="rounded-full bg-zinc-100 px-3 py-1">{t.common.edges} {graph?.totalEdges ?? 0}</span>
           <button
             type="button"
             onClick={() => void handleRebuild()}
             disabled={rebuilding || loading || !runId}
             className="rounded-lg border border-zinc-200 bg-white px-3 py-1.5 font-medium text-zinc-700 hover:bg-zinc-50 disabled:opacity-40"
           >
-            {rebuilding ? "Rebuilding..." : "Rebuild Projection"}
+            {rebuilding ? t.graphExplorer.rebuilding : t.graphExplorer.rebuild}
           </button>
         </div>
       </div>
@@ -153,7 +163,7 @@ export default function KnowledgeGraphExplorer({
             setQueryText(event.target.value)
             setSelectedNodeId(null)
           }}
-          placeholder="Search character, place, scene, event..."
+          placeholder={t.graphExplorer.placeholder}
           className="rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-700"
         />
         <select
@@ -164,7 +174,7 @@ export default function KnowledgeGraphExplorer({
           }}
           className="rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-700"
         >
-          {NODE_KIND_OPTIONS.map((option) => (
+          {nodeKindOptions.map((option) => (
             <option key={option.value} value={option.value}>{option.label}</option>
           ))}
         </select>
@@ -187,7 +197,7 @@ export default function KnowledgeGraphExplorer({
           disabled={loading || !runId}
           className="rounded-xl bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-700 disabled:opacity-40"
         >
-          {loading ? "Loading..." : "Search"}
+          {loading ? t.common.loading : t.common.search}
         </button>
       </div>
 
@@ -195,14 +205,14 @@ export default function KnowledgeGraphExplorer({
       {error && <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">{error}</div>}
       {!loading && graph && graph.totalNodes === 0 && (
         <div className="rounded-xl border border-dashed border-zinc-300 px-4 py-6 text-sm text-zinc-500">
-          No graph projection found. Run ENT.3/SUP.0 or click Rebuild Projection after those stages exist.
+          {t.graphExplorer.noProjection}
         </div>
       )}
 
       <div className="grid min-h-[560px] gap-5 xl:grid-cols-[minmax(320px,0.85fr)_minmax(0,1.15fr)]">
         <div className="min-h-0 overflow-hidden rounded-xl border border-zinc-200">
           <div className="border-b border-zinc-200 bg-zinc-50 px-4 py-3">
-            <p className="text-sm font-semibold text-zinc-800">Nodes ({nodes.length})</p>
+            <p className="text-sm font-semibold text-zinc-800">{t.graphExplorer.nodeList} ({nodes.length})</p>
           </div>
           <div className="max-h-[640px] space-y-2 overflow-y-auto p-3">
             {nodes.map((node) => (
@@ -226,7 +236,7 @@ export default function KnowledgeGraphExplorer({
                   </span>
                 </div>
                 <p className={`mt-1 truncate text-xs ${selectedNodeId === node.nodeId ? "text-zinc-300" : "text-zinc-400"}`}>
-                  {nodeSummary(node)}
+                  {nodeSummary(node, t.graphExplorer.nodeSummary)}
                 </p>
               </button>
             ))}
@@ -236,7 +246,7 @@ export default function KnowledgeGraphExplorer({
         <div className="min-h-0 overflow-hidden rounded-xl border border-zinc-200">
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-200 bg-zinc-50 px-4 py-3">
             <p className="text-sm font-semibold text-zinc-800">
-              {selectedNode ? `Neighborhood: ${selectedNode.label}` : `Edges (${edges.length})`}
+              {selectedNode ? `${t.graphExplorer.neighborhood}: ${selectedNode.label}` : `${t.graphExplorer.edges} (${edges.length})`}
             </p>
             {selectedNode && (
               <button
@@ -247,7 +257,7 @@ export default function KnowledgeGraphExplorer({
                 }}
                 className="rounded-lg border border-zinc-200 bg-white px-3 py-1 text-xs text-zinc-600 hover:bg-zinc-50"
               >
-                Clear Focus
+                {t.graphExplorer.clearFocus}
               </button>
             )}
           </div>
@@ -261,7 +271,7 @@ export default function KnowledgeGraphExplorer({
                   </span>
                   <h3 className="text-base font-semibold text-zinc-900">{selectedNode.label}</h3>
                 </div>
-                <p className="mt-2 text-sm text-zinc-500">{nodeSummary(selectedNode)}</p>
+                <p className="mt-2 text-sm text-zinc-500">{nodeSummary(selectedNode, t.graphExplorer.nodeSummary)}</p>
                 {selectedNode.tags.length > 0 && (
                   <div className="mt-3 flex flex-wrap gap-1.5">
                     {selectedNode.tags.slice(0, 12).map((tag) => (
@@ -290,14 +300,14 @@ export default function KnowledgeGraphExplorer({
                       {from?.label ?? edge.fromNodeId} {"->"} {to?.label ?? edge.toNodeId}
                     </p>
                     {edge.evidence.length > 0 && (
-                      <p className="mt-2 text-xs text-zinc-400">evidence refs: {edge.evidence.length}</p>
+                      <p className="mt-2 text-xs text-zinc-400">{t.graphExplorer.evidenceRefs}: {edge.evidence.length}</p>
                     )}
                   </article>
                 )
               })}
               {!loading && (selectedNode ? selectedEdges : edges).length === 0 && (
                 <div className="rounded-xl border border-dashed border-zinc-300 px-4 py-8 text-center text-sm text-zinc-400">
-                  No edges for the current query.
+                  {t.graphExplorer.noEdges}
                 </div>
               )}
             </div>

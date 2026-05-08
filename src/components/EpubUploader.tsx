@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useRef } from "react"
+import { useUiStrings } from "@/components/LanguageProvider"
 import type { ChapterMeta } from "@/types/ui"
 
 interface Props {
@@ -8,6 +9,7 @@ interface Props {
 }
 
 export default function EpubUploader({ onUploaded }: Props) {
+  const { t } = useUiStrings()
   const [uploading, setUploading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -23,7 +25,7 @@ export default function EpubUploader({ onUploaded }: Props) {
       const res = await fetch("/api/epub", { method: "POST", body: form })
       const data = await res.json() as { docId?: string; chapters?: ChapterMeta[]; error?: string }
 
-      if (!res.ok || !data.docId) throw new Error(data.error ?? "Upload failed")
+      if (!res.ok || !data.docId) throw new Error(data.error ?? t.upload.uploadFailed)
       onUploaded(data.docId, data.chapters ?? [])
     } catch (e) {
       setError(String(e))
@@ -53,11 +55,11 @@ export default function EpubUploader({ onUploaded }: Props) {
         onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f) }}
       />
       {uploading ? (
-        <p className="text-zinc-500">Parsing EPUB...</p>
+        <p className="text-zinc-500">{t.upload.parsing}</p>
       ) : (
         <>
-          <p className="text-lg font-medium text-zinc-700">Drop an EPUB file here</p>
-          <p className="text-sm text-zinc-400 mt-1">or click to browse</p>
+          <p className="text-lg font-medium text-zinc-700">{t.upload.drop}</p>
+          <p className="text-sm text-zinc-400 mt-1">{t.upload.browse}</p>
         </>
       )}
       {error && <p className="text-red-500 text-sm mt-3">{error}</p>}

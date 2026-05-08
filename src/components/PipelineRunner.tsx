@@ -1,6 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useRef, useState } from "react"
+import { useUiStrings } from "@/components/LanguageProvider"
 import { getDescendantStages, PIPELINE_STAGE_EDGES } from "@/config/pipeline-graph"
 import {
   deleteStageResult,
@@ -624,6 +625,7 @@ function StageGraphNavigator({
   onSelect: (stageId: StageId) => void
   onRun: (stage: { id: StageId; apiPath: string; implemented?: boolean }) => void
 }) {
+  const { t } = useUiStrings()
   const stageById = new Map(ACTIVE_PIPELINE_STAGES.map((stage) => [stage.id, stage]))
   const incomingByStage = new Map<StageId, StageId[]>()
   for (const edge of ACTIVE_PIPELINE_STAGE_EDGES) {
@@ -641,15 +643,15 @@ function StageGraphNavigator({
     <div className="flex min-h-[360px] max-h-[62vh] min-w-0 shrink-0 flex-col rounded-xl border border-zinc-200 bg-white p-4 xl:min-h-[430px] 2xl:min-h-[520px] 2xl:max-h-[760px]">
       <div className="shrink-0 flex flex-wrap items-end justify-between gap-3">
         <div>
-          <p className="text-sm font-semibold text-zinc-900">Pipeline Graph</p>
+          <p className="text-sm font-semibold text-zinc-900">{t.pipeline.graphTitle}</p>
           <p className="mt-1 text-xs text-zinc-500">
-            Select or run stages by branch. SUP is the reader-support branch feeding FINAL.1.
+            {t.pipeline.graphDescription}
           </p>
         </div>
         <div className="flex flex-wrap gap-2 text-[11px] text-zinc-500">
-          <span className="rounded-full border border-zinc-200 px-2 py-1">v saved</span>
-          <span className="rounded-full border border-blue-200 bg-blue-50 px-2 py-1 text-blue-700">* running</span>
-          <span className="rounded-full border border-red-200 bg-red-50 px-2 py-1 text-red-700">! error</span>
+          <span className="rounded-full border border-zinc-200 px-2 py-1">v {t.pipeline.saved}</span>
+          <span className="rounded-full border border-blue-200 bg-blue-50 px-2 py-1 text-blue-700">* {t.pipeline.running}</span>
+          <span className="rounded-full border border-red-200 bg-red-50 px-2 py-1 text-red-700">! {t.pipeline.error}</span>
         </div>
       </div>
 
@@ -696,11 +698,11 @@ function StageGraphNavigator({
                         <span className="min-w-0 flex-1">
                           <span className="block text-xs font-semibold text-zinc-900">{stageId}</span>
                           <span className="mt-0.5 line-clamp-1 block text-[11px] leading-4 text-zinc-500">
-                            {stage.label.replace(`${stageId} - `, "")}
+                            {t.stageNames[stageId] ?? stage.label.replace(`${stageId} - `, "")}
                           </span>
                           {incoming.length > 0 && (
                             <span className="mt-1 block truncate text-[10px] text-zinc-400">
-                              from {incoming.join(", ")}
+                              {t.pipeline.from} {incoming.join(", ")}
                             </span>
                           )}
                         </span>
@@ -711,7 +713,7 @@ function StageGraphNavigator({
                         disabled={running || stage.implemented === false}
                         className="mt-2 h-7 w-full rounded-md border border-zinc-200 bg-white px-2 text-[11px] font-medium text-zinc-600 hover:bg-zinc-50 disabled:opacity-40"
                       >
-                        Run
+                        {t.pipeline.runStage}
                       </button>
                     </div>
                   </div>
@@ -769,13 +771,14 @@ function extractLLMTrialResponse(trial: LLMTrialDebug): string {
 }
 
 function LLMPromptPanel({ trials }: { trials: LLMTrialDebug[] }) {
+  const { t } = useUiStrings()
   const [activeTrial, setActiveTrial] = useState<LLMTrialDebug | null>(null)
 
   return (
     <>
       <details className="mt-4 min-h-0 shrink-0 rounded-xl border border-zinc-200 bg-white">
       <summary className="cursor-pointer px-4 py-3 text-sm font-semibold text-zinc-800">
-        LLM Prompt / Response ({trials.length} trials)
+        {t.pipeline.llmDebug} ({trials.length} {t.pipeline.trial})
       </summary>
       <div className="max-h-[70vh] overflow-y-auto border-t border-zinc-200 px-4 py-4">
         <div className="space-y-3">
@@ -786,7 +789,7 @@ function LLMPromptPanel({ trials }: { trials: LLMTrialDebug[] }) {
             return (
               <details key={trial.trial_id} className="rounded-lg border border-zinc-200 bg-zinc-50">
               <summary className="cursor-pointer px-3 py-2 text-sm text-zinc-700">
-                Trial {trial.trial_id}
+                {t.pipeline.trial} {trial.trial_id}
                 {trial.template_name ? ` · ${trial.template_name}` : ""}
                 {` · ${trial.mode}`}
                 {trial.has_image ? " · image" : ""}
@@ -795,26 +798,26 @@ function LLMPromptPanel({ trials }: { trials: LLMTrialDebug[] }) {
                 <div className="border-t border-zinc-200 bg-white px-3 py-3">
                   <div className="flex items-center justify-between gap-3">
                     <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
-                      Prompt
+                      {t.common.prompt}
                     </p>
                     <button
                       type="button"
                       onClick={() => setActiveTrial(trial)}
                       className="rounded-md border border-zinc-200 px-2.5 py-1 text-xs font-medium text-zinc-600 hover:bg-zinc-50 hover:text-zinc-800"
                     >
-                      Open Large
+                      {t.pipeline.openLarge}
                     </button>
                   </div>
                   <pre className="mt-2 max-h-[42vh] overflow-auto whitespace-pre-wrap break-words rounded-lg bg-zinc-50 p-3 text-xs leading-6 text-zinc-800">
-                    {promptText || "No prompt saved."}
+                    {promptText || t.pipeline.noPrompt}
                   </pre>
                   <div className="mt-4 border-t border-zinc-200 pt-4">
                     <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
-                      Response
+                      {t.common.response}
                     </p>
                   </div>
                   <pre className="mt-2 max-h-[42vh] overflow-auto whitespace-pre-wrap break-words rounded-lg bg-zinc-50 p-3 text-xs leading-6 text-zinc-800">
-                    {responseText || "No response saved."}
+                    {responseText || t.pipeline.noResponse}
                   </pre>
                 </div>
               </details>
@@ -836,7 +839,7 @@ function LLMPromptPanel({ trials }: { trials: LLMTrialDebug[] }) {
             <div className="flex items-center justify-between gap-3 border-b border-zinc-200 px-5 py-4">
               <div>
                 <h4 className="text-sm font-semibold text-zinc-900">
-                  Trial {activeTrial.trial_id}
+                  {t.pipeline.trial} {activeTrial.trial_id}
                   {activeTrial.template_name ? ` 쨌 ${activeTrial.template_name}` : ""}
                 </h4>
                 <p className="mt-1 text-xs text-zinc-500">
@@ -849,7 +852,7 @@ function LLMPromptPanel({ trials }: { trials: LLMTrialDebug[] }) {
                 onClick={() => setActiveTrial(null)}
                 className="rounded-md border border-zinc-200 px-3 py-1.5 text-xs font-medium text-zinc-600 hover:bg-zinc-50 hover:text-zinc-800"
               >
-                Close
+                {t.common.close}
               </button>
             </div>
 
@@ -857,22 +860,22 @@ function LLMPromptPanel({ trials }: { trials: LLMTrialDebug[] }) {
               <section className="flex min-h-0 flex-col overflow-hidden rounded-xl border border-zinc-200 bg-zinc-50">
                 <div className="border-b border-zinc-200 px-4 py-3">
                   <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
-                    Prompt
+                    {t.common.prompt}
                   </p>
                 </div>
                 <pre className="min-h-0 flex-1 overflow-auto whitespace-pre-wrap break-words p-4 text-xs leading-6 text-zinc-800">
-                  {formatLLMDebugText(activeTrial.prompt) || "No prompt saved."}
+                  {formatLLMDebugText(activeTrial.prompt) || t.pipeline.noPrompt}
                 </pre>
               </section>
 
               <section className="flex min-h-0 flex-col overflow-hidden rounded-xl border border-zinc-200 bg-zinc-50">
                 <div className="border-b border-zinc-200 px-4 py-3">
                   <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
-                    Response
+                    {t.common.response}
                   </p>
                 </div>
                 <pre className="min-h-0 flex-1 overflow-auto whitespace-pre-wrap break-words p-4 text-xs leading-6 text-zinc-800">
-                  {extractLLMTrialResponse(activeTrial) || "No response saved."}
+                  {extractLLMTrialResponse(activeTrial) || t.pipeline.noResponse}
                 </pre>
               </section>
             </div>
@@ -8424,6 +8427,7 @@ function Final2StageView({
 }
 
 export default function PipelineRunner({ docId, chapterId, runId, onRunIdChange }: Props) {
+  const { t } = useUiStrings()
   const [stages, setStages] = useState<StageMap>(() => createInitialStageMap())
   const [results, setResults] = useState<StageResultMap>({})
   const [running, setRunning] = useState(false)
@@ -8758,10 +8762,10 @@ export default function PipelineRunner({ docId, chapterId, runId, onRunIdChange 
     !running
   const selectedStageDeleteHelp =
     selectedResult === undefined
-      ? "No saved result for this stage."
+      ? t.pipeline.noSavedStageResult
       : latestStageWithResult !== selectedStageId
-        ? `Only the latest saved stage can be deleted. Current latest: ${latestStageWithResult ?? "-"}`
-        : "Delete this stage result from the current run."
+        ? t.pipeline.latestOnlyDelete.replace("{stageId}", latestStageWithResult ?? "-")
+        : t.pipeline.deleteStageResult
   const remainingStageCount = getRemainingRunnableStages(results).length
 
   return (
@@ -8772,25 +8776,25 @@ export default function PipelineRunner({ docId, chapterId, runId, onRunIdChange 
           disabled={running}
           className="rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-zinc-700 disabled:opacity-50"
         >
-          Run All Stages
+          {t.pipeline.runAll}
         </button>
         <button
           onClick={runRemaining}
           disabled={running || loadingResults || remainingStageCount === 0}
           className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm font-medium text-emerald-700 transition-colors hover:bg-emerald-100 disabled:opacity-50"
-          title={remainingStageCount === 0 ? "No remaining stages in the current run." : "Run only stages without saved results."}
+          title={remainingStageCount === 0 ? t.pipeline.runRemainingTitleNone : t.pipeline.runRemainingTitleSome}
         >
-          Run Remaining Stages ({remainingStageCount})
+          {t.pipeline.runRemaining} ({remainingStageCount})
         </button>
         <button
           onClick={() => void refreshResults()}
           disabled={running || loadingResults}
           className="rounded-lg border border-zinc-200 px-4 py-2 text-sm font-medium text-zinc-700 transition-colors hover:bg-zinc-50 disabled:opacity-50"
         >
-          Refresh Results
+          {t.pipeline.refreshResults}
         </button>
-        <span className="text-xs text-zinc-400">run: {runId}</span>
-        {loadingResults && <span className="text-xs text-zinc-400">loading saved results...</span>}
+        <span className="text-xs text-zinc-400">{t.pipeline.runLabel}: {runId}</span>
+        {loadingResults && <span className="text-xs text-zinc-400">{t.pipeline.loadingSavedResults}</span>}
       </div>
 
       <StageGraphNavigator
@@ -8806,7 +8810,7 @@ export default function PipelineRunner({ docId, chapterId, runId, onRunIdChange 
         <aside className="min-h-0">
           <div className="h-full space-y-1 overflow-y-auto rounded-xl border border-zinc-200 bg-white p-2">
             <div className="px-3 py-2">
-              <p className="text-sm font-semibold uppercase tracking-wide text-zinc-500">Stages</p>
+              <p className="text-sm font-semibold uppercase tracking-wide text-zinc-500">{t.pipeline.stages}</p>
             </div>
             {ACTIVE_PIPELINE_STAGES.map((stage, stageIndex) => {
               const stageState = stages[stage.id] ?? { status: "idle" }
@@ -8841,11 +8845,11 @@ export default function PipelineRunner({ docId, chapterId, runId, onRunIdChange 
                         onClick={() => setSelectedStageId(stage.id)}
                         className="flex-1 text-left text-[15px] text-zinc-700"
                       >
-                        {stage.label}
+                        {`${stage.id} - ${t.stageNames[stage.id] ?? stage.label.replace(`${stage.id} - `, "")}`}
                       </button>
                       {stage.implemented === false && (
                         <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-medium text-amber-700">
-                          Pending
+                          {t.pipeline.pending}
                         </span>
                       )}
                       <button
@@ -8854,7 +8858,7 @@ export default function PipelineRunner({ docId, chapterId, runId, onRunIdChange 
                         disabled={running || stage.implemented === false}
                         className="rounded-md border border-zinc-200 px-2 py-1 text-xs text-zinc-500 hover:bg-white hover:text-zinc-700 disabled:opacity-40"
                       >
-                        Run
+                        {t.pipeline.runStage}
                       </button>
                       <button
                         type="button"
@@ -8867,14 +8871,14 @@ export default function PipelineRunner({ docId, chapterId, runId, onRunIdChange 
                         }
                         title={
                           results[stage.id] === undefined
-                            ? "No saved result for this stage."
+                            ? t.pipeline.noSavedStageResult
                             : latestStageWithResult !== stage.id
-                              ? `Only the latest saved stage can be deleted. Current latest: ${latestStageWithResult ?? "-"}`
-                              : "Delete this stage result from the current run."
+                              ? t.pipeline.latestOnlyDelete.replace("{stageId}", latestStageWithResult ?? "-")
+                              : t.pipeline.deleteStageResult
                         }
                         className="rounded-md border border-red-200 px-2 py-1 text-xs text-red-500 hover:bg-red-50 hover:text-red-700 disabled:opacity-30"
                       >
-                        {deletingStageId === stage.id ? "..." : "Delete"}
+                        {deletingStageId === stage.id ? "..." : t.common.delete}
                       </button>
                     </div>
 
@@ -8905,8 +8909,7 @@ export default function PipelineRunner({ docId, chapterId, runId, onRunIdChange 
 
                     {stage.implemented === false && (
                       <p className="mt-2 text-xs text-zinc-400">
-                        Stage slot is added to the project structure, but implementation is not wired
-                        yet.
+                        {t.pipeline.stageSlotPending}
                       </p>
                     )}
 
@@ -8924,12 +8927,12 @@ export default function PipelineRunner({ docId, chapterId, runId, onRunIdChange 
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <h3 className="text-sm font-semibold text-zinc-900">
-                {selectedStage?.label ?? selectedStageId}
+                {selectedStage ? `${selectedStage.id} - ${t.stageNames[selectedStage.id] ?? selectedStage.label.replace(`${selectedStage.id} - `, "")}` : selectedStageId}
               </h3>
               <p className="mt-1 text-xs text-zinc-500">
                 {selectedResult
-                  ? "Saved result for current run."
-                  : "No result for this stage in the current run yet."}
+                  ? t.pipeline.savedResult
+                  : t.pipeline.noStageResult}
               </p>
             </div>
             <div className="flex flex-wrap items-center justify-end gap-2">
@@ -8948,7 +8951,7 @@ export default function PipelineRunner({ docId, chapterId, runId, onRunIdChange 
                 title={selectedStageDeleteHelp}
                 className="rounded-lg border border-red-200 px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50 disabled:opacity-30"
               >
-                {deletingStageId === selectedStageId ? "Deleting..." : "Delete Stage Result"}
+                {deletingStageId === selectedStageId ? t.common.deleting : t.pipeline.deleteStageResult}
               </button>
               <span className={`text-xs font-medium ${statusColor[stages[selectedStageId]?.status ?? "idle"]}`}>
                 {stages[selectedStageId]?.status ?? "idle"}
@@ -8958,8 +8961,7 @@ export default function PipelineRunner({ docId, chapterId, runId, onRunIdChange 
 
           {selectedStage?.implemented === false && (
             <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
-              VIS branch stage is registered in the project and model config, but its route and logic
-              are not implemented yet.
+              {t.pipeline.stageSlotPending}
             </div>
           )}
 

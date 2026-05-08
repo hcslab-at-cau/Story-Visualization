@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useMemo, useState } from "react"
+import { useUiStrings } from "@/components/LanguageProvider"
 import {
   buildBookMemory,
   listRuns,
@@ -12,6 +13,7 @@ import {
 import type { BookMemorySnapshot } from "@/types/book-memory"
 import type { EntityGraph, SupportMemoryLog } from "@/types/schema"
 import type { ChapterMeta } from "@/types/ui"
+import type { UiStrings } from "@/lib/ui-strings"
 
 interface Props {
   docId: string
@@ -45,7 +47,7 @@ function uniqueStrings(values: Array<string | undefined>): string[] {
   return Array.from(new Set(values.filter((value): value is string => Boolean(value))))
 }
 
-function statusBadge(label: string, status: ChapterRunStatus["sup0"]) {
+function statusBadge(label: string, status: ChapterRunStatus["sup0"], t: UiStrings) {
   const className = status === "ok"
     ? "bg-emerald-50 text-emerald-700"
     : status === "missing"
@@ -54,7 +56,7 @@ function statusBadge(label: string, status: ChapterRunStatus["sup0"]) {
 
   return (
     <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${className}`}>
-      {label}: {status}
+      {label}: {t.bookMemory.readyStatus[status]}
     </span>
   )
 }
@@ -65,6 +67,7 @@ export default function BookMemoryPanel({
   currentChapterId,
   chapters,
 }: Props) {
+  const { t } = useUiStrings()
   const [snapshot, setSnapshot] = useState<BookMemorySnapshot | null>(null)
   const [loading, setLoading] = useState(false)
   const [building, setBuilding] = useState(false)
@@ -269,9 +272,12 @@ export default function BookMemoryPanel({
     <section className="rounded-2xl border border-zinc-200 bg-zinc-50 p-5">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">Book Memory</p>
-          <h3 className="mt-1 text-lg font-semibold text-zinc-900">Cross-chapter memory snapshot</h3>
+          <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">{t.bookMemory.eyebrow}</p>
+          <h3 className="mt-1 text-lg font-semibold text-zinc-900">{t.bookMemory.title}</h3>
           <p className="mt-1 max-w-3xl text-sm leading-6 text-zinc-600">
+            {t.bookMemory.description}
+          </p>
+          <p className="hidden" aria-hidden="true">
             책 단위 메모리는 챕터마다 서로 다른 run 결과를 조합합니다. 아래에서 각 챕터에 사용할 run을 고른 뒤
             SUP.0이 있는 조합으로 빌드합니다.
           </p>
@@ -283,7 +289,7 @@ export default function BookMemoryPanel({
             disabled={chapters.length === 0 || building || loading || loadingRunOptions}
             className="rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-700 disabled:opacity-50"
           >
-            {building ? "Building..." : "Build from Selected Runs"}
+            {building ? t.bookMemory.building : t.bookMemory.build}
           </button>
           <button
             type="button"
@@ -291,7 +297,7 @@ export default function BookMemoryPanel({
             disabled={loading || building}
             className="rounded-lg border border-zinc-200 bg-white px-4 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-50 disabled:opacity-50"
           >
-            {loading ? "Loading..." : "Load Latest"}
+            {loading ? t.common.loading : t.bookMemory.loadLatest}
           </button>
         </div>
       </div>
@@ -299,14 +305,17 @@ export default function BookMemoryPanel({
       <div className="mt-5 rounded-xl border border-zinc-200 bg-white">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-200 px-4 py-3">
           <div>
-            <p className="text-sm font-semibold text-zinc-900">Chapter run selection</p>
+            <p className="text-sm font-semibold text-zinc-900">{t.bookMemory.chapterRunSelection}</p>
             <p className="mt-1 text-xs text-zinc-500">
-              manual {manualSelectionCount}/{chapters.length}, SUP.0 ready {sup0ReadyCount}/{chapters.length}
-              {checkingStages ? " checking..." : ""}
+              {t.bookMemory.manualReady
+                .replace("{manual}", String(manualSelectionCount))
+                .replaceAll("{total}", String(chapters.length))
+                .replace("{ready}", String(sup0ReadyCount))}
+              {checkingStages ? t.bookMemory.checking : ""}
             </p>
           </div>
           {loadingRunOptions && (
-            <span className="rounded-full bg-zinc-100 px-3 py-1 text-xs text-zinc-500">Loading run options...</span>
+            <span className="rounded-full bg-zinc-100 px-3 py-1 text-xs text-zinc-500">{t.bookMemory.loadingRunOptions}</span>
           )}
         </div>
 
@@ -330,14 +339,14 @@ export default function BookMemoryPanel({
                       </p>
                       {chapter.chapterId === currentChapterId && (
                         <span className="shrink-0 rounded-full bg-sky-50 px-2 py-0.5 text-[11px] text-sky-700">
-                          current
+                          {t.bookMemory.current}
                         </span>
                       )}
                     </div>
                     <p className="mt-1 font-mono text-[11px] text-zinc-400">{chapter.chapterId}</p>
                     {!selectedRunId && autoResolvedRunId && (
                       <p className="mt-1 truncate font-mono text-[11px] text-emerald-600">
-                        auto: {autoResolvedRunId}
+                        {t.bookMemory.auto}: {autoResolvedRunId}
                       </p>
                     )}
                   </div>
@@ -354,7 +363,7 @@ export default function BookMemoryPanel({
                     disabled={loadingRunOptions || runs.length === 0}
                     className="min-w-0 rounded-lg border border-zinc-200 bg-white px-3 py-2 font-mono text-xs text-zinc-700 disabled:opacity-50"
                   >
-                    <option value="">{runs.length === 0 ? "No saved run" : "Auto select SUP.0-ready run"}</option>
+                    <option value="">{runs.length === 0 ? t.bookMemory.noSavedRun : t.bookMemory.autoSelect}</option>
                     {runs.map((run) => (
                       <option key={run.runId} value={run.runId}>
                         {`${run.favorite ? "* " : ""}${run.runId}`}
@@ -363,8 +372,8 @@ export default function BookMemoryPanel({
                   </select>
 
                   <div className="flex flex-wrap gap-1.5">
-                    {statusBadge("SUP.0", status.sup0)}
-                    {statusBadge("ENT.3", status.ent3)}
+                    {statusBadge("SUP.0", status.sup0, t)}
+                    {statusBadge("ENT.3", status.ent3, t)}
                   </div>
                 </div>
               )
@@ -382,17 +391,17 @@ export default function BookMemoryPanel({
       {snapshot ? (
         <div className="mt-5 space-y-5">
           <div className="grid gap-3 md:grid-cols-5">
-            <StatCard label="Book Run" value={snapshot.bookRunId} />
-            <StatCard label="Chapters" value={snapshot.chapters.length} />
-            <StatCard label="Scenes" value={snapshot.sceneRefs.length} />
-            <StatCard label="Edges" value={snapshot.edges.length} />
-            <StatCard label="Entity Threads" value={snapshot.entityThreads.length} />
+            <StatCard label={t.bookMemory.bookRun} value={snapshot.bookRunId} />
+            <StatCard label={t.bookMemory.chapters} value={snapshot.chapters.length} />
+            <StatCard label={t.bookMemory.scenes} value={snapshot.sceneRefs.length} />
+            <StatCard label={t.bookMemory.edges} value={snapshot.edges.length} />
+            <StatCard label={t.bookMemory.entityThreads} value={snapshot.entityThreads.length} />
           </div>
 
           {snapshot.missingChapters.length > 0 && (
             <details className="rounded-xl border border-amber-200 bg-amber-50">
               <summary className="cursor-pointer px-4 py-3 text-sm font-semibold text-amber-800">
-                Missing chapters ({snapshot.missingChapters.length})
+                {t.bookMemory.missingChapters} ({snapshot.missingChapters.length})
               </summary>
               <div className="space-y-2 border-t border-amber-200 p-4">
                 {snapshot.missingChapters.map((chapter) => (
@@ -406,7 +415,7 @@ export default function BookMemoryPanel({
 
           <div className="grid gap-5 xl:grid-cols-2">
             <div className="rounded-xl border border-zinc-200 bg-white p-4">
-              <p className="text-sm font-semibold text-zinc-900">Cross-chapter edges</p>
+              <p className="text-sm font-semibold text-zinc-900">{t.bookMemory.crossChapterEdges}</p>
               <div className="mt-3 space-y-2">
                 {topEdges.map((edge) => (
                   <div key={edge.edgeId} className="rounded-lg border border-zinc-100 bg-zinc-50 px-3 py-2">
@@ -417,32 +426,32 @@ export default function BookMemoryPanel({
                     <p className="mt-1 text-sm text-zinc-700">{edge.label}</p>
                   </div>
                 ))}
-                {topEdges.length === 0 && <p className="text-sm text-zinc-400">No cross-chapter edges yet.</p>}
+                {topEdges.length === 0 && <p className="text-sm text-zinc-400">{t.bookMemory.noEdges}</p>}
               </div>
             </div>
 
             <div className="rounded-xl border border-zinc-200 bg-white p-4">
-              <p className="text-sm font-semibold text-zinc-900">Entity threads</p>
+              <p className="text-sm font-semibold text-zinc-900">{t.bookMemory.entityThreads}</p>
               <div className="mt-3 space-y-2">
                 {topThreads.map((thread) => (
                   <div key={thread.threadId} className="rounded-lg border border-zinc-100 bg-zinc-50 px-3 py-2">
                     <div className="flex items-center justify-between gap-3">
                       <span className="text-sm font-semibold text-zinc-800">{thread.canonicalName}</span>
-                      <span className="text-xs text-zinc-400">{thread.chapters.length} chapters</span>
+                      <span className="text-xs text-zinc-400">{thread.chapters.length} {t.bookMemory.chapters}</span>
                     </div>
                     <p className="mt-1 text-xs text-zinc-500">
                       {thread.chapters.join(" -> ")} / mentions {thread.totalMentions}
                     </p>
                   </div>
                 ))}
-                {topThreads.length === 0 && <p className="text-sm text-zinc-400">No repeated entity thread yet.</p>}
+                {topThreads.length === 0 && <p className="text-sm text-zinc-400">{t.bookMemory.noThreads}</p>}
               </div>
             </div>
           </div>
         </div>
       ) : (
         <div className="mt-5 rounded-xl border border-dashed border-zinc-300 bg-white px-4 py-6 text-center text-sm text-zinc-500">
-          No book memory snapshot yet. Build one after SUP.0 is available for at least one chapter.
+          {t.bookMemory.noSnapshot}
         </div>
       )}
     </section>

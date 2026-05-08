@@ -5,6 +5,7 @@ import BookMemoryPanel from "@/components/BookMemoryPanel"
 import EpubUploader from "@/components/EpubUploader"
 import ExistingDocumentsPicker from "@/components/ExistingDocumentsPicker"
 import KnowledgeGraphExplorer from "@/components/KnowledgeGraphExplorer"
+import { LanguageProvider, LanguageSwitcher, useUiStrings } from "@/components/LanguageProvider"
 import PipelineRunner from "@/components/PipelineRunner"
 import ReaderScreen from "@/components/ReaderScreen"
 import {
@@ -37,6 +38,15 @@ function formatChapterLabel(chapter: ChapterMeta, visibleIndex: number): string 
 }
 
 export default function Home() {
+  return (
+    <LanguageProvider>
+      <HomeShell />
+    </LanguageProvider>
+  )
+}
+
+function HomeShell() {
+  const { t } = useUiStrings()
   const [view, setView] = useState<View>("upload")
   const [docId, setDocId] = useState("")
   const [chapters, setChapters] = useState<ChapterMeta[]>([])
@@ -128,7 +138,7 @@ export default function Home() {
 
   async function handleDeleteRun() {
     if (!docId || !selectedChapterId || deletingRun) return
-    const confirmed = window.confirm(`Delete run ${runId}? This removes all saved stage results in this run.`)
+    const confirmed = window.confirm(t.pipeline.deleteConfirm.replace("{runId}", runId))
     if (!confirmed) return
 
     setDeletingRun(true)
@@ -156,9 +166,10 @@ export default function Home() {
 
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-zinc-50">
-      <header className="flex items-center gap-6 border-b border-zinc-200 bg-white px-6 py-4">
-        <h1 className="text-lg font-semibold text-zinc-900">Story Visualization</h1>
-        <nav className="flex gap-1">
+      <header className="flex flex-wrap items-center gap-4 border-b border-zinc-200 bg-white px-6 py-4">
+        <div className="flex min-w-0 flex-wrap items-center gap-6">
+          <h1 className="text-lg font-semibold text-zinc-900">{t.app.title}</h1>
+          <nav className="flex gap-1">
           {(["upload", "pipeline", "graph", "reader", "legacy"] as View[]).map((currentView) => (
             <button
               key={currentView}
@@ -170,10 +181,12 @@ export default function Home() {
                   : "text-zinc-500 hover:text-zinc-700"
               }`}
             >
-              {currentView}
+              {t.nav[currentView]}
             </button>
           ))}
-        </nav>
+          </nav>
+        </div>
+        <LanguageSwitcher />
       </header>
 
       <main
@@ -197,7 +210,7 @@ export default function Home() {
             <div className="space-y-4 rounded-xl border border-zinc-200 bg-white p-5">
               <div className="grid gap-4 xl:grid-cols-[420px_minmax(0,1fr)_minmax(0,1fr)] xl:items-end">
                 <div className="min-w-[340px]">
-                  <label className="mb-1 block text-sm text-zinc-500">Chapter</label>
+                  <label className="mb-1 block text-sm text-zinc-500">{t.common.chapter}</label>
                   <div className="flex gap-2">
                     <button
                       type="button"
@@ -208,7 +221,7 @@ export default function Home() {
                       disabled={selectedChapterIndex <= 0}
                       className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-700 hover:bg-zinc-50 disabled:opacity-40"
                     >
-                      Prev
+                      {t.common.previous}
                     </button>
                     <select
                       value={selectedChapterId}
@@ -230,13 +243,13 @@ export default function Home() {
                       disabled={selectedChapterIndex < 0 || selectedChapterIndex >= chapters.length - 1}
                       className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-700 hover:bg-zinc-50 disabled:opacity-40"
                     >
-                      Next
+                      {t.common.next}
                     </button>
                   </div>
                 </div>
 
                 <div className="min-w-[320px] min-w-0">
-                  <label className="mb-1 block text-sm text-zinc-500">Run ID</label>
+                  <label className="mb-1 block text-sm text-zinc-500">{t.pipeline.runId}</label>
                   <div className="flex gap-2">
                     <input
                       value={runId}
@@ -248,7 +261,7 @@ export default function Home() {
                       onClick={() => setRunId(createFreshRunId(availableRuns.map((item) => item.runId)))}
                       className="rounded-lg border border-zinc-200 px-3 py-2 text-sm hover:bg-zinc-50"
                     >
-                      New
+                      {t.common.new}
                     </button>
                     <button
                       type="button"
@@ -259,15 +272,15 @@ export default function Home() {
                           ? "border-amber-300 bg-amber-50 text-amber-700 hover:bg-amber-100"
                           : "border-zinc-200 bg-white text-zinc-600 hover:bg-zinc-50"
                       }`}
-                      title={currentRunIsSaved ? "Toggle favorite for this saved run" : "Save a run first to favorite it"}
+                      title={currentRunIsSaved ? t.pipeline.favoriteTitle : t.pipeline.favoriteDisabledTitle}
                     >
-                      {currentRunFavorite ? "* Favorite" : "Favorite"}
+                      {currentRunFavorite ? t.common.favoriteActive : t.common.favorite}
                     </button>
                   </div>
                 </div>
 
                 <div className="min-w-[320px] min-w-0">
-                  <label className="mb-1 block text-sm text-zinc-500">Saved Runs</label>
+                  <label className="mb-1 block text-sm text-zinc-500">{t.pipeline.savedRuns}</label>
                   <div className="flex gap-2">
                     <select
                       value={availableRuns.some((item) => item.runId === runId) ? runId : ""}
@@ -279,7 +292,7 @@ export default function Home() {
                       className="min-w-0 flex-1 rounded-lg border border-zinc-200 bg-white px-3 py-2 text-base"
                     >
                       <option value="">
-                        {loadingRuns ? "Loading..." : "Current draft or custom run"}
+                        {loadingRuns ? t.common.loading : t.pipeline.currentDraft}
                       </option>
                       {availableRuns.map((item) => (
                         <option key={item.runId} value={item.runId}>
@@ -292,7 +305,7 @@ export default function Home() {
                       onClick={() => setRunId(createFreshRunId(availableRuns.map((item) => item.runId)))}
                       className="rounded-lg border border-zinc-200 px-3 py-2 text-sm hover:bg-zinc-50"
                     >
-                      Draft
+                      {t.common.draft}
                     </button>
                     <button
                       type="button"
@@ -300,7 +313,7 @@ export default function Home() {
                       disabled={deletingRun}
                       className="rounded-lg border border-red-200 px-3 py-2 text-sm text-red-600 hover:bg-red-50 disabled:opacity-40"
                     >
-                      {deletingRun ? "Deleting..." : "Delete"}
+                      {deletingRun ? t.common.deleting : t.common.delete}
                     </button>
                   </div>
                 </div>
@@ -321,14 +334,14 @@ export default function Home() {
               onClick={() => setView("reader")}
               className="text-base text-zinc-500 underline hover:text-zinc-800"
             >
-              View reader screen
+              {t.pipeline.viewReader}
             </button>
             <button
               type="button"
               onClick={() => setView("graph")}
               className="text-base text-zinc-500 underline hover:text-zinc-800"
             >
-              View knowledge graph
+              {t.pipeline.viewGraph}
             </button>
           </div>
         )}
@@ -361,7 +374,7 @@ export default function Home() {
 
         {view !== "upload" && view !== "legacy" && !docId && (
           <div className="mt-20 text-center text-zinc-400">
-            Upload an EPUB first to get started.
+            {t.app.noDocument}
           </div>
         )}
       </main>
@@ -380,11 +393,12 @@ function ReaderChapterControl({
   disabled?: boolean
   onChapterChange: (chapterId: string) => void
 }) {
+  const { t } = useUiStrings()
   const selectedChapterIndex = chapters.findIndex((chapter) => chapter.chapterId === chapterId)
 
   return (
     <div className="flex items-center gap-2">
-      <label className="text-sm font-medium text-zinc-600">Chapter</label>
+      <label className="text-sm font-medium text-zinc-600">{t.common.chapter}</label>
       <button
         type="button"
         onClick={() => {
@@ -394,7 +408,7 @@ function ReaderChapterControl({
         disabled={disabled || selectedChapterIndex <= 0}
         className="rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-sm text-zinc-700 hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-40"
       >
-        Prev
+        {t.common.previous}
       </button>
       <select
         value={chapterId}
@@ -417,7 +431,7 @@ function ReaderChapterControl({
         disabled={disabled || selectedChapterIndex < 0 || selectedChapterIndex >= chapters.length - 1}
         className="rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-sm text-zinc-700 hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-40"
       >
-        Next
+        {t.common.next}
       </button>
     </div>
   )
@@ -442,6 +456,7 @@ function GraphView({
   onChapterChange: (chapterId: string) => void
   onRunChange: (runId: string) => void
 }) {
+  const { t } = useUiStrings()
   const selectedChapterIndex = chapters.findIndex((chapter) => chapter.chapterId === chapterId)
   const runExists = availableRuns.some((item) => item.runId === runId)
 
@@ -450,9 +465,12 @@ function GraphView({
       <section className="rounded-2xl border border-zinc-200 bg-white p-5">
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div>
-            <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">Graph Controls</p>
-            <h2 className="mt-1 text-lg font-semibold text-zinc-900">Current run graph query</h2>
+            <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">{t.graphPage.eyebrow}</p>
+            <h2 className="mt-1 text-lg font-semibold text-zinc-900">{t.graphPage.title}</h2>
             <p className="mt-1 text-sm text-zinc-500">
+              {t.graphPage.description}
+            </p>
+            <p className="hidden" aria-hidden="true">
               새 저장소 `documents_v2`의 graph projection을 조회합니다. 기존 `documents` 데이터는 legacy 탭에서 확인합니다.
             </p>
           </div>
@@ -466,7 +484,7 @@ function GraphView({
               disabled={selectedChapterIndex <= 0}
               className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-700 hover:bg-zinc-50 disabled:opacity-40"
             >
-              Prev
+              {t.common.previous}
             </button>
             <select
               value={chapterId}
@@ -488,7 +506,7 @@ function GraphView({
               disabled={selectedChapterIndex < 0 || selectedChapterIndex >= chapters.length - 1}
               className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-700 hover:bg-zinc-50 disabled:opacity-40"
             >
-              Next
+              {t.common.next}
             </button>
             <select
               value={runExists ? runId : ""}
@@ -498,7 +516,7 @@ function GraphView({
               disabled={loadingRuns || availableRuns.length === 0}
               className="min-w-[320px] rounded-lg border border-zinc-200 bg-white px-3 py-2 font-mono text-sm disabled:opacity-50"
             >
-              <option value="">{loadingRuns ? "Loading..." : "Select a saved run"}</option>
+              <option value="">{loadingRuns ? t.common.loading : t.pipeline.selectSavedRun}</option>
               {availableRuns.map((item) => (
                 <option key={item.runId} value={item.runId}>
                   {`${item.favorite ? "* " : ""}${item.runId}`}
@@ -521,7 +539,7 @@ function GraphView({
         </>
       ) : (
         <div className="rounded-xl border border-dashed border-zinc-300 bg-white px-4 py-8 text-center text-sm text-zinc-500">
-          Select or create a saved run before querying the knowledge graph.
+          {t.graphPage.noRunSelected}
         </div>
       )}
     </div>
@@ -529,6 +547,7 @@ function GraphView({
 }
 
 function LegacyArchiveView() {
+  const { t } = useUiStrings()
   const [docId, setDocId] = useState("")
   const [chapters, setChapters] = useState<ChapterMeta[]>([])
   const [selectedChapterId, setSelectedChapterId] = useState("")
@@ -579,14 +598,14 @@ function LegacyArchiveView() {
 
   const runSelector = (
     <div className="flex items-center gap-2">
-      <label className="text-sm font-medium text-zinc-600">Legacy Run</label>
+      <label className="text-sm font-medium text-zinc-600">{t.legacy.runLabel}</label>
       <select
         value={runId}
         onChange={(event) => setRunId(event.target.value)}
         disabled={loadingRuns || availableRuns.length === 0}
         className="min-w-[320px] rounded-lg border border-zinc-200 bg-white px-3 py-1.5 font-mono text-sm disabled:cursor-not-allowed disabled:opacity-60"
       >
-        <option value="">{loadingRuns ? "Loading..." : "No saved run"}</option>
+        <option value="">{loadingRuns ? t.common.loading : t.pipeline.noSavedRun}</option>
         {availableRuns.map((item) => (
           <option key={item.runId} value={item.runId}>
             {`${item.favorite ? "* " : ""}${item.runId}`}
@@ -601,6 +620,7 @@ function LegacyArchiveView() {
       <div className="grid gap-5 xl:grid-cols-[minmax(360px,0.8fr)_minmax(0,1.2fr)]">
         <ExistingDocumentsPicker
           source="legacy"
+          preset="legacy"
           title="Legacy Documents"
           description="기존 documents 컬렉션에 남아 있는 이전 실행 결과를 읽기 전용으로 엽니다."
           emptyMessage="기존 documents 컬렉션에서 문서를 찾지 못했습니다."
@@ -610,13 +630,16 @@ function LegacyArchiveView() {
         <section className="rounded-xl border border-zinc-200 bg-white p-5">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
-              <h2 className="text-sm font-semibold text-zinc-800">Legacy Reader</h2>
+              <h2 className="text-sm font-semibold text-zinc-800">{t.legacy.readerTitle}</h2>
               <p className="mt-1 text-xs text-zinc-500">
+                {t.legacy.readerDescription}
+              </p>
+              <p className="hidden" aria-hidden="true">
                 새 실행은 documents_v2에 저장되고, 이 화면은 기존 documents 컬렉션을 수정하지 않습니다.
               </p>
             </div>
             <span className="rounded-full bg-zinc-100 px-3 py-1 text-xs text-zinc-500">
-              read-only
+              {t.common.readOnly}
             </span>
           </div>
 
@@ -631,7 +654,7 @@ function LegacyArchiveView() {
                 disabled={selectedChapterIndex <= 0}
                 className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-700 hover:bg-zinc-50 disabled:opacity-40"
               >
-                Prev
+                {t.common.previous}
               </button>
               <select
                 value={selectedChapterId}
@@ -653,12 +676,19 @@ function LegacyArchiveView() {
                 disabled={selectedChapterIndex < 0 || selectedChapterIndex >= chapters.length - 1}
                 className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-700 hover:bg-zinc-50 disabled:opacity-40"
               >
-                Next
+                {t.common.next}
               </button>
               {runSelector}
             </div>
           ) : (
             <div className="mt-5 rounded-lg border border-dashed border-zinc-300 px-4 py-8 text-center text-sm text-zinc-400">
+              {t.legacy.selectDocument}
+            </div>
+          )}
+          {false && (
+            <div className="mt-5 rounded-lg border border-dashed border-zinc-300 px-4 py-8 text-center text-sm text-zinc-400">
+              {t.legacy.selectDocument}
+              <span className="hidden" aria-hidden="true" />
               왼쪽에서 legacy 문서를 선택하세요.
             </div>
           )}
@@ -699,6 +729,7 @@ function ReaderView({
   extraControls?: ReactNode
   onChapterChange: (chapterId: string) => void
 }) {
+  const { t } = useUiStrings()
   const [final1, setFinal1] = useState<SceneReaderPackageLog | null>(null)
   const [final2, setFinal2] = useState<OverlayRefinementResult | null>(null)
   const [bookMemory, setBookMemory] = useState<BookMemorySnapshot | null>(null)
@@ -776,7 +807,7 @@ function ReaderView({
         />
         {extraControls}
         <div className="rounded-lg border border-dashed border-zinc-300 bg-white px-4 py-3 text-sm text-zinc-500">
-          Loading reader data...
+          {t.readerPage.loading}
         </div>
       </div>
     )
@@ -810,7 +841,7 @@ function ReaderView({
         />
         {extraControls}
         <div className="rounded-lg border border-dashed border-zinc-300 bg-white px-4 py-3 text-sm text-zinc-500">
-          {loadingRuns ? "Loading reader data..." : "No saved runs for this chapter."}
+          {loadingRuns ? t.readerPage.loading : t.readerPage.noSavedRuns}
         </div>
       </div>
     )
@@ -827,6 +858,10 @@ function ReaderView({
         />
         {extraControls}
         <div className="rounded-lg border border-dashed border-zinc-300 bg-white px-4 py-3 text-sm text-zinc-500">
+          {t.readerPage.noResult}
+        </div>
+        {false && null}
+        <div className="hidden" aria-hidden="true">
           결과가 없습니다. 실행해주세요.
         </div>
       </div>

@@ -7,7 +7,9 @@
  */
 
 import { useEffect, useRef, useState, type ReactNode } from "react"
+import { useUiStrings } from "@/components/LanguageProvider"
 import { governReaderSupport } from "@/lib/support-governor"
+import type { UiStrings } from "@/lib/ui-strings"
 import { scoreVisualSupport } from "@/lib/visual-support-policy"
 import type {
   BookEntityThread,
@@ -121,16 +123,6 @@ const READER_PANEL_BUTTON_META: Record<
     active: "border-cyan-500 bg-cyan-500 text-white shadow-sm",
     icon: "E",
   },
-}
-
-const READER_PANEL_BUTTON_LABEL: Record<string, string> = {
-  goal: "Goal",
-  problem: "Problem",
-  what_changed: "Change",
-  why_it_matters: "Impact",
-  object: "Object",
-  action: "Action",
-  event: "Event",
 }
 
 const READER_PANEL_BUTTON_ORDER = [
@@ -287,27 +279,6 @@ function CharacterButton({
   )
 }
 
-const SUPPORT_KIND_LABEL: Record<string, string> = {
-  snapshot: "Now",
-  boundary_delta: "Shift",
-  causal_bridge: "Why",
-  character_focus: "Cast",
-  relation_delta: "Relation",
-  reentry_recap: "Resume",
-  reference_repair: "Names",
-  spatial_continuity: "Place",
-  visual_context: "Cues",
-}
-
-const MEMORY_EDGE_LABEL: Record<BookMemoryEdgeType, string> = {
-  chapter_sequence: "Sequence",
-  cross_chapter_character_thread: "Cast thread",
-  cross_chapter_same_place: "Same place",
-  cross_chapter_place_shift: "Place shift",
-  cross_chapter_causal_bridge: "Causal bridge",
-  entity_reappearance: "Reappearance",
-}
-
 const MEMORY_EDGE_STYLE: Record<BookMemoryEdgeType, string> = {
   chapter_sequence: "border-zinc-200 bg-zinc-50 text-zinc-700",
   cross_chapter_character_thread: "border-amber-200 bg-amber-50 text-amber-800",
@@ -423,25 +394,28 @@ function MemoryEdgeCard({
   direction: "incoming" | "outgoing"
   sceneMap: Map<string, BookMemorySceneRef>
 }) {
+  const { t } = useUiStrings()
   const otherSceneKey = direction === "incoming" ? edge.fromSceneKey : edge.toSceneKey
   const otherScene = sceneMap.get(otherSceneKey)
+  const localizedDirectionLabel =
+    direction === "incoming" ? t.reader.memory.incoming : t.reader.memory.outgoing
   const directionLabel = direction === "incoming" ? "이전 연결" : "다음 연결"
 
   return (
     <article className="rounded-xl border border-zinc-200 bg-white px-4 py-3 shadow-sm">
       <div className="flex flex-wrap items-center gap-2">
         <span className={`rounded-full border px-2 py-0.5 text-[11px] font-semibold ${MEMORY_EDGE_STYLE[edge.type]}`}>
-          {MEMORY_EDGE_LABEL[edge.type]}
+          {t.reader.memory.edgeLabel[edge.type]}
         </span>
-        <span className="text-[11px] font-medium text-zinc-400">{directionLabel}</span>
+        <span className="text-[11px] font-medium text-zinc-400">{localizedDirectionLabel || directionLabel}</span>
       </div>
       <p className="mt-2 text-sm leading-6 text-zinc-700">{edge.label}</p>
       <p className="mt-2 truncate text-xs text-zinc-400">
-        {direction === "incoming" ? "from " : "to "}
+        {direction === "incoming" ? `${t.reader.memory.from} ` : `${t.reader.memory.to} `}
         {compactSceneLabel(otherScene, otherSceneKey)}
       </p>
       {edge.evidence.length > 0 && (
-        <p className="mt-1 text-[11px] text-zinc-400">evidence {edge.evidence.length}</p>
+        <p className="mt-1 text-[11px] text-zinc-400">{t.common.evidence} {edge.evidence.length}</p>
       )}
     </article>
   )
@@ -452,6 +426,7 @@ function ThreadChip({
 }: {
   item: ReaderMemoryContext["threads"][number]
 }) {
+  const { t } = useUiStrings()
   return (
     <div className={`rounded-xl border px-3 py-2 ${
       item.firstSceneMatch
@@ -461,13 +436,16 @@ function ThreadChip({
       <div className="flex items-center justify-between gap-3">
         <p className="truncate text-sm font-semibold text-zinc-800">{item.thread.canonicalName}</p>
         <span className="shrink-0 rounded-full bg-zinc-100 px-2 py-0.5 text-[11px] text-zinc-500">
-          {item.thread.chapters.length} ch
+          {item.thread.chapters.length} {t.reader.memory.chaptersShort}
         </span>
       </div>
       <p className="mt-1 text-xs text-zinc-500">
-        {item.thread.mentionType} / mentions {item.thread.totalMentions}
+        {item.thread.mentionType} / {t.reader.memory.mentions} {item.thread.totalMentions}
       </p>
       {item.firstSceneMatch && (
+        <p className="mt-1 text-[11px] font-medium text-sky-700">{t.reader.memory.reappearsHere}</p>
+      )}
+      {false && item.firstSceneMatch && (
         <p className="mt-1 text-[11px] font-medium text-sky-700">이 장면에서 다시 등장</p>
       )}
     </div>
@@ -485,11 +463,14 @@ function CrossChapterMemoryPanel({
   activeTab: MemoryTab
   onTabChange: (tab: MemoryTab) => void
 }) {
+  const { t } = useUiStrings()
   if (!bookMemory) {
     return (
+      <>
       <div className="rounded-xl border border-dashed border-zinc-300 bg-white px-4 py-4 text-sm text-zinc-500">
-        Cross-chapter memory가 아직 로드되지 않았습니다. Graph 탭에서 BOOK.0을 만든 뒤 다시 확인하세요.
+        {t.reader.memory.missing}
       </div>
+      </>
     )
   }
 
@@ -498,9 +479,9 @@ function CrossChapterMemoryPanel({
   const sceneMap = new Map(bookMemory.sceneRefs.map((scene) => [scene.sceneKey, scene]))
   const bridgeEdges = [...context.incomingEdges, ...context.outgoingEdges]
   const tabs: Array<{ key: MemoryTab; label: string; count: number }> = [
-    { key: "bridges", label: "Bridges", count: bridgeEdges.length },
-    { key: "threads", label: "Threads", count: context.threads.length },
-    { key: "path", label: "Path", count: context.nearbyScenes.length },
+    { key: "bridges", label: t.reader.memory.bridges, count: bridgeEdges.length },
+    { key: "threads", label: t.reader.memory.threads, count: context.threads.length },
+    { key: "path", label: t.reader.memory.path, count: context.nearbyScenes.length },
   ]
 
   return (
@@ -508,7 +489,7 @@ function CrossChapterMemoryPanel({
       <div className="border-b border-zinc-200 px-4 py-3">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">Cross-chapter Memory</p>
+            <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">{t.reader.memory.eyebrow}</p>
             <h3 className="mt-1 text-base font-semibold text-zinc-900">
               {context.sceneRef?.sceneTitle ?? context.sceneKey}
             </h3>
@@ -518,9 +499,16 @@ function CrossChapterMemoryPanel({
           </span>
         </div>
         {!context.runMatchesBookMemory && context.chapterRunId && (
+          <>
           <p className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-            현재 Reader run과 BOOK.0에 사용된 run이 다릅니다. BOOK.0 run: {context.chapterRunId}
+            {t.reader.memory.runMismatch.replace("{runId}", context.chapterRunId)}
           </p>
+          {false && context && (
+          <p className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+            현재 Reader run과 BOOK.0에 사용된 run이 다릅니다. BOOK.0 run: {context?.chapterRunId}
+          </p>
+          )}
+          </>
         )}
       </div>
 
@@ -561,9 +549,16 @@ function CrossChapterMemoryPanel({
               />
             ))}
             {bridgeEdges.length === 0 && (
+              <>
+              <p className="rounded-xl border border-dashed border-zinc-300 bg-white px-4 py-5 text-sm text-zinc-500">
+                {t.reader.memory.noBridge}
+              </p>
+              {false && (
               <p className="rounded-xl border border-dashed border-zinc-300 bg-white px-4 py-5 text-sm text-zinc-500">
                 이 scene에 직접 연결된 cross-chapter edge는 아직 없습니다.
               </p>
+              )}
+              </>
             )}
           </div>
         )}
@@ -574,9 +569,16 @@ function CrossChapterMemoryPanel({
               <ThreadChip key={item.thread.threadId} item={item} />
             ))}
             {context.threads.length === 0 && (
+              <>
+              <p className="rounded-xl border border-dashed border-zinc-300 bg-white px-4 py-5 text-sm text-zinc-500 sm:col-span-2">
+                {t.reader.memory.noThread}
+              </p>
+              {false && (
               <p className="rounded-xl border border-dashed border-zinc-300 bg-white px-4 py-5 text-sm text-zinc-500 sm:col-span-2">
                 현재 챕터와 연결된 반복 entity thread가 없습니다.
               </p>
+              )}
+              </>
             )}
           </div>
         )}
@@ -599,7 +601,7 @@ function CrossChapterMemoryPanel({
                     <span className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] ${
                       active ? "bg-white/15 text-white" : "bg-zinc-100 text-zinc-500"
                     }`}>
-                      {active ? "current" : scene.chapterTitle}
+                      {active ? t.common.current : scene.chapterTitle}
                     </span>
                   </div>
                   <p className={`mt-1 line-clamp-2 text-xs leading-5 ${
@@ -611,9 +613,16 @@ function CrossChapterMemoryPanel({
               )
             })}
             {context.nearbyScenes.length === 0 && (
+              <>
+              <p className="rounded-xl border border-dashed border-zinc-300 bg-white px-4 py-5 text-sm text-zinc-500">
+                {t.reader.memory.noPath}
+              </p>
+              {false && (
               <p className="rounded-xl border border-dashed border-zinc-300 bg-white px-4 py-5 text-sm text-zinc-500">
                 현재 scene을 BOOK.0 scene path에서 찾지 못했습니다.
               </p>
+              )}
+              </>
             )}
           </div>
         )}
@@ -629,11 +638,12 @@ function SupportUnitCard({
   unit: SupportUnit
   compact?: boolean
 }) {
+  const { t } = useUiStrings()
   return (
     <div className="rounded-xl border border-zinc-200 bg-white px-4 py-3 shadow-sm">
       <div className="flex items-center justify-between gap-3">
         <span className="rounded-full bg-zinc-100 px-2.5 py-1 text-[11px] font-semibold text-zinc-600">
-          {SUPPORT_KIND_LABEL[unit.kind] ?? unit.label}
+          {t.reader.supportKind[unit.kind as keyof typeof t.reader.supportKind] ?? unit.label}
         </span>
         <span className="text-[11px] text-zinc-400">
           {Math.round(unit.priority * 100)}
@@ -682,16 +692,17 @@ function resolveFocusContext(params: {
   packet: SceneReaderPacket
   activeSubsceneId: string
   selectedCharacterIds: string[]
+  t: UiStrings
 }): ReaderFocusContext {
   const view = params.packet.subscene_views[params.activeSubsceneId]
-  const headline = view?.headline || "Reader support"
+  const headline = view?.headline || params.t.reader.fallback.readerSupport
 
   if (!view) {
     return {
       mode: "global",
       title: headline,
-      subtitle: "Subscene",
-      summary: "No subscene support available.",
+      subtitle: params.t.reader.subscene,
+      summary: params.t.reader.fallback.noSubscene,
       hints: [],
       buttons: [],
       panels: {},
@@ -719,9 +730,9 @@ function resolveFocusContext(params: {
 
     return {
       mode: "pair",
-      title: labels.join(" + ") || "Selected pair",
-      subtitle: "Relation view",
-      summary: "No pair-specific hint was prepared for this combination.",
+      title: labels.join(" + ") || params.t.reader.fallback.selectedPair,
+      subtitle: params.t.reader.fallback.relationView,
+      summary: params.t.reader.fallback.noPairHint,
       hints: [],
       buttons: [],
       panels: {},
@@ -744,7 +755,7 @@ function resolveFocusContext(params: {
   }
 
   const globalView: ReaderGlobalView = view.global_view ?? {
-    summary_hint: view.headline || "Subscene overview.",
+    summary_hint: view.headline || params.t.reader.fallback.subsceneOverview,
     hints: [],
     buttons: view.buttons ?? [],
     panels: view.panels ?? {},
@@ -752,7 +763,7 @@ function resolveFocusContext(params: {
   return {
     mode: "global",
     title: headline,
-    subtitle: "Subscene overview",
+    subtitle: params.t.reader.fallback.subsceneOverview,
     summary: globalView.summary_hint,
     hints: globalView.hints,
     buttons: globalView.buttons,
@@ -769,6 +780,7 @@ interface Props {
 }
 
 export default function ReaderScreen({ final1, final2, bookMemory, readerRunId, topControls }: Props) {
+  const { t } = useUiStrings()
   const [sceneIdx, setSceneIdx] = useState(0)
   const [subsceneIdx, setSubsceneIdx] = useState(0)
   const [activePanel, setActivePanel] = useState<string | null>(null)
@@ -801,6 +813,7 @@ export default function ReaderScreen({ final1, final2, bookMemory, readerRunId, 
     packet,
     activeSubsceneId,
     selectedCharacterIds: resolvedSelectedCharacterIds,
+    t,
   })
   const visualSupportUnits = packet.support?.display_plan?.candidate_units ?? [
     ...(packet.support?.display_slots.before_text ?? []),
@@ -994,7 +1007,7 @@ export default function ReaderScreen({ final1, final2, bookMemory, readerRunId, 
     }
   }, [final1.chapter_id, final1.doc_id, packet, readerRunId, readerSessionId, supportBeforeText])
 
-  if (!packet) return <div className="p-8 text-zinc-400">No scenes available.</div>
+  if (!packet) return <div className="p-8 text-zinc-400">{t.reader.noScenes}</div>
 
   const visualAvailable = Boolean(packet.visual.image_path || packet.visual.fallback_blueprint_available)
   const showVisualByDefault = visualPolicy.showImageByDefault || visualPolicy.showBlueprintByDefault
@@ -1055,7 +1068,7 @@ export default function ReaderScreen({ final1, final2, bookMemory, readerRunId, 
           </div>
         ) : (
           <div className="flex h-full items-center justify-center text-sm text-zinc-400">
-            {packet.visual.fallback_blueprint_available ? "Blueprint available" : "No image"}
+            {packet.visual.fallback_blueprint_available ? t.reader.blueprintAvailable : t.reader.noImage}
           </div>
         )}
       </div>
@@ -1067,7 +1080,7 @@ export default function ReaderScreen({ final1, final2, bookMemory, readerRunId, 
       <div className="flex flex-wrap items-center gap-3">
         {topControls}
         <div className="flex items-center gap-3">
-          <label className="text-sm font-medium text-zinc-600">Scene</label>
+          <label className="text-sm font-medium text-zinc-600">{t.reader.scene}</label>
           <select
             value={sceneIdx}
             onChange={(event) => selectScene(Number(event.target.value), 0)}
@@ -1093,7 +1106,7 @@ export default function ReaderScreen({ final1, final2, bookMemory, readerRunId, 
               onClick={() => setShowSceneSummary((value) => !value)}
               className="rounded-full border border-zinc-200 bg-white px-3 py-1.5 text-sm text-zinc-600 hover:bg-zinc-50"
             >
-              {showSceneSummary ? "Hide Summary" : "Show Summary"}
+              {showSceneSummary ? t.reader.hideSummary : t.reader.showSummary}
             </button>
           </div>
           {showSceneSummary && (
@@ -1102,7 +1115,7 @@ export default function ReaderScreen({ final1, final2, bookMemory, readerRunId, 
               {subscene?.headline && (
                 <div className="mt-3 border-t border-zinc-200 pt-3">
                   <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
-                    Subscene
+                    {t.reader.subscene}
                   </p>
                   <p className="mt-1 text-zinc-700">{subscene.headline}</p>
                 </div>
@@ -1158,7 +1171,7 @@ export default function ReaderScreen({ final1, final2, bookMemory, readerRunId, 
               }}
             >
               <summary className="cursor-pointer px-4 py-3 text-sm font-semibold text-zinc-700">
-                More reading support ({supportOnDemand.length})
+                {t.reader.moreSupport} ({supportOnDemand.length})
               </summary>
               <div className="grid gap-3 border-t border-zinc-200 bg-zinc-50 p-4 md:grid-cols-2">
                 {supportOnDemand.map((unit) => (
@@ -1175,14 +1188,14 @@ export default function ReaderScreen({ final1, final2, bookMemory, readerRunId, 
                 disabled={!hasPrev}
                 className="rounded-lg border border-zinc-200 px-3 py-1.5 text-sm disabled:opacity-30 hover:bg-zinc-50"
               >
-                Prev
+                {t.common.previous}
               </button>
               <button
                 onClick={goNext}
                 disabled={!hasNext}
                 className="rounded-lg border border-zinc-200 px-3 py-1.5 text-sm disabled:opacity-30 hover:bg-zinc-50"
               >
-                Next
+                {t.common.next}
               </button>
             </div>
           )}
@@ -1201,38 +1214,37 @@ export default function ReaderScreen({ final1, final2, bookMemory, readerRunId, 
           ) : visualAvailable ? (
             <details className="rounded-2xl border border-zinc-200 bg-white shadow-sm">
               <summary className="cursor-pointer px-4 py-3 text-sm font-semibold text-zinc-700">
-                Visual support minimized
+                {t.reader.visualMinimized}
                 <span className="ml-2 font-normal text-zinc-500">
-                  score {visualPolicy.usefulnessScore.toFixed(2)}
+                  {t.reader.visualScore} {visualPolicy.usefulnessScore.toFixed(2)}
                 </span>
               </summary>
               <div className="flex flex-col gap-3 border-t border-zinc-200 bg-zinc-50/60 p-3">
                 <p className="text-xs text-zinc-500">
-                  The image is available, but the current scene appears to need text/causal support more than visual
-                  support. Open it only if spatial context would help.
+                  {t.reader.visualMinimizedMessage}
                 </p>
                 {renderVisualFrame()}
               </div>
             </details>
           ) : (
             <div className="rounded-2xl border border-dashed border-zinc-300 bg-white px-4 py-6 text-sm text-zinc-500">
-              No visual support is available for this scene.
+              {t.reader.noVisual}
             </div>
           )}
 
           {subsceneView && (
             <details className="rounded-xl border border-zinc-200 bg-white shadow-sm">
               <summary className="cursor-pointer px-4 py-3 text-sm font-semibold text-zinc-700">
-                Scene focus details
+                {t.reader.sceneFocusDetails}
               </summary>
               <div className="flex flex-col gap-4 border-t border-zinc-200 bg-zinc-50/60 p-4">
                 <div>
                   <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
                     {focusContext.mode === "global"
-                      ? "Subscene View"
+                      ? t.reader.subsceneView
                       : focusContext.mode === "character"
-                        ? "Character View"
-                        : "Pair View"}
+                        ? t.reader.characterView
+                        : t.reader.pairView}
                   </p>
                   <h3 className="mt-2 text-lg font-semibold text-zinc-900">{focusContext.title}</h3>
                   <p className="mt-1 text-sm text-zinc-500">{focusContext.subtitle}</p>
@@ -1284,7 +1296,7 @@ export default function ReaderScreen({ final1, final2, bookMemory, readerRunId, 
                         >
                           {READER_PANEL_BUTTON_META[buttonKey]?.icon ?? "i"}
                         </span>
-                        <span>{READER_PANEL_BUTTON_LABEL[buttonKey] ?? button?.label ?? buttonKey}</span>
+                        <span>{t.reader.panelButton[buttonKey as keyof typeof t.reader.panelButton] ?? button?.label ?? buttonKey}</span>
                       </button>
                     )
                   })}
@@ -1309,7 +1321,7 @@ export default function ReaderScreen({ final1, final2, bookMemory, readerRunId, 
               }}
             >
               <summary className="cursor-pointer px-4 py-3 text-sm font-semibold text-zinc-700">
-                Cast / place / visual cues ({supportBesideVisual.length})
+                {t.reader.castPlaceVisualCues} ({supportBesideVisual.length})
               </summary>
               <div className="grid gap-3 border-t border-zinc-200 bg-zinc-50/60 p-4">
                 {supportBesideVisual.map((unit) => (
