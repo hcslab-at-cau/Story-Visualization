@@ -1,6 +1,7 @@
 import { errorResponse, okResponse, type BaseRequestBody } from "@/lib/api-utils"
-import { loadStageResult, saveStageResult, stageKey } from "@/lib/firestore"
+import { loadBookMemorySnapshot, loadStageResult, saveStageResult, stageKey } from "@/lib/firestore"
 import { runReaderSupportPackage } from "@/lib/pipeline/support"
+import { enrichReaderSupportPackageWithBookContext } from "@/lib/support-context"
 import type { SharedSupportRepresentation, SupportPolicySelection } from "@/types/schema"
 
 export const maxDuration = 60
@@ -16,11 +17,13 @@ export async function POST(request: Request): Promise<Response> {
     const sharedLog = await loadStageResult<SharedSupportRepresentation>(docId, chapterId, runId, stageKey("SUP.1"))
     if (!sharedLog) return errorResponse("SUP.1 result not found", 400)
 
-    const result = runReaderSupportPackage(policyLog, sharedLog, docId, chapterId, {
+    const baseResult = runReaderSupportPackage(policyLog, sharedLog, docId, chapterId, {
       ...parents,
       "SUP.1": sharedLog.run_id,
       "SUP.6": policyLog.run_id,
     })
+    const bookMemory = await loadBookMemorySnapshot(docId)
+    const result = enrichReaderSupportPackageWithBookContext(baseResult, bookMemory)
 
     await saveStageResult(docId, chapterId, runId, stageKey("SUP.7"), result)
     return okResponse(result)
