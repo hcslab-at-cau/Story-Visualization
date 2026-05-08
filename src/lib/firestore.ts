@@ -17,7 +17,14 @@ import {
 import { explainAdminCredentialError, getAdminDb } from "./firebase-admin"
 import { projectKnowledgeGraphArtifact } from "./knowledge-graph"
 import { stageKey } from "./stage-key"
-import type { EntityGraph, RawChapter, PipelineArtifact, StageId, SupportMemoryLog } from "@/types/schema"
+import type {
+  EntityGraph,
+  PipelineArtifact,
+  RawChapter,
+  ReaderSupportEvent,
+  StageId,
+  SupportMemoryLog,
+} from "@/types/schema"
 import type { BookMemorySnapshot } from "@/types/book-memory"
 import type {
   KnowledgeGraphEdge,
@@ -124,6 +131,10 @@ function graphEdgesCollection(docId: string, source: FirestoreDataSource = "curr
 
 function bookMemoriesCollection(docId: string, source: FirestoreDataSource = "current") {
   return documentDocRef(docId, source).collection("book_memories")
+}
+
+function supportEventsCollection(docId: string, source: FirestoreDataSource = "current") {
+  return documentDocRef(docId, source).collection("support_events")
 }
 
 function stripUndefinedDeep(value: unknown): unknown {
@@ -722,6 +733,39 @@ export async function loadBookMemorySnapshot(
       .get()
     const latest = snap.docs[0]
     return latest ? (latest.data() as BookMemorySnapshot) : null
+  })
+}
+
+export async function saveReaderSupportEvent(event: ReaderSupportEvent): Promise<void> {
+  await withAdminErrorContext(async () => {
+    const data = stripUndefinedDeep(event) as DocumentData
+    await supportEventsCollection(event.doc_id).doc(event.event_id).set(
+      {
+        ...data,
+        createdAt: FieldValue.serverTimestamp(),
+      },
+      { merge: true },
+    )
+  })
+}
+
+export async function listReaderSupportEvents(
+  docId: string,
+  options: {
+    sessionId?: string
+    maxEvents?: number
+  } = {},
+): Promise<ReaderSupportEvent[]> {
+  return withAdminErrorContext(async () => {
+    const maxEvents = Math.max(1, Math.min(options.maxEvents ?? 200, 500))
+    const snap = await supportEventsCollection(docId)
+      .orderBy("createdAt", "desc")
+      .limit(maxEvents)
+      .get()
+    const events = snap.docs
+      .map((docSnap) => docSnap.data() as ReaderSupportEvent)
+      .filter((event) => !options.sessionId || event.session_id === options.sessionId)
+    return events
   })
 }
 

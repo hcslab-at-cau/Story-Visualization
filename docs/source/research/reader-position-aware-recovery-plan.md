@@ -702,3 +702,24 @@ Support Governor가 필요한 순간에만 노출하는 구조를 만든다.
 - 각 unit에는 `reader_problem`, `confidence`, `grounding_score`, `usefulness_score`, `intrusion_cost`, `spoiler_risk`, `claims`, `redundancy_key`를 포함한다.
 
 이 결정의 이유는 cross-chapter memory를 단순히 Graph 탭에서 확인하는 데이터로 두지 않고, Reader가 실제로 사용할 수 있는 support retrieval 재료로 연결하기 위해서다. 다만 기본 visible support는 여전히 최대 1개로 제한한다. cross-chapter support는 인과/공간/인물 맥락을 복구하는 데 중요하지만, 본문 흐름을 방해할 위험도 있으므로 기본 정책은 on-demand다.
+
+## 16. 구현 기록: Reader support interaction logging
+
+2026-05-08 구현에서 Reader 화면은 support unit이 실제로 독자에게 노출되었는지 기록하기 시작한다. 이 기록은 support generation 품질 평가뿐 아니라, Support Governor가 너무 자주 개입하는지 또는 독자가 어떤 종류의 support를 실제로 열어보는지 분석하기 위한 최소 로그다.
+
+저장 위치:
+
+- `documents_v2/{docId}/support_events/{eventId}`
+
+현재 기록하는 이벤트:
+
+- `shown`: `before_text` 영역에 기본 노출된 support unit
+- `opened`: `More reading support` 또는 `Cast / place / visual cues` 접힘 영역을 독자가 펼쳤을 때의 support unit
+
+저장 필드:
+
+- `doc_id`, `session_id`, `scene_key`, `chapter_id`, `scene_id`, `reader_run_id`
+- `unit_id`, `unit_kind`, `reader_problem`
+- `action`, `reason`, `created_at`
+
+이 단계에서는 privacy-sensitive한 세부 행동을 많이 저장하지 않고, support exposure와 explicit open만 남긴다. 다음 단계에서 필요하면 `dismissed`, `suppressed`, `backscroll`, `long_pause`, `reference_tap`을 추가한다. 연구적으로 중요한 것은 “어떤 support가 생성되었는가”가 아니라 “어떤 support가 실제 reader state에서 사용되었는가”이므로, 이 로그는 이후 정성 연구와 policy ablation의 기본 자료가 된다.

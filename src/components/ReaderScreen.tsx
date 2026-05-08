@@ -23,6 +23,7 @@ import type {
   ReaderCharacterView,
   ReaderGlobalView,
   ReaderPairView,
+  ReaderSupportEvent,
   SceneReaderPackageLog,
   SceneReaderPacket,
   SupportUnit,
@@ -36,6 +37,48 @@ function readResumeGapMs(docId: string): number {
   const previous = Number(window.localStorage.getItem(`story-reader:last-active:${docId}`))
   if (!Number.isFinite(previous) || previous <= 0) return 0
   return Math.max(0, Date.now() - previous)
+}
+
+function createReaderSessionId(docId: string): string {
+  if (typeof window === "undefined") return `reader-session-${docId}`
+  const storageKey = `story-reader:session:${docId}`
+  const existing = window.localStorage.getItem(storageKey)
+  if (existing) return existing
+  const randomSuffix = Math.random().toString(36).slice(2, 10)
+  const sessionId = `reader_${Date.now().toString(36)}_${randomSuffix}`
+  window.localStorage.setItem(storageKey, sessionId)
+  return sessionId
+}
+
+function postReaderSupportEvent(params: {
+  docId: string
+  chapterId: string
+  sceneId: string
+  readerRunId: string
+  sessionId: string
+  unit: SupportUnit
+  action: ReaderSupportEvent["action"]
+  reason?: string
+}) {
+  const createdAt = new Date().toISOString()
+  void fetch("/api/support-events", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      doc_id: params.docId,
+      session_id: params.sessionId,
+      scene_key: `${params.chapterId}:${params.sceneId}`,
+      chapter_id: params.chapterId,
+      scene_id: params.sceneId,
+      reader_run_id: params.readerRunId,
+      unit_id: params.unit.unit_id,
+      unit_kind: params.unit.kind,
+      reader_problem: params.unit.reader_problem,
+      action: params.action,
+      reason: params.reason,
+      created_at: createdAt,
+    }),
+  }).catch(() => undefined)
 }
 
 const READER_PANEL_BUTTON_META: Record<
@@ -731,9 +774,11 @@ export default function ReaderScreen({ final1, final2, bookMemory, readerRunId, 
   const [activeMemoryTab, setActiveMemoryTab] = useState<MemoryTab>("bridges")
   const [showSceneSummary, setShowSceneSummary] = useState(false)
   const [resumeGapMs] = useState(() => readResumeGapMs(final1.doc_id))
+  const [readerSessionId] = useState(() => createReaderSessionId(final1.doc_id))
   const [selectedCharacterIds, setSelectedCharacterIds] = useState<string[]>([])
   const imageFrameRef = useRef<HTMLDivElement | null>(null)
   const preloadedImageUrlsRef = useRef<Set<string>>(new Set())
+  const loggedSupportEventsRef = useRef<Set<string>>(new Set())
   const [imageMetrics, setImageMetrics] = useState({
     imageKey: "",
     naturalWidth: 0,
@@ -766,6 +811,30 @@ export default function ReaderScreen({ final1, final2, bookMemory, readerRunId, 
   const readerMemoryContext = packet
     ? buildReaderMemoryContext(bookMemory, final1, packet, readerRunId)
     : null
+
+  function logSupportUnits(
+    action: ReaderSupportEvent["action"],
+    units: SupportUnit[],
+    reason?: string,
+  ) {
+    if (!packet || units.length === 0) return
+    const sceneKey = `${final1.chapter_id}:${packet.scene_id}`
+    for (const unit of units) {
+      const logKey = `${action}:${sceneKey}:${unit.unit_id}:${reason ?? ""}`
+      if (loggedSupportEventsRef.current.has(logKey)) continue
+      loggedSupportEventsRef.current.add(logKey)
+      postReaderSupportEvent({
+        docId: final1.doc_id,
+        chapterId: final1.chapter_id,
+        sceneId: packet.scene_id,
+        readerRunId,
+        sessionId: readerSessionId,
+        unit,
+        action,
+        reason,
+      })
+    }
+  }
 
   const activeImageKey = packet?.visual.image_path ? `${packet.scene_id}:${packet.visual.image_path}` : ""
   const metricsForActiveImage =
@@ -897,6 +966,26 @@ export default function ReaderScreen({ final1, final2, bookMemory, readerRunId, 
     window.localStorage.setItem(`story-reader:last-active:${final1.doc_id}`, String(Date.now()))
   }, [final1.doc_id, sceneIdx, subsceneIdx])
 
+  useEffect(() => {
+    if (!packet || supportBeforeText.length === 0) return
+    const sceneKey = `${final1.chapter_id}:${packet.scene_id}`
+    for (const unit of supportBeforeText) {
+      const logKey = `shown:${sceneKey}:${unit.unit_id}:default_visible`
+      if (loggedSupportEventsRef.current.has(logKey)) continue
+      loggedSupportEventsRef.current.add(logKey)
+      postReaderSupportEvent({
+        docId: final1.doc_id,
+        chapterId: final1.chapter_id,
+        sceneId: packet.scene_id,
+        readerRunId,
+        sessionId: readerSessionId,
+        unit,
+        action: "shown",
+        reason: "default_visible",
+      })
+    }
+  }, [final1.chapter_id, final1.doc_id, packet, readerRunId, readerSessionId, supportBeforeText])
+
   if (!packet) return <div className="p-8 text-zinc-400">No scenes available.</div>
 
   return (
@@ -986,7 +1075,14 @@ export default function ReaderScreen({ final1, final2, bookMemory, readerRunId, 
           </div>
 
           {supportOnDemand.length > 0 && (
-            <details className="rounded-xl border border-zinc-200 bg-white">
+            <details
+              className="rounded-xl border border-zinc-200 bg-white"
+              onToggle={(event) => {
+                if (event.currentTarget.open) {
+                  logSupportUnits("opened", supportOnDemand, "on_demand_opened")
+                }
+              }}
+            >
               <summary className="cursor-pointer px-4 py-3 text-sm font-semibold text-zinc-700">
                 More reading support ({supportOnDemand.length})
               </summary>
@@ -1165,7 +1261,14 @@ export default function ReaderScreen({ final1, final2, bookMemory, readerRunId, 
           )}
 
           {supportBesideVisual.length > 0 && (
-            <details className="rounded-xl border border-zinc-200 bg-white shadow-sm">
+            <details
+              className="rounded-xl border border-zinc-200 bg-white shadow-sm"
+              onToggle={(event) => {
+                if (event.currentTarget.open) {
+                  logSupportUnits("opened", supportBesideVisual, "side_support_opened")
+                }
+              }}
+            >
               <summary className="cursor-pointer px-4 py-3 text-sm font-semibold text-zinc-700">
                 Cast / place / visual cues ({supportBesideVisual.length})
               </summary>

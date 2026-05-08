@@ -1110,9 +1110,15 @@ export interface ReaderSession {
 
 export interface ReaderSupportEvent {
   event_id: string;
+  doc_id: string;
   session_id: string;
   scene_key: string;
+  chapter_id?: string;
+  scene_id?: string;
+  reader_run_id?: string;
   unit_id: string;
+  unit_kind?: SupportUnitKind;
+  reader_problem?: ReaderProblem;
   action: "shown" | "opened" | "dismissed" | "suppressed";
   reason?: string;
   created_at: string;
