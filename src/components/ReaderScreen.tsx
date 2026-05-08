@@ -8,6 +8,7 @@
 
 import { useEffect, useRef, useState, type ReactNode } from "react"
 import { governReaderSupport } from "@/lib/support-governor"
+import { scoreVisualSupport } from "@/lib/visual-support-policy"
 import type {
   BookEntityThread,
   BookMemoryEdge,
@@ -801,9 +802,16 @@ export default function ReaderScreen({ final1, final2, bookMemory, readerRunId, 
     activeSubsceneId,
     selectedCharacterIds: resolvedSelectedCharacterIds,
   })
+  const visualSupportUnits = packet.support?.display_plan?.candidate_units ?? [
+    ...(packet.support?.display_slots.before_text ?? []),
+    ...(packet.support?.display_slots.beside_visual ?? []),
+    ...(packet.support?.display_slots.on_demand ?? []),
+  ]
+  const visualPolicy = scoreVisualSupport(packet, visualSupportUnits)
   const governedSupport = governReaderSupport(packet.support, {
     resumeGapMs,
     reentryGapMs: READER_REENTRY_GAP_MS,
+    visualUseful: visualPolicy.usefulnessScore >= 0.48 || visualPolicy.showBlueprintByDefault,
   })
   const supportBeforeText = governedSupport.beforeText
   const supportBesideVisual = governedSupport.besideVisual
@@ -988,6 +996,72 @@ export default function ReaderScreen({ final1, final2, bookMemory, readerRunId, 
 
   if (!packet) return <div className="p-8 text-zinc-400">No scenes available.</div>
 
+  const visualAvailable = Boolean(packet.visual.image_path || packet.visual.fallback_blueprint_available)
+  const showVisualByDefault = visualPolicy.showImageByDefault || visualPolicy.showBlueprintByDefault
+
+  function renderVisualFrame() {
+    return (
+      <div
+        className={`relative w-full overflow-hidden rounded-2xl border border-zinc-200 bg-zinc-100 shadow-sm ${
+          packet.visual.image_path ? "" : "min-h-[420px]"
+        }`}
+        style={packet.visual.image_path ? { aspectRatio: imageAspectRatio } : undefined}
+      >
+        {packet.visual.image_path ? (
+          <div ref={imageFrameRef} className="relative h-full w-full p-4">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              key={`${packet.scene_id}:${packet.visual.image_path}`}
+              src={packet.visual.image_path}
+              alt="scene"
+              loading="eager"
+              fetchPriority="high"
+              decoding="async"
+              className="h-full w-full object-contain"
+              onLoad={(event) => {
+                const target = event.currentTarget
+                setImageMetrics((prev) => ({
+                  ...prev,
+                  imageKey: activeImageKey,
+                  naturalWidth: target.naturalWidth,
+                  naturalHeight: target.naturalHeight,
+                  containerWidth: imageFrameRef.current?.clientWidth ?? prev.containerWidth,
+                  containerHeight: imageFrameRef.current?.clientHeight ?? prev.containerHeight,
+                }))
+              }}
+            />
+
+            {mergedOverlay.map(({ coarse, refined }) => {
+              const anchorX = refined?.anchor_x ?? coarse.anchor_x
+              const anchorY = refined?.anchor_y ?? coarse.anchor_y
+              const left =
+                containedRect.left +
+                (Math.max(0, Math.min(100, anchorX)) / 100) * containedRect.width
+              const top =
+                containedRect.top +
+                (Math.max(0, Math.min(100, anchorY)) / 100) * containedRect.height
+
+              return (
+                <CharacterButton
+                  key={coarse.character_id}
+                  coarse={coarse}
+                  left={left}
+                  top={top}
+                  selected={resolvedSelectedCharacterIds.includes(coarse.character_id)}
+                  onToggle={() => toggleCharacterSelection(coarse.character_id)}
+                />
+              )
+            })}
+          </div>
+        ) : (
+          <div className="flex h-full items-center justify-center text-sm text-zinc-400">
+            {packet.visual.fallback_blueprint_available ? "Blueprint available" : "No image"}
+          </div>
+        )}
+      </div>
+    )
+  }
+
   return (
     <div className="mx-auto flex w-full max-w-[2080px] flex-col gap-5 p-6">
       <div className="flex flex-wrap items-center gap-3">
@@ -1122,64 +1196,29 @@ export default function ReaderScreen({ final1, final2, bookMemory, readerRunId, 
             onTabChange={setActiveMemoryTab}
           />
 
-          <div
-            className={`relative w-full overflow-hidden rounded-2xl border border-zinc-200 bg-zinc-100 shadow-sm ${
-              packet.visual.image_path ? "" : "min-h-[420px]"
-            }`}
-            style={packet.visual.image_path ? { aspectRatio: imageAspectRatio } : undefined}
-          >
-            {packet.visual.image_path ? (
-              <div ref={imageFrameRef} className="relative h-full w-full p-4">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  key={`${packet.scene_id}:${packet.visual.image_path}`}
-                  src={packet.visual.image_path}
-                  alt="scene"
-                  loading="eager"
-                  fetchPriority="high"
-                  decoding="async"
-                  className="h-full w-full object-contain"
-                  onLoad={(event) => {
-                    const target = event.currentTarget
-                    setImageMetrics((prev) => ({
-                      ...prev,
-                      imageKey: activeImageKey,
-                      naturalWidth: target.naturalWidth,
-                      naturalHeight: target.naturalHeight,
-                      containerWidth: imageFrameRef.current?.clientWidth ?? prev.containerWidth,
-                      containerHeight: imageFrameRef.current?.clientHeight ?? prev.containerHeight,
-                    }))
-                  }}
-                />
-
-                {mergedOverlay.map(({ coarse, refined }) => {
-                  const anchorX = refined?.anchor_x ?? coarse.anchor_x
-                  const anchorY = refined?.anchor_y ?? coarse.anchor_y
-                  const left =
-                    containedRect.left +
-                    (Math.max(0, Math.min(100, anchorX)) / 100) * containedRect.width
-                  const top =
-                    containedRect.top +
-                    (Math.max(0, Math.min(100, anchorY)) / 100) * containedRect.height
-
-                  return (
-                    <CharacterButton
-                      key={coarse.character_id}
-                      coarse={coarse}
-                      left={left}
-                      top={top}
-                      selected={resolvedSelectedCharacterIds.includes(coarse.character_id)}
-                      onToggle={() => toggleCharacterSelection(coarse.character_id)}
-                    />
-                  )
-                })}
+          {showVisualByDefault ? (
+            renderVisualFrame()
+          ) : visualAvailable ? (
+            <details className="rounded-2xl border border-zinc-200 bg-white shadow-sm">
+              <summary className="cursor-pointer px-4 py-3 text-sm font-semibold text-zinc-700">
+                Visual support minimized
+                <span className="ml-2 font-normal text-zinc-500">
+                  score {visualPolicy.usefulnessScore.toFixed(2)}
+                </span>
+              </summary>
+              <div className="flex flex-col gap-3 border-t border-zinc-200 bg-zinc-50/60 p-3">
+                <p className="text-xs text-zinc-500">
+                  The image is available, but the current scene appears to need text/causal support more than visual
+                  support. Open it only if spatial context would help.
+                </p>
+                {renderVisualFrame()}
               </div>
-            ) : (
-              <div className="flex h-full items-center justify-center text-sm text-zinc-400">
-                {packet.visual.fallback_blueprint_available ? "Blueprint available" : "No image"}
-              </div>
-            )}
-          </div>
+            </details>
+          ) : (
+            <div className="rounded-2xl border border-dashed border-zinc-300 bg-white px-4 py-6 text-sm text-zinc-500">
+              No visual support is available for this scene.
+            </div>
+          )}
 
           {subsceneView && (
             <details className="rounded-xl border border-zinc-200 bg-white shadow-sm">

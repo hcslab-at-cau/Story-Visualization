@@ -11,11 +11,11 @@ export interface GovernedReaderSupport {
 
 const DEFAULT_REENTRY_GAP_MS = 10 * 60 * 1000
 
-function isBesideVisualUnit(unit: SupportUnit): boolean {
+function isBesideVisualUnit(unit: SupportUnit, options: { visualUseful: boolean }): boolean {
+  if (unit.kind === "visual_context") return options.visualUseful
   return (
     unit.kind === "character_focus" ||
-    unit.kind === "spatial_continuity" ||
-    unit.kind === "visual_context"
+    unit.kind === "spatial_continuity"
   )
 }
 
@@ -28,8 +28,9 @@ function uniqueUnits(units: SupportUnit[]): SupportUnit[] {
   })
 }
 
-function triggerAllowed(unit: SupportUnit, options: { reentryActive: boolean }): boolean {
+function triggerAllowed(unit: SupportUnit, options: { reentryActive: boolean; visualUseful: boolean }): boolean {
   if (unit.kind === "reentry_recap") return options.reentryActive
+  if (unit.kind === "visual_context") return options.visualUseful
   return false
 }
 
@@ -38,6 +39,7 @@ export function governReaderSupport(
   options: {
     resumeGapMs?: number
     reentryGapMs?: number
+    visualUseful?: boolean
   } = {},
 ): GovernedReaderSupport {
   if (!support) {
@@ -52,6 +54,7 @@ export function governReaderSupport(
   }
 
   const reentryActive = (options.resumeGapMs ?? 0) >= (options.reentryGapMs ?? DEFAULT_REENTRY_GAP_MS)
+  const visualUseful = options.visualUseful ?? true
   const plan = support.display_plan
 
   if (!plan) {
@@ -69,9 +72,14 @@ export function governReaderSupport(
 
   const beforeText = plan.default_visible.slice(0, 1)
   const overflowVisible = plan.default_visible.slice(1)
-  const besideVisual = plan.expandable.filter(isBesideVisualUnit)
-  const expandableOnDemand = plan.expandable.filter((unit) => !isBesideVisualUnit(unit))
-  const triggered = plan.trigger_only.filter((unit) => triggerAllowed(unit, { reentryActive }))
+  const runtimeSuppressed = visualUseful
+    ? []
+    : [...plan.expandable, ...plan.trigger_only].filter((unit) => unit.kind === "visual_context")
+  const expandable = plan.expandable.filter((unit) => !runtimeSuppressed.includes(unit))
+  const triggerOnly = plan.trigger_only.filter((unit) => !runtimeSuppressed.includes(unit))
+  const besideVisual = expandable.filter((unit) => isBesideVisualUnit(unit, { visualUseful }))
+  const expandableOnDemand = expandable.filter((unit) => !isBesideVisualUnit(unit, { visualUseful }))
+  const triggered = triggerOnly.filter((unit) => triggerAllowed(unit, { reentryActive, visualUseful }))
   const hiddenTriggerCount = Math.max(0, plan.trigger_only.length - triggered.length)
 
   return {
@@ -79,7 +87,7 @@ export function governReaderSupport(
     besideVisual,
     onDemand: uniqueUnits([...overflowVisible, ...expandableOnDemand, ...triggered]),
     hiddenTriggerCount,
-    suppressedCount: plan.suppressed.length,
+    suppressedCount: plan.suppressed.length + runtimeSuppressed.length,
     reentryActive,
   }
 }

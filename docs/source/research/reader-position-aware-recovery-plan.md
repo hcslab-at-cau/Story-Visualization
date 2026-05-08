@@ -723,3 +723,25 @@ Support Governor가 필요한 순간에만 노출하는 구조를 만든다.
 - `action`, `reason`, `created_at`
 
 이 단계에서는 privacy-sensitive한 세부 행동을 많이 저장하지 않고, support exposure와 explicit open만 남긴다. 다음 단계에서 필요하면 `dismissed`, `suppressed`, `backscroll`, `long_pause`, `reference_tap`을 추가한다. 연구적으로 중요한 것은 “어떤 support가 생성되었는가”가 아니라 “어떤 support가 실제 reader state에서 사용되었는가”이므로, 이 로그는 이후 정성 연구와 policy ablation의 기본 자료가 된다.
+
+## 17. 구현 기록: VIS usefulness policy
+
+2026-05-08 구현에서 VIS는 기본 노출되는 정답형 support가 아니라, usefulness score에 따라 기본 노출 또는 minimized 상태로 분기되는 modality가 되었다.
+
+현재 rule 기반 score 입력:
+
+- 이미지 또는 blueprint 사용 가능 여부
+- `visual.chips` 수
+- overlay character anchor 수
+- 현재 support 후보 중 `spatial_continuity`, `visual_context` 존재 여부
+- scene title/summary/support body 안의 공간/이동 관련 단서
+- 대화/내면 중심 단서가 공간 단서보다 많은지 여부
+
+Reader 화면 정책:
+
+- `showImageByDefault=true`이면 기존처럼 이미지/overlay를 기본 노출한다.
+- usefulness가 낮지만 이미지가 있으면 `Visual support minimized` 접힘 영역으로 이동한다.
+- 이미지와 blueprint가 모두 없으면 큰 빈 이미지 프레임을 보여주지 않고, 짧은 unavailable notice만 보여준다.
+- Support Governor는 `visualUseful=false`일 때 `visual_context` support를 runtime-suppressed로 계산한다.
+
+이 변경의 목적은 VIS를 제거하는 것이 아니라, 공간 상황모델 복구에 실제로 도움이 될 가능성이 높은 장면에서만 독자의 주의를 요구하게 만드는 것이다. 이후에는 VIS.* artifact 자체에 `visual_usefulness_score`, `visual_primary_role`, `not_reliable_for`, `schematic_fallback_available` 같은 필드를 저장하는 방향으로 확장한다.
