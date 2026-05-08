@@ -527,6 +527,15 @@ SUP.4  Display Plan
 - support opened/dismissed/shown logging
 - VIS usefulness low이면 기본 suppress
 
+초기 구현 상태:
+
+- `src/lib/support-governor.ts`를 추가했다.
+- `ReaderScreen`이 `ReaderSupportPacket.display_plan`을 우선 해석한다.
+- 기본 visible support는 최대 1개로 제한한다.
+- `trigger_only` support는 기본으로 숨기고, `reentry_recap`은 10분 이상 session gap이 있을 때만 on-demand로 올린다.
+- 이전 artifact처럼 `display_plan`이 없는 support packet은 기존 slot을 읽되, `before_text`는 최대 1개로 제한한다.
+- 아직 서버 저장형 interaction logging은 구현하지 않았고, 현재는 브라우저 `localStorage`의 last-active timestamp만 사용한다.
+
 ### M6. Evaluation logging
 
 작업:

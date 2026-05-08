@@ -7,6 +7,7 @@
  */
 
 import { useEffect, useRef, useState, type ReactNode } from "react"
+import { governReaderSupport } from "@/lib/support-governor"
 import type {
   BookEntityThread,
   BookMemoryEdge,
@@ -28,6 +29,14 @@ import type {
 } from "@/types/schema"
 
 const CONF_THRESHOLD = 0.5
+const READER_REENTRY_GAP_MS = 10 * 60 * 1000
+
+function readResumeGapMs(docId: string): number {
+  if (typeof window === "undefined") return 0
+  const previous = Number(window.localStorage.getItem(`story-reader:last-active:${docId}`))
+  if (!Number.isFinite(previous) || previous <= 0) return 0
+  return Math.max(0, Date.now() - previous)
+}
 
 const READER_PANEL_BUTTON_META: Record<
   string,
@@ -721,6 +730,7 @@ export default function ReaderScreen({ final1, final2, bookMemory, readerRunId, 
   const [activePanel, setActivePanel] = useState<string | null>(null)
   const [activeMemoryTab, setActiveMemoryTab] = useState<MemoryTab>("bridges")
   const [showSceneSummary, setShowSceneSummary] = useState(false)
+  const [resumeGapMs] = useState(() => readResumeGapMs(final1.doc_id))
   const [selectedCharacterIds, setSelectedCharacterIds] = useState<string[]>([])
   const imageFrameRef = useRef<HTMLDivElement | null>(null)
   const preloadedImageUrlsRef = useRef<Set<string>>(new Set())
@@ -746,9 +756,13 @@ export default function ReaderScreen({ final1, final2, bookMemory, readerRunId, 
     activeSubsceneId,
     selectedCharacterIds: resolvedSelectedCharacterIds,
   })
-  const supportBeforeText = packet.support?.display_slots.before_text ?? []
-  const supportBesideVisual = packet.support?.display_slots.beside_visual ?? []
-  const supportOnDemand = packet.support?.display_slots.on_demand ?? []
+  const governedSupport = governReaderSupport(packet.support, {
+    resumeGapMs,
+    reentryGapMs: READER_REENTRY_GAP_MS,
+  })
+  const supportBeforeText = governedSupport.beforeText
+  const supportBesideVisual = governedSupport.besideVisual
+  const supportOnDemand = governedSupport.onDemand
   const readerMemoryContext = packet
     ? buildReaderMemoryContext(bookMemory, final1, packet, readerRunId)
     : null
@@ -863,6 +877,25 @@ export default function ReaderScreen({ final1, final2, bookMemory, readerRunId, 
       image.src = imagePath
     }
   }, [final1.packets, sceneIdx])
+
+  useEffect(() => {
+    const storageKey = `story-reader:last-active:${final1.doc_id}`
+    window.localStorage.setItem(storageKey, String(Date.now()))
+
+    function markActive() {
+      window.localStorage.setItem(storageKey, String(Date.now()))
+    }
+
+    window.addEventListener("beforeunload", markActive)
+    return () => {
+      markActive()
+      window.removeEventListener("beforeunload", markActive)
+    }
+  }, [final1.doc_id])
+
+  useEffect(() => {
+    window.localStorage.setItem(`story-reader:last-active:${final1.doc_id}`, String(Date.now()))
+  }, [final1.doc_id, sceneIdx, subsceneIdx])
 
   if (!packet) return <div className="p-8 text-zinc-400">No scenes available.</div>
 
