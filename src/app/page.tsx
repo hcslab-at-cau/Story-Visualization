@@ -32,6 +32,10 @@ function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
+function formatChapterLabel(chapter: ChapterMeta, visibleIndex: number): string {
+  return `${visibleIndex + 1}. ${chapter.title}`
+}
+
 export default function Home() {
   const [view, setView] = useState<View>("upload")
   const [docId, setDocId] = useState("")
@@ -211,9 +215,9 @@ export default function Home() {
                       onChange={(event) => handlePipelineChapterChange(event.target.value)}
                       className="min-w-0 flex-1 rounded-lg border border-zinc-200 bg-white px-3 py-2 text-base"
                     >
-                      {chapters.map((chapter) => (
+                      {chapters.map((chapter, index) => (
                         <option key={chapter.chapterId} value={chapter.chapterId}>
-                          {`Chapter ${chapter.index + 1} - ${chapter.title}`}
+                          {formatChapterLabel(chapter, index)}
                         </option>
                       ))}
                     </select>
@@ -398,9 +402,9 @@ function ReaderChapterControl({
         disabled={disabled}
         className="min-w-[260px] rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-sm disabled:cursor-not-allowed disabled:opacity-60"
       >
-        {chapters.map((chapter) => (
+        {chapters.map((chapter, index) => (
           <option key={chapter.chapterId} value={chapter.chapterId}>
-            {`Chapter ${chapter.index + 1} - ${chapter.title}`}
+            {formatChapterLabel(chapter, index)}
           </option>
         ))}
       </select>
@@ -469,9 +473,9 @@ function GraphView({
               onChange={(event) => onChapterChange(event.target.value)}
               className="min-w-[300px] rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm"
             >
-              {chapters.map((chapter) => (
+              {chapters.map((chapter, index) => (
                 <option key={chapter.chapterId} value={chapter.chapterId}>
-                  {`Chapter ${chapter.index + 1} - ${chapter.title}`}
+                  {formatChapterLabel(chapter, index)}
                 </option>
               ))}
             </select>
@@ -634,9 +638,9 @@ function LegacyArchiveView() {
                 onChange={(event) => handleChapterChange(event.target.value)}
                 className="min-w-[320px] rounded-lg border border-zinc-200 bg-white px-3 py-2 text-base"
               >
-                {chapters.map((chapter) => (
+                {chapters.map((chapter, index) => (
                   <option key={chapter.chapterId} value={chapter.chapterId}>
-                    {`Chapter ${chapter.index + 1} - ${chapter.title}`}
+                    {formatChapterLabel(chapter, index)}
                   </option>
                 ))}
               </select>

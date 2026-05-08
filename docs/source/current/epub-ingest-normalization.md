@@ -10,6 +10,7 @@ Implemented behavior:
 - Existing saved documents are also filtered at `listChapters`, so `pg-header` / `pg-footer` style chapters stop appearing in the UI and in future BOOK.0 builds.
 - Chapter titles are no longer taken blindly from manifest IDs such as `item4`.
 - Display title selection order is TOC title, HTML heading, non-generic manifest title, first heading-like paragraph, then sequential fallback.
+- Chapter selectors and Book Memory run selection display visible-list numbering such as `1. CHAPTER I...` instead of the raw EPUB/spine index such as `Chapter 3 - ...`.
 - Saved `RawChapter.source` now keeps normalization metadata: `manifest_id`, `original_title`, `toc_title`, `heading_title`, `classification`, `classification_reason`, and `source_unit_ids`.
 
 Current limits:

@@ -312,7 +312,7 @@ export default function BookMemoryPanel({
 
         <div className="max-h-[360px] overflow-y-auto p-3">
           <div className="grid gap-2">
-            {chapters.map((chapter) => {
+            {chapters.map((chapter, index) => {
               const runs = runsByChapter[chapter.chapterId] ?? []
               const selectedRunId = selectedRunIds[chapter.chapterId] ?? ""
               const autoResolvedRunId = autoResolvedRunIds[chapter.chapterId]
@@ -326,7 +326,7 @@ export default function BookMemoryPanel({
                   <div className="min-w-0">
                     <div className="flex items-center gap-2">
                       <p className="truncate text-sm font-semibold text-zinc-800">
-                        {`Chapter ${chapter.index + 1} - ${chapter.title}`}
+                        {`${index + 1}. ${chapter.title}`}
                       </p>
                       {chapter.chapterId === currentChapterId && (
                         <span className="shrink-0 rounded-full bg-sky-50 px-2 py-0.5 text-[11px] text-sky-700">
