@@ -55,6 +55,12 @@ export interface ChapterSource {
   type: string; // "toc" | "spine" | "heading"
   toc_title?: string;
   hrefs: string[];
+  manifest_id?: string;
+  original_title?: string;
+  heading_title?: string;
+  classification?: string;
+  classification_reason?: string;
+  source_unit_ids?: string[];
 }
 
 export interface RawChapter {

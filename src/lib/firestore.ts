@@ -14,6 +14,7 @@ import {
   createBookMemoryRunId,
   type BookMemoryChapterInput,
 } from "./book-memory"
+import { displayChapterTitle, isLikelyNonStoryChapter } from "./chapter-normalization"
 import { explainAdminCredentialError, getAdminDb } from "./firebase-admin"
 import { projectKnowledgeGraphArtifact } from "./knowledge-graph"
 import { stageKey } from "./stage-key"
@@ -445,12 +446,20 @@ export async function listChapters(
       .map((d) => {
         const data = d.data() as DocumentData
         const raw = data.raw as RawChapter | undefined
+        const index = parseInt(d.id.replace(/\D/g, "") || "0", 10)
         return {
           chapterId: d.id,
-          title: raw?.title ?? d.id,
-          index: parseInt(d.id.replace(/\D/g, "") || "0", 10),
+          title: displayChapterTitle(raw, d.id, index),
+          index,
+          raw,
         }
       })
+      .filter((chapter) => !isLikelyNonStoryChapter(chapter.raw, chapter.chapterId))
+      .map((chapter) => ({
+        chapterId: chapter.chapterId,
+        title: chapter.title,
+        index: chapter.index,
+      }))
       .sort((a, b) => a.index - b.index)
   })
 }
