@@ -494,6 +494,14 @@ SUP.4  Display Plan
 
 첫 버전은 deterministic retrieval로 충분하다.
 
+초기 구현 상태:
+
+- `/api/support-context` GET endpoint를 추가했다.
+- 입력은 `docId`, `chapterId`, `sceneId`, 선택적 `bookRunId`, `supportKind`, `readerPid`다.
+- `BOOK.0` snapshot을 읽어 현재 scene 기준 incoming/outgoing edge, causal edge, place chain, entity thread, nearby scene, evidence ref를 반환한다.
+- 현재 reader position 이후 scene/edge/thread occurrence는 safety filter에서 제거한다.
+- 이 API는 아직 SUP.1~SUP.7 생성에 자동 주입되지는 않았고, 다음 단계에서 `SUP.V`/Support Governor와 연결한다.
+
 ### M3. SUP.V rule-based scorer
 
 작업:
