@@ -92,6 +92,11 @@
 - `research/evaluation-plan.md`
   - offline evaluation, pilot study, logging, success criteria
 
+- `research/reader-position-aware-recovery-plan.md`
+  - 이번 대화와 2026-05-13 발표자료에서 정리된 통합 계획
+  - `SUP.*`, `BOOK.0`, Narrative Relation Graph, Support Governor를 연결하는 다음 구현 순서
+  - 기존 Narrative RAG/KG와의 차별점, schema 변경, retrieval API, verifier/scorer, runtime policy
+
 ## `review/`
 
 구현 상태, 문서, 향후 계획 사이의 차이를 점검하는 문서들이다.
@@ -130,8 +135,9 @@
 
 1. `research/direction-roadmap.md`
 2. `research/narrative-relation-graph.md`
-3. `research/evaluation-plan.md`
-4. `review/current-implementation-vs-docs.md`
+3. `research/reader-position-aware-recovery-plan.md`
+4. `research/evaluation-plan.md`
+5. `review/current-implementation-vs-docs.md`
 
 ## 추가 문서
 

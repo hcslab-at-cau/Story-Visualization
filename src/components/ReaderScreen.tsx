@@ -488,7 +488,7 @@ function CrossChapterMemoryPanel({
         ))}
       </div>
 
-      <div className="p-4">
+      <div className="max-h-[360px] overflow-y-auto p-4">
         {activeTab === "bridges" && (
           <div className="grid gap-3">
             {context.incomingEdges.map((edge) => (
@@ -916,7 +916,7 @@ export default function ReaderScreen({ final1, final2, bookMemory, readerRunId, 
         </div>
       </div>
 
-      <div className="grid gap-7 xl:grid-cols-[minmax(0,1.12fr)_minmax(740px,1.14fr)] 2xl:grid-cols-[minmax(0,1.16fr)_minmax(860px,1.18fr)]">
+      <div className="grid gap-7 xl:grid-cols-[minmax(0,1fr)_minmax(360px,560px)] 2xl:grid-cols-[minmax(0,1fr)_minmax(420px,640px)]">
         <div className="flex min-w-0 flex-col gap-5">
           {packet.subscene_nav.length > 0 && (
             <div className="flex flex-col gap-1.5 rounded-xl border border-zinc-200 bg-zinc-50 px-4 py-3">
@@ -985,7 +985,14 @@ export default function ReaderScreen({ final1, final2, bookMemory, readerRunId, 
           )}
         </div>
 
-        <div className="flex min-w-0 flex-col gap-5 xl:sticky xl:top-6 xl:max-h-[calc(100vh-9rem)] xl:self-start xl:overflow-y-auto xl:pr-2">
+        <div className="flex min-w-0 flex-col gap-5 xl:self-start">
+          <CrossChapterMemoryPanel
+            bookMemory={bookMemory}
+            context={readerMemoryContext}
+            activeTab={activeMemoryTab}
+            onTabChange={setActiveMemoryTab}
+          />
+
           <div
             className={`relative w-full overflow-hidden rounded-2xl border border-zinc-200 bg-zinc-100 shadow-sm ${
               packet.visual.image_path ? "" : "min-h-[420px]"
@@ -1045,93 +1052,96 @@ export default function ReaderScreen({ final1, final2, bookMemory, readerRunId, 
             )}
           </div>
 
-          <CrossChapterMemoryPanel
-            bookMemory={bookMemory}
-            context={readerMemoryContext}
-            activeTab={activeMemoryTab}
-            onTabChange={setActiveMemoryTab}
-          />
-
           {subsceneView && (
-            <div className="flex flex-col gap-4 rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
-                  {focusContext.mode === "global"
-                    ? "Subscene View"
-                    : focusContext.mode === "character"
-                      ? "Character View"
-                      : "Pair View"}
-                </p>
-                <h3 className="mt-2 text-lg font-semibold text-zinc-900">{focusContext.title}</h3>
-                <p className="mt-1 text-sm text-zinc-500">{focusContext.subtitle}</p>
-                <p className="mt-3 text-[15px] leading-7 text-zinc-700">{focusContext.summary}</p>
-              </div>
-
-              {focusContext.hints.length > 0 && (
-                <div className="grid gap-3 sm:grid-cols-2">
-                  {focusContext.hints.map((hint, index) => (
-                    <div
-                      key={`${focusContext.mode}:hint:${hint.label}:${index}`}
-                      className="rounded-xl border border-zinc-200 bg-zinc-50 px-4 py-3"
-                    >
-                      <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
-                        {hint.label}
-                      </p>
-                      <p className="mt-2 text-sm leading-6 text-zinc-700">{hint.text}</p>
-                    </div>
-                  ))}
+            <details className="rounded-xl border border-zinc-200 bg-white shadow-sm">
+              <summary className="cursor-pointer px-4 py-3 text-sm font-semibold text-zinc-700">
+                Scene focus details
+              </summary>
+              <div className="flex flex-col gap-4 border-t border-zinc-200 bg-zinc-50/60 p-4">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
+                    {focusContext.mode === "global"
+                      ? "Subscene View"
+                      : focusContext.mode === "character"
+                        ? "Character View"
+                        : "Pair View"}
+                  </p>
+                  <h3 className="mt-2 text-lg font-semibold text-zinc-900">{focusContext.title}</h3>
+                  <p className="mt-1 text-sm text-zinc-500">{focusContext.subtitle}</p>
+                  <p className="mt-3 text-[15px] leading-7 text-zinc-700">{focusContext.summary}</p>
                 </div>
-              )}
 
-              <div className="flex flex-wrap gap-1.5">
-                {READER_PANEL_BUTTON_ORDER.map((buttonKey) => {
-                  const button = focusContext.buttons.find((item) => item.key === buttonKey)
-                  const enabled = Boolean(focusContext.panels[buttonKey])
-                  const active = enabled && activePanel === buttonKey
-                  return (
-                    <button
-                      key={buttonKey}
-                      type="button"
-                      disabled={!enabled}
-                      onClick={() => {
-                        if (!enabled) return
-                        setActivePanel(activePanel === buttonKey ? null : buttonKey)
-                      }}
-                      className={`flex items-center gap-2 rounded-2xl border px-4 py-2.5 text-sm font-medium transition-colors ${
-                        !enabled
-                          ? "cursor-not-allowed border-zinc-200 bg-zinc-100 text-zinc-400"
-                          : active
-                            ? (READER_PANEL_BUTTON_META[buttonKey]?.active ?? "border-zinc-800 bg-zinc-800 text-white shadow-sm")
-                            : (READER_PANEL_BUTTON_META[buttonKey]?.idle ?? "border-zinc-300 bg-white text-zinc-700 hover:border-zinc-400")
-                      }`}
-                    >
-                      <span
-                        className={`flex h-6 w-6 items-center justify-center rounded-full text-[11px] font-semibold ${
-                          enabled ? "bg-white/75 text-current" : "bg-white/60 text-zinc-400"
+                {focusContext.hints.length > 0 && (
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    {focusContext.hints.map((hint, index) => (
+                      <div
+                        key={`${focusContext.mode}:hint:${hint.label}:${index}`}
+                        className="rounded-xl border border-zinc-200 bg-white px-4 py-3"
+                      >
+                        <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
+                          {hint.label}
+                        </p>
+                        <p className="mt-2 text-sm leading-6 text-zinc-700">{hint.text}</p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                <div className="flex flex-wrap gap-1.5">
+                  {READER_PANEL_BUTTON_ORDER.map((buttonKey) => {
+                    const button = focusContext.buttons.find((item) => item.key === buttonKey)
+                    const enabled = Boolean(focusContext.panels[buttonKey])
+                    const active = enabled && activePanel === buttonKey
+                    return (
+                      <button
+                        key={buttonKey}
+                        type="button"
+                        disabled={!enabled}
+                        onClick={() => {
+                          if (!enabled) return
+                          setActivePanel(activePanel === buttonKey ? null : buttonKey)
+                        }}
+                        className={`flex items-center gap-2 rounded-2xl border px-4 py-2.5 text-sm font-medium transition-colors ${
+                          !enabled
+                            ? "cursor-not-allowed border-zinc-200 bg-zinc-100 text-zinc-400"
+                            : active
+                              ? (READER_PANEL_BUTTON_META[buttonKey]?.active ?? "border-zinc-800 bg-zinc-800 text-white shadow-sm")
+                              : (READER_PANEL_BUTTON_META[buttonKey]?.idle ?? "border-zinc-300 bg-white text-zinc-700 hover:border-zinc-400")
                         }`}
                       >
-                        {READER_PANEL_BUTTON_META[buttonKey]?.icon ?? "i"}
-                      </span>
-                      <span>{READER_PANEL_BUTTON_LABEL[buttonKey] ?? button?.label ?? buttonKey}</span>
-                    </button>
-                  )
-                })}
-              </div>
-
-              {activePanel && focusContext.panels[activePanel] && (
-                <div className="rounded-lg border border-zinc-200 bg-zinc-50 p-3 text-sm leading-7 text-zinc-600">
-                  {focusContext.panels[activePanel]}
+                        <span
+                          className={`flex h-6 w-6 items-center justify-center rounded-full text-[11px] font-semibold ${
+                            enabled ? "bg-white/75 text-current" : "bg-white/60 text-zinc-400"
+                          }`}
+                        >
+                          {READER_PANEL_BUTTON_META[buttonKey]?.icon ?? "i"}
+                        </span>
+                        <span>{READER_PANEL_BUTTON_LABEL[buttonKey] ?? button?.label ?? buttonKey}</span>
+                      </button>
+                    )
+                  })}
                 </div>
-              )}
-            </div>
+
+                {activePanel && focusContext.panels[activePanel] && (
+                  <div className="rounded-lg border border-zinc-200 bg-white p-3 text-sm leading-7 text-zinc-600">
+                    {focusContext.panels[activePanel]}
+                  </div>
+                )}
+              </div>
+            </details>
           )}
 
           {supportBesideVisual.length > 0 && (
-            <div className="grid gap-3">
-              {supportBesideVisual.map((unit) => (
-                <SupportUnitCard key={unit.unit_id} unit={unit} compact />
-              ))}
-            </div>
+            <details className="rounded-xl border border-zinc-200 bg-white shadow-sm">
+              <summary className="cursor-pointer px-4 py-3 text-sm font-semibold text-zinc-700">
+                Cast / place / visual cues ({supportBesideVisual.length})
+              </summary>
+              <div className="grid gap-3 border-t border-zinc-200 bg-zinc-50/60 p-4">
+                {supportBesideVisual.map((unit) => (
+                  <SupportUnitCard key={unit.unit_id} unit={unit} compact />
+                ))}
+              </div>
+            </details>
           )}
         </div>
       </div>

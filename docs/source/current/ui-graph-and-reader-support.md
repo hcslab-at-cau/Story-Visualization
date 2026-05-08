@@ -84,6 +84,23 @@
 
 이 배치는 독자에게 모든 정보를 한 번에 밀어 넣지 않고, 본문 흐름을 방해하지 않는 범위에서 복구 정보를 제공하기 위한 것이다.
 
+### Cross-chapter Memory 배치
+
+`BOOK.0`이 있는 경우 Reader 오른쪽 rail 상단에 `Cross-chapter Memory` 패널을 먼저 배치한다.
+
+이 패널은 현재 scene과 연결된 cross-chapter edge, 반복 entity thread, 주변 scene path를 확인하기 위한 것이다. 이전 구현처럼 이미지 아래에 두거나 오른쪽 rail 전체를 sticky/internal scroll로 묶으면 창 높이가 낮을 때 패널이 잘려 보이거나 발견하기 어렵다.
+
+현재 정책:
+
+- 오른쪽 rail 전체에는 `sticky`, 고정 `max-height`, 강제 내부 스크롤을 두지 않는다.
+- `Cross-chapter Memory`는 이미지보다 먼저 보이게 둔다.
+- 패널 내부 edge list만 제한 높이와 내부 스크롤을 갖는다.
+- `Subscene View`와 `Cast / place / visual cues`는 독자 기본 노출 정보가 아니라 접힌 보조 details로 둔다.
+
+해석:
+
+`Subscene View`, `Character View`, `Pair View`는 원래 SUB/FINAL 결과를 확인하고 character overlay 선택에 반응하기 위한 focus panel 성격이 강하다. 연구/디버깅에는 유용하지만 독자에게 항상 열려 있으면 정보량이 과하다. 따라서 삭제하지 않고, 필요할 때 펼치는 보조 정보로 낮춘다.
+
 ---
 
 ## 5. UX 방향
