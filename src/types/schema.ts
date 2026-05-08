@@ -801,6 +801,81 @@ export type SupportUnitKind =
 
 export type SupportDisplayMode = "inline_chip" | "side_card" | "popover" | "drawer";
 
+export type ReaderProblem =
+  | "boundary_update"
+  | "state_recovery"
+  | "causal_gap"
+  | "reference_ambiguity"
+  | "character_reentry"
+  | "relation_delta"
+  | "spatial_disorientation"
+  | "session_reentry";
+
+export type SupportSpoilerRisk = "none" | "low" | "medium" | "high";
+
+export type SupportDefaultDisplay =
+  | "visible"
+  | "expandable"
+  | "trigger_only"
+  | "suppressed";
+
+export type SupportTriggerCondition =
+  | "scene_boundary"
+  | "large_boundary_shift"
+  | "session_reentry"
+  | "reader_request"
+  | "reference_tap"
+  | "character_selection"
+  | "visual_usefulness_high"
+  | "evidence_request";
+
+export type SupportSuppressionReason =
+  | "low_value"
+  | "redundant"
+  | "low_confidence"
+  | "spoiler_risk"
+  | "too_intrusive"
+  | "visual_low"
+  | "unsupported";
+
+export interface ReaderPosition {
+  chapter_id: string;
+  scene_id?: string;
+  subscene_id?: string;
+  pid?: number;
+}
+
+export interface NarrativeClaim {
+  claim_id: string;
+  claim_type: "state" | "event" | "relation" | "causal" | "place" | "goal";
+  subject_refs: string[];
+  object_refs: string[];
+  text: string;
+  evidence_refs: SupportEvidenceRef[];
+  support_level: "explicit" | "strong_inference" | "weak_inference";
+  confidence: number;
+  reveal_start: ReaderPosition;
+  reveal_end?: ReaderPosition;
+  spoiler_risk: SupportSpoilerRisk;
+  scope:
+    | "actual"
+    | "memory"
+    | "imagination"
+    | "hypothetical"
+    | "dialogue_claim"
+    | "unreliable"
+    | "metaphor";
+  source_run_id: string;
+}
+
+export interface SupportRuntimeRule {
+  rule_id: string;
+  unit_id: string;
+  trigger: SupportTriggerCondition;
+  action: "show" | "expand" | "enable" | "suppress";
+  reason: string;
+}
+
 export interface SupportEvidenceRef {
   scene_id: string;
   subscene_id?: string;
@@ -910,6 +985,7 @@ export interface SupportUnit {
   unit_id: string;
   scene_id: string;
   kind: SupportUnitKind;
+  reader_problem?: ReaderProblem;
   label: string;
   title: string;
   body: string;
@@ -917,6 +993,18 @@ export interface SupportUnit {
   display_mode: SupportDisplayMode;
   evidence: SupportEvidenceRef[];
   source_stage_ids: string[];
+  confidence?: number;
+  grounding_score?: number;
+  usefulness_score?: number;
+  intrusion_cost?: number;
+  redundancy_cost?: number;
+  spoiler_risk?: SupportSpoilerRisk;
+  default_display?: SupportDefaultDisplay;
+  trigger_preconditions?: SupportTriggerCondition[];
+  suppression_reason?: SupportSuppressionReason;
+  redundancy_key?: string;
+  score_notes?: string[];
+  claims?: NarrativeClaim[];
 }
 
 export interface SupportSnapshotScene {
@@ -967,6 +1055,11 @@ export interface SupportPolicyScene {
   scene_id: string;
   selected_units: SupportUnit[];
   deferred_units: SupportUnit[];
+  suppressed_units?: Array<{
+    unit: SupportUnit;
+    reason: SupportSuppressionReason;
+    note?: string;
+  }>;
   policy_notes: string[];
 }
 
@@ -986,6 +1079,43 @@ export interface ReaderSupportPacket {
     beside_visual: SupportUnit[];
     on_demand: SupportUnit[];
   };
+  display_plan?: ReaderSupportPlan;
+}
+
+export interface ReaderSupportPlan {
+  scene_id: string;
+  candidate_units: SupportUnit[];
+  default_visible: SupportUnit[];
+  expandable: SupportUnit[];
+  trigger_only: SupportUnit[];
+  suppressed: Array<{
+    unit_id: string;
+    reason: SupportSuppressionReason;
+    note?: string;
+  }>;
+  runtime_rules: SupportRuntimeRule[];
+}
+
+export interface ReaderSession {
+  session_id: string;
+  doc_id: string;
+  reader_id?: string;
+  current_chapter_id: string;
+  current_scene_id: string;
+  current_pid?: number;
+  last_active_at: string;
+  last_scene_key?: string;
+  support_fatigue_score: number;
+}
+
+export interface ReaderSupportEvent {
+  event_id: string;
+  session_id: string;
+  scene_key: string;
+  unit_id: string;
+  action: "shown" | "opened" | "dismissed" | "suppressed";
+  reason?: string;
+  created_at: string;
 }
 
 export interface ReaderSupportPackageLog extends ArtifactBase {

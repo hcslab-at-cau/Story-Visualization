@@ -1,12 +1,15 @@
 import type {
   GroundedSceneModel,
+  ReaderProblem,
   ReaderSupportPackageLog,
+  ReaderSupportPlan,
   ReaderSupportPacket,
   SceneBoundaries,
   ScenePackets,
   SharedSupportRepresentation,
   SupportCausalBridges,
   SupportCharacterRelations,
+  SupportDefaultDisplay,
   SupportEvidenceRef,
   SupportMemoryEdge,
   SupportMemoryEvent,
@@ -15,7 +18,10 @@ import type {
   SupportPolicySelection,
   SupportReentryReference,
   SupportSceneContext,
+  SupportSpoilerRisk,
   SupportSnapshots,
+  SupportSuppressionReason,
+  SupportTriggerCondition,
   SupportUnit,
   SupportUnitKind,
   ValidatedSubscene,
@@ -140,6 +146,111 @@ function firstEvidence(scene: SupportMemoryScene, sourceStage = "SCENE.3"): Supp
     : [{ scene_id: scene.scene_id, source_stage: sourceStage }]
 }
 
+function readerProblemForKind(kind: SupportUnitKind): ReaderProblem {
+  switch (kind) {
+    case "boundary_delta":
+      return "boundary_update"
+    case "causal_bridge":
+      return "causal_gap"
+    case "character_focus":
+      return "character_reentry"
+    case "relation_delta":
+      return "relation_delta"
+    case "reentry_recap":
+      return "session_reentry"
+    case "reference_repair":
+      return "reference_ambiguity"
+    case "spatial_continuity":
+    case "visual_context":
+      return "spatial_disorientation"
+    case "snapshot":
+    default:
+      return "state_recovery"
+  }
+}
+
+function defaultDisplayForKind(kind: SupportUnitKind): SupportDefaultDisplay {
+  switch (kind) {
+    case "snapshot":
+    case "boundary_delta":
+      return "visible"
+    case "reentry_recap":
+    case "reference_repair":
+    case "visual_context":
+      return "trigger_only"
+    case "causal_bridge":
+    case "character_focus":
+    case "relation_delta":
+    case "spatial_continuity":
+    default:
+      return "expandable"
+  }
+}
+
+function triggerConditionsForKind(kind: SupportUnitKind): SupportTriggerCondition[] {
+  switch (kind) {
+    case "boundary_delta":
+      return ["scene_boundary"]
+    case "causal_bridge":
+      return ["reader_request"]
+    case "character_focus":
+    case "relation_delta":
+      return ["character_selection", "reader_request"]
+    case "reentry_recap":
+      return ["session_reentry"]
+    case "reference_repair":
+      return ["reference_tap"]
+    case "visual_context":
+      return ["visual_usefulness_high"]
+    case "spatial_continuity":
+      return ["reader_request"]
+    case "snapshot":
+    default:
+      return ["large_boundary_shift", "session_reentry", "reader_request"]
+  }
+}
+
+function spoilerRiskForKind(kind: SupportUnitKind): SupportSpoilerRisk {
+  switch (kind) {
+    case "causal_bridge":
+    case "relation_delta":
+    case "reentry_recap":
+      return "low"
+    default:
+      return "none"
+  }
+}
+
+function intrusionCostForKind(kind: SupportUnitKind): number {
+  switch (kind) {
+    case "boundary_delta":
+      return 0.15
+    case "reference_repair":
+      return 0.2
+    case "causal_bridge":
+    case "spatial_continuity":
+      return 0.35
+    case "snapshot":
+    case "character_focus":
+    case "relation_delta":
+      return 0.45
+    case "visual_context":
+    case "reentry_recap":
+    default:
+      return 0.55
+  }
+}
+
+function groundingScoreForEvidence(evidence: SupportEvidenceRef[]): number {
+  if (evidence.some((ref) => typeof ref.pid === "number" || Boolean(ref.text))) return 0.9
+  if (evidence.length > 0) return 0.72
+  return 0.45
+}
+
+function boundedScore(value: number): number {
+  return Math.max(0, Math.min(1, Number.isFinite(value) ? value : 0))
+}
+
 function makeUnit(params: {
   sceneId: string
   kind: SupportUnitKind
@@ -150,18 +261,117 @@ function makeUnit(params: {
   evidence: SupportEvidenceRef[]
   sourceStageIds: string[]
   displayMode?: SupportUnit["display_mode"]
+  confidence?: number
+  usefulnessScore?: number
+  intrusionCost?: number
+  redundancyCost?: number
+  defaultDisplay?: SupportDefaultDisplay
+  triggerPreconditions?: SupportTriggerCondition[]
+  scoreNotes?: string[]
 }): SupportUnit {
+  const priority = boundedScore(params.priority)
+  const groundingScore = groundingScoreForEvidence(params.evidence)
+  const confidence = boundedScore(params.confidence ?? Math.max(0.55, Math.min(0.96, priority * 0.92 + groundingScore * 0.08)))
+  const usefulnessScore = boundedScore(params.usefulnessScore ?? priority)
+  const intrusionCost = boundedScore(params.intrusionCost ?? intrusionCostForKind(params.kind))
+  const redundancyCost = boundedScore(params.redundancyCost ?? 0)
+
   return {
     unit_id: `${params.sceneId}:${params.kind}:${params.label.toLowerCase().replace(/[^a-z0-9]+/gi, "_")}`,
     scene_id: params.sceneId,
     kind: params.kind,
+    reader_problem: readerProblemForKind(params.kind),
     label: params.label,
     title: params.title,
     body: params.body,
-    priority: Math.max(0, Math.min(1, params.priority)),
+    priority,
     display_mode: params.displayMode ?? "side_card",
     evidence: params.evidence,
     source_stage_ids: params.sourceStageIds,
+    confidence,
+    grounding_score: groundingScore,
+    usefulness_score: usefulnessScore,
+    intrusion_cost: intrusionCost,
+    redundancy_cost: redundancyCost,
+    spoiler_risk: spoilerRiskForKind(params.kind),
+    default_display: params.defaultDisplay ?? defaultDisplayForKind(params.kind),
+    trigger_preconditions: params.triggerPreconditions ?? triggerConditionsForKind(params.kind),
+    redundancy_key: `${params.sceneId}:${params.kind}:${readerProblemForKind(params.kind)}`,
+    score_notes: params.scoreNotes ?? [
+      `usefulness=${usefulnessScore.toFixed(2)}`,
+      `grounding=${groundingScore.toFixed(2)}`,
+      `intrusion=${intrusionCost.toFixed(2)}`,
+    ],
+  }
+}
+
+function supportFinalScore(unit: SupportUnit): number {
+  const usefulness = unit.usefulness_score ?? unit.priority
+  const grounding = unit.grounding_score ?? groundingScoreForEvidence(unit.evidence)
+  const confidence = unit.confidence ?? unit.priority
+  const intrusion = unit.intrusion_cost ?? intrusionCostForKind(unit.kind)
+  const redundancy = unit.redundancy_cost ?? 0
+  const spoilerPenalty = unit.spoiler_risk === "high"
+    ? 1
+    : unit.spoiler_risk === "medium"
+      ? 0.55
+      : unit.spoiler_risk === "low"
+        ? 0.15
+        : 0
+  return usefulness * grounding * confidence - intrusion * 0.35 - redundancy * 0.25 - spoilerPenalty
+}
+
+function suppressionReasonFor(unit: SupportUnit): SupportSuppressionReason | undefined {
+  if (unit.spoiler_risk === "high") return "spoiler_risk"
+  if ((unit.confidence ?? 1) < 0.45 || (unit.grounding_score ?? 1) < 0.45) return "low_confidence"
+  if ((unit.usefulness_score ?? unit.priority) < 0.35) return "low_value"
+  if ((unit.intrusion_cost ?? 0) > 0.8) return "too_intrusive"
+  return undefined
+}
+
+function buildReaderSupportPlan(
+  sceneId: string,
+  candidateUnits: SupportUnit[],
+  suppressedUnits: Array<{ unit: SupportUnit; reason: SupportSuppressionReason; note?: string }>,
+): ReaderSupportPlan {
+  const defaultVisible = candidateUnits.filter((unit) => unit.default_display === "visible")
+  const expandable = candidateUnits.filter((unit) => unit.default_display === "expandable")
+  const triggerOnly = candidateUnits.filter((unit) => unit.default_display === "trigger_only")
+
+  return {
+    scene_id: sceneId,
+    candidate_units: candidateUnits,
+    default_visible: defaultVisible,
+    expandable,
+    trigger_only: triggerOnly,
+    suppressed: suppressedUnits.map((item) => ({
+      unit_id: item.unit.unit_id,
+      reason: item.reason,
+      note: item.note,
+    })),
+    runtime_rules: [
+      ...defaultVisible.map((unit) => ({
+        rule_id: `${unit.unit_id}:default-visible`,
+        unit_id: unit.unit_id,
+        trigger: "scene_boundary" as const,
+        action: "show" as const,
+        reason: "Default visible support for immediate scene recovery.",
+      })),
+      ...expandable.map((unit) => ({
+        rule_id: `${unit.unit_id}:expandable`,
+        unit_id: unit.unit_id,
+        trigger: "reader_request" as const,
+        action: "enable" as const,
+        reason: "Available on demand to reduce reading interruption.",
+      })),
+      ...triggerOnly.flatMap((unit) => (unit.trigger_preconditions ?? []).map((trigger) => ({
+        rule_id: `${unit.unit_id}:${trigger}`,
+        unit_id: unit.unit_id,
+        trigger,
+        action: "enable" as const,
+        reason: "Trigger-only support is hidden until the reader state warrants it.",
+      }))),
+    ],
   }
 }
 
@@ -654,7 +864,7 @@ export function runSupportPolicySelection(
       ...(causal.scenes.find((scene) => scene.scene_id === sceneId)?.units ?? []),
       ...(characterRelations.scenes.find((scene) => scene.scene_id === sceneId)?.units ?? []),
       ...(reentryReference.scenes.find((scene) => scene.scene_id === sceneId)?.units ?? []),
-    ].sort((a, b) => b.priority - a.priority)
+    ].sort((a, b) => supportFinalScore(b) - supportFinalScore(a))
   }
 
   return {
@@ -666,14 +876,23 @@ export function runSupportPolicySelection(
     parents,
     scenes: sceneIds.map((sceneId) => {
       const units = unitsFor(sceneId)
-      const selected = units.slice(0, 5)
+      const suppressed = units
+        .map((unit) => {
+          const reason = suppressionReasonFor(unit)
+          return reason ? { unit, reason, note: `final_score=${supportFinalScore(unit).toFixed(2)}` } : null
+        })
+        .filter((item): item is { unit: SupportUnit; reason: SupportSuppressionReason; note: string } => Boolean(item))
+      const eligible = units.filter((unit) => !suppressed.some((item) => item.unit.unit_id === unit.unit_id))
+      const selected = eligible.slice(0, 5)
       const selectedKinds = new Set(selected.map((unit) => unit.kind))
       return {
         scene_id: sceneId,
         selected_units: selected,
-        deferred_units: units.slice(5),
+        deferred_units: eligible.slice(5),
+        suppressed_units: suppressed,
         policy_notes: [
           `selected ${selected.length} of ${units.length} units`,
+          `suppressed ${suppressed.length} units`,
           selectedKinds.has("snapshot") ? "snapshot is available" : "snapshot missing",
           selectedKinds.has("causal_bridge") ? "causal context is available" : "causal context deferred or unavailable",
         ],
@@ -692,11 +911,18 @@ export function runReaderSupportPackage(
   const titleMap = new Map(sharedLog.scenes.map((scene) => [scene.scene_id, scene.scene_title]))
 
   const packets: ReaderSupportPacket[] = policyLog.scenes.map((scene) => {
-    const beforeText = scene.selected_units.filter((unit) => (
-      unit.kind === "snapshot" ||
-      unit.kind === "boundary_delta" ||
-      unit.kind === "causal_bridge"
-    ))
+    const supportPlan = buildReaderSupportPlan(
+      scene.scene_id,
+      [...scene.selected_units, ...scene.deferred_units],
+      scene.suppressed_units ?? [],
+    )
+    const visibleUnits = supportPlan.default_visible.slice(0, 1)
+    const beforeText = visibleUnits.length > 0
+      ? visibleUnits
+      : scene.selected_units.filter((unit) => (
+          unit.kind === "snapshot" ||
+          unit.kind === "boundary_delta"
+        )).slice(0, 1)
     const besideVisual = scene.selected_units.filter((unit) => (
       unit.kind === "character_focus" ||
       unit.kind === "spatial_continuity" ||
@@ -716,6 +942,7 @@ export function runReaderSupportPackage(
         beside_visual: besideVisual,
         on_demand: onDemand,
       },
+      display_plan: supportPlan,
     }
   })
 
