@@ -8,6 +8,7 @@ import KnowledgeGraphExplorer from "@/components/KnowledgeGraphExplorer"
 import { LanguageProvider, LanguageSwitcher, useUiStrings } from "@/components/LanguageProvider"
 import PipelineRunner from "@/components/PipelineRunner"
 import ReaderScreen from "@/components/ReaderScreen"
+import SupportSystemShowcase from "@/components/SupportSystemShowcase"
 import {
   deleteRun,
   listRuns,
@@ -529,6 +530,7 @@ function GraphView({
 
       {runId ? (
         <>
+          <SupportSystemShowcase docId={docId} chapterId={chapterId} runId={runId} />
           <BookMemoryPanel
             docId={docId}
             runId={runId}

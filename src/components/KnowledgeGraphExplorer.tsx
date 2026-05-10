@@ -1,6 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useState } from "react"
+import KnowledgeGraphCanvas from "@/components/KnowledgeGraphCanvas"
 import { useUiStrings } from "@/components/LanguageProvider"
 import {
   loadKnowledgeGraph,
@@ -207,6 +208,18 @@ export default function KnowledgeGraphExplorer({
         <div className="rounded-xl border border-dashed border-zinc-300 px-4 py-6 text-sm text-zinc-500">
           {t.graphExplorer.noProjection}
         </div>
+      )}
+
+      {graph && nodes.length > 0 && (
+        <KnowledgeGraphCanvas
+          nodes={nodes}
+          edges={edges}
+          selectedNodeId={selectedNodeId}
+          onSelectNode={(nodeId) => {
+            setSelectedNodeId(nodeId)
+            void loadGraph(nodeId)
+          }}
+        />
       )}
 
       <div className="grid min-h-[560px] gap-5 xl:grid-cols-[minmax(320px,0.85fr)_minmax(0,1.15fr)]">

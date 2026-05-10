@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useMemo, useState } from "react"
+import BookMemoryMap from "@/components/BookMemoryMap"
 import { useUiStrings } from "@/components/LanguageProvider"
 import {
   buildBookMemory,
@@ -397,6 +398,8 @@ export default function BookMemoryPanel({
             <StatCard label={t.bookMemory.edges} value={snapshot.edges.length} />
             <StatCard label={t.bookMemory.entityThreads} value={snapshot.entityThreads.length} />
           </div>
+
+          <BookMemoryMap snapshot={snapshot} />
 
           {snapshot.missingChapters.length > 0 && (
             <details className="rounded-xl border border-amber-200 bg-amber-50">
