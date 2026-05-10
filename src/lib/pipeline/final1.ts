@@ -12,6 +12,7 @@ import type {
   ReaderCharacterView,
   ReaderGlobalView,
   ReaderPairView,
+  ReaderSupportPackageLog,
   RenderedImages,
   SceneBoundaries,
   ScenePackets,
@@ -436,6 +437,7 @@ export function runSceneReaderPackage(
   blueprintLog?: BlueprintLike,
   interventionLog?: InterventionPackages,
   renderedImagesLog?: RenderedImagesLike,
+  supportLog?: ReaderSupportPackageLog,
 ): SceneReaderPackageLog {
   const pidText = new Map(chapter.paragraphs.map((p) => [p.pid, p.text]))
   const scenePidRange = new Map(
@@ -483,6 +485,7 @@ export function runSceneReaderPackage(
       scene_title: boundaryLog.scene_titles[sceneId] ?? "",
       scene_summary: (sceneIndex.scene_summary as string) ?? "",
       body_paragraphs: bodyParagraphs,
+      support: supportLog?.packets.find((packet) => packet.scene_id === sceneId),
       visual,
       subscene_nav: subsceneNav,
       subscene_views: subsceneViews,

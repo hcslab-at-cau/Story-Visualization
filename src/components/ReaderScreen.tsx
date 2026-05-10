@@ -7,6 +7,17 @@
  */
 
 import { useEffect, useRef, useState, type ReactNode } from "react"
+import { useUiStrings } from "@/components/LanguageProvider"
+import { governReaderSupport } from "@/lib/support-governor"
+import type { UiStrings } from "@/lib/ui-strings"
+import { scoreVisualSupport } from "@/lib/visual-support-policy"
+import type {
+  BookEntityThread,
+  BookMemoryEdge,
+  BookMemoryEdgeType,
+  BookMemorySceneRef,
+  BookMemorySnapshot,
+} from "@/types/book-memory"
 import type {
   CompactHint,
   OverlayCharacter,
@@ -15,11 +26,63 @@ import type {
   ReaderCharacterView,
   ReaderGlobalView,
   ReaderPairView,
+  ReaderSupportEvent,
   SceneReaderPackageLog,
   SceneReaderPacket,
+  SupportUnit,
 } from "@/types/schema"
 
 const CONF_THRESHOLD = 0.5
+const READER_REENTRY_GAP_MS = 10 * 60 * 1000
+
+function readResumeGapMs(docId: string): number {
+  if (typeof window === "undefined") return 0
+  const previous = Number(window.localStorage.getItem(`story-reader:last-active:${docId}`))
+  if (!Number.isFinite(previous) || previous <= 0) return 0
+  return Math.max(0, Date.now() - previous)
+}
+
+function createReaderSessionId(docId: string): string {
+  if (typeof window === "undefined") return `reader-session-${docId}`
+  const storageKey = `story-reader:session:${docId}`
+  const existing = window.localStorage.getItem(storageKey)
+  if (existing) return existing
+  const randomSuffix = Math.random().toString(36).slice(2, 10)
+  const sessionId = `reader_${Date.now().toString(36)}_${randomSuffix}`
+  window.localStorage.setItem(storageKey, sessionId)
+  return sessionId
+}
+
+function postReaderSupportEvent(params: {
+  docId: string
+  chapterId: string
+  sceneId: string
+  readerRunId: string
+  sessionId: string
+  unit: SupportUnit
+  action: ReaderSupportEvent["action"]
+  reason?: string
+}) {
+  const createdAt = new Date().toISOString()
+  void fetch("/api/support-events", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      doc_id: params.docId,
+      session_id: params.sessionId,
+      scene_key: `${params.chapterId}:${params.sceneId}`,
+      chapter_id: params.chapterId,
+      scene_id: params.sceneId,
+      reader_run_id: params.readerRunId,
+      unit_id: params.unit.unit_id,
+      unit_kind: params.unit.kind,
+      reader_problem: params.unit.reader_problem,
+      action: params.action,
+      reason: params.reason,
+      created_at: createdAt,
+    }),
+  }).catch(() => undefined)
+}
 
 const READER_PANEL_BUTTON_META: Record<
   string,
@@ -60,16 +123,6 @@ const READER_PANEL_BUTTON_META: Record<
     active: "border-cyan-500 bg-cyan-500 text-white shadow-sm",
     icon: "E",
   },
-}
-
-const READER_PANEL_BUTTON_LABEL: Record<string, string> = {
-  goal: "Goal",
-  problem: "Problem",
-  what_changed: "Change",
-  why_it_matters: "Impact",
-  object: "Object",
-  action: "Action",
-  event: "Event",
 }
 
 const READER_PANEL_BUTTON_ORDER = [
@@ -226,6 +279,386 @@ function CharacterButton({
   )
 }
 
+const MEMORY_EDGE_STYLE: Record<BookMemoryEdgeType, string> = {
+  chapter_sequence: "border-zinc-200 bg-zinc-50 text-zinc-700",
+  cross_chapter_character_thread: "border-amber-200 bg-amber-50 text-amber-800",
+  cross_chapter_same_place: "border-emerald-200 bg-emerald-50 text-emerald-800",
+  cross_chapter_place_shift: "border-cyan-200 bg-cyan-50 text-cyan-800",
+  cross_chapter_causal_bridge: "border-rose-200 bg-rose-50 text-rose-800",
+  entity_reappearance: "border-sky-200 bg-sky-50 text-sky-800",
+}
+
+type MemoryTab = "bridges" | "threads" | "path"
+
+interface ReaderMemoryContext {
+  sceneKey: string
+  sceneRef?: BookMemorySceneRef
+  chapterRunId?: string
+  runMatchesBookMemory: boolean
+  incomingEdges: BookMemoryEdge[]
+  outgoingEdges: BookMemoryEdge[]
+  threads: Array<{
+    thread: BookEntityThread
+    currentOccurrence?: BookEntityThread["occurrences"][number]
+    firstSceneMatch: boolean
+  }>
+  nearbyScenes: BookMemorySceneRef[]
+}
+
+function sceneKeyFor(chapterId: string, sceneId: string): string {
+  return `${chapterId}:${sceneId}`
+}
+
+function sortBookScenes(scenes: BookMemorySceneRef[]): BookMemorySceneRef[] {
+  return [...scenes].sort((a, b) => {
+    if (a.chapterIndex !== b.chapterIndex) return a.chapterIndex - b.chapterIndex
+    if (a.startPid !== b.startPid) return a.startPid - b.startPid
+    return a.sceneId.localeCompare(b.sceneId)
+  })
+}
+
+function sortMemoryEdges(edges: BookMemoryEdge[]): BookMemoryEdge[] {
+  const priority: Record<BookMemoryEdgeType, number> = {
+    cross_chapter_causal_bridge: 0,
+    cross_chapter_place_shift: 1,
+    cross_chapter_same_place: 2,
+    cross_chapter_character_thread: 3,
+    entity_reappearance: 4,
+    chapter_sequence: 5,
+  }
+  return [...edges].sort((a, b) => {
+    const priorityDelta = priority[a.type] - priority[b.type]
+    if (priorityDelta !== 0) return priorityDelta
+    return b.weight - a.weight
+  })
+}
+
+function buildReaderMemoryContext(
+  bookMemory: BookMemorySnapshot | undefined,
+  final1: SceneReaderPackageLog,
+  packet: SceneReaderPacket,
+  readerRunId: string,
+): ReaderMemoryContext | null {
+  if (!bookMemory) return null
+
+  const sceneKey = sceneKeyFor(final1.chapter_id, packet.scene_id)
+  const sceneMap = new Map(bookMemory.sceneRefs.map((scene) => [scene.sceneKey, scene]))
+  const orderedScenes = sortBookScenes(bookMemory.sceneRefs)
+  const sceneIndex = orderedScenes.findIndex((scene) => scene.sceneKey === sceneKey)
+  const nearbyScenes = sceneIndex >= 0
+    ? orderedScenes.slice(Math.max(0, sceneIndex - 1), Math.min(orderedScenes.length, sceneIndex + 2))
+    : []
+  const chapterRunId = bookMemory.chapterRunIds[final1.chapter_id]
+
+  const threads = bookMemory.entityThreads
+    .map((thread) => {
+      const currentOccurrence = thread.occurrences.find(
+        (occurrence) => occurrence.chapterId === final1.chapter_id,
+      )
+      if (!currentOccurrence) return null
+      return {
+        thread,
+        currentOccurrence,
+        firstSceneMatch: currentOccurrence.firstSceneKey === sceneKey,
+      }
+    })
+    .filter((item): item is NonNullable<typeof item> => Boolean(item))
+    .sort((a, b) => {
+      if (a.firstSceneMatch !== b.firstSceneMatch) return a.firstSceneMatch ? -1 : 1
+      return b.thread.totalMentions - a.thread.totalMentions
+    })
+
+  return {
+    sceneKey,
+    sceneRef: sceneMap.get(sceneKey),
+    chapterRunId,
+    runMatchesBookMemory: !chapterRunId || chapterRunId === readerRunId,
+    incomingEdges: sortMemoryEdges(bookMemory.edges.filter((edge) => edge.toSceneKey === sceneKey)),
+    outgoingEdges: sortMemoryEdges(bookMemory.edges.filter((edge) => edge.fromSceneKey === sceneKey)),
+    threads,
+    nearbyScenes,
+  }
+}
+
+function compactSceneLabel(scene: BookMemorySceneRef | undefined, fallbackKey: string): string {
+  if (!scene) return fallbackKey
+  return `${scene.chapterTitle} / ${scene.sceneTitle || scene.sceneId}`
+}
+
+function MemoryEdgeCard({
+  edge,
+  direction,
+  sceneMap,
+}: {
+  edge: BookMemoryEdge
+  direction: "incoming" | "outgoing"
+  sceneMap: Map<string, BookMemorySceneRef>
+}) {
+  const { t } = useUiStrings()
+  const otherSceneKey = direction === "incoming" ? edge.fromSceneKey : edge.toSceneKey
+  const otherScene = sceneMap.get(otherSceneKey)
+  const localizedDirectionLabel =
+    direction === "incoming" ? t.reader.memory.incoming : t.reader.memory.outgoing
+  const directionLabel = direction === "incoming" ? "이전 연결" : "다음 연결"
+
+  return (
+    <article className="rounded-xl border border-zinc-200 bg-white px-4 py-3 shadow-sm">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className={`rounded-full border px-2 py-0.5 text-[11px] font-semibold ${MEMORY_EDGE_STYLE[edge.type]}`}>
+          {t.reader.memory.edgeLabel[edge.type]}
+        </span>
+        <span className="text-[11px] font-medium text-zinc-400">{localizedDirectionLabel || directionLabel}</span>
+      </div>
+      <p className="mt-2 text-sm leading-6 text-zinc-700">{edge.label}</p>
+      <p className="mt-2 truncate text-xs text-zinc-400">
+        {direction === "incoming" ? `${t.reader.memory.from} ` : `${t.reader.memory.to} `}
+        {compactSceneLabel(otherScene, otherSceneKey)}
+      </p>
+      {edge.evidence.length > 0 && (
+        <p className="mt-1 text-[11px] text-zinc-400">{t.common.evidence} {edge.evidence.length}</p>
+      )}
+    </article>
+  )
+}
+
+function ThreadChip({
+  item,
+}: {
+  item: ReaderMemoryContext["threads"][number]
+}) {
+  const { t } = useUiStrings()
+  return (
+    <div className={`rounded-xl border px-3 py-2 ${
+      item.firstSceneMatch
+        ? "border-sky-200 bg-sky-50"
+        : "border-zinc-200 bg-white"
+    }`}>
+      <div className="flex items-center justify-between gap-3">
+        <p className="truncate text-sm font-semibold text-zinc-800">{item.thread.canonicalName}</p>
+        <span className="shrink-0 rounded-full bg-zinc-100 px-2 py-0.5 text-[11px] text-zinc-500">
+          {item.thread.chapters.length} {t.reader.memory.chaptersShort}
+        </span>
+      </div>
+      <p className="mt-1 text-xs text-zinc-500">
+        {item.thread.mentionType} / {t.reader.memory.mentions} {item.thread.totalMentions}
+      </p>
+      {item.firstSceneMatch && (
+        <p className="mt-1 text-[11px] font-medium text-sky-700">{t.reader.memory.reappearsHere}</p>
+      )}
+      {false && item.firstSceneMatch && (
+        <p className="mt-1 text-[11px] font-medium text-sky-700">이 장면에서 다시 등장</p>
+      )}
+    </div>
+  )
+}
+
+function CrossChapterMemoryPanel({
+  bookMemory,
+  context,
+  activeTab,
+  onTabChange,
+}: {
+  bookMemory?: BookMemorySnapshot
+  context: ReaderMemoryContext | null
+  activeTab: MemoryTab
+  onTabChange: (tab: MemoryTab) => void
+}) {
+  const { t } = useUiStrings()
+  if (!bookMemory) {
+    return (
+      <>
+      <div className="rounded-xl border border-dashed border-zinc-300 bg-white px-4 py-4 text-sm text-zinc-500">
+        {t.reader.memory.missing}
+      </div>
+      </>
+    )
+  }
+
+  if (!context) return null
+
+  const sceneMap = new Map(bookMemory.sceneRefs.map((scene) => [scene.sceneKey, scene]))
+  const bridgeEdges = [...context.incomingEdges, ...context.outgoingEdges]
+  const tabs: Array<{ key: MemoryTab; label: string; count: number }> = [
+    { key: "bridges", label: t.reader.memory.bridges, count: bridgeEdges.length },
+    { key: "threads", label: t.reader.memory.threads, count: context.threads.length },
+    { key: "path", label: t.reader.memory.path, count: context.nearbyScenes.length },
+  ]
+
+  return (
+    <section className="overflow-hidden rounded-2xl border border-zinc-200 bg-gradient-to-br from-stone-50 via-white to-sky-50 shadow-sm">
+      <div className="border-b border-zinc-200 px-4 py-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">{t.reader.memory.eyebrow}</p>
+            <h3 className="mt-1 text-base font-semibold text-zinc-900">
+              {context.sceneRef?.sceneTitle ?? context.sceneKey}
+            </h3>
+          </div>
+          <span className="rounded-full bg-white px-2.5 py-1 text-[11px] text-zinc-500 shadow-sm">
+            BOOK.0
+          </span>
+        </div>
+        {!context.runMatchesBookMemory && context.chapterRunId && (
+          <>
+          <p className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+            {t.reader.memory.runMismatch.replace("{runId}", context.chapterRunId)}
+          </p>
+          {false && context && (
+          <p className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+            현재 Reader run과 BOOK.0에 사용된 run이 다릅니다. BOOK.0 run: {context?.chapterRunId}
+          </p>
+          )}
+          </>
+        )}
+      </div>
+
+      <div className="flex gap-1 border-b border-zinc-200 bg-white/70 px-3 py-2">
+        {tabs.map((tab) => (
+          <button
+            key={tab.key}
+            type="button"
+            onClick={() => onTabChange(tab.key)}
+            className={`rounded-full px-3 py-1.5 text-xs font-medium transition-colors ${
+              activeTab === tab.key
+                ? "bg-zinc-900 text-white"
+                : "text-zinc-500 hover:bg-white hover:text-zinc-800"
+            }`}
+          >
+            {tab.label} {tab.count}
+          </button>
+        ))}
+      </div>
+
+      <div className="max-h-[360px] overflow-y-auto p-4">
+        {activeTab === "bridges" && (
+          <div className="grid gap-3">
+            {context.incomingEdges.map((edge) => (
+              <MemoryEdgeCard
+                key={edge.edgeId}
+                edge={edge}
+                direction="incoming"
+                sceneMap={sceneMap}
+              />
+            ))}
+            {context.outgoingEdges.map((edge) => (
+              <MemoryEdgeCard
+                key={edge.edgeId}
+                edge={edge}
+                direction="outgoing"
+                sceneMap={sceneMap}
+              />
+            ))}
+            {bridgeEdges.length === 0 && (
+              <>
+              <p className="rounded-xl border border-dashed border-zinc-300 bg-white px-4 py-5 text-sm text-zinc-500">
+                {t.reader.memory.noBridge}
+              </p>
+              {false && (
+              <p className="rounded-xl border border-dashed border-zinc-300 bg-white px-4 py-5 text-sm text-zinc-500">
+                이 scene에 직접 연결된 cross-chapter edge는 아직 없습니다.
+              </p>
+              )}
+              </>
+            )}
+          </div>
+        )}
+
+        {activeTab === "threads" && (
+          <div className="grid gap-2 sm:grid-cols-2">
+            {context.threads.slice(0, 10).map((item) => (
+              <ThreadChip key={item.thread.threadId} item={item} />
+            ))}
+            {context.threads.length === 0 && (
+              <>
+              <p className="rounded-xl border border-dashed border-zinc-300 bg-white px-4 py-5 text-sm text-zinc-500 sm:col-span-2">
+                {t.reader.memory.noThread}
+              </p>
+              {false && (
+              <p className="rounded-xl border border-dashed border-zinc-300 bg-white px-4 py-5 text-sm text-zinc-500 sm:col-span-2">
+                현재 챕터와 연결된 반복 entity thread가 없습니다.
+              </p>
+              )}
+              </>
+            )}
+          </div>
+        )}
+
+        {activeTab === "path" && (
+          <div className="grid gap-2">
+            {context.nearbyScenes.map((scene) => {
+              const active = scene.sceneKey === context.sceneKey
+              return (
+                <div
+                  key={scene.sceneKey}
+                  className={`rounded-xl border px-4 py-3 ${
+                    active
+                      ? "border-zinc-900 bg-zinc-900 text-white"
+                      : "border-zinc-200 bg-white text-zinc-700"
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="truncate text-sm font-semibold">{scene.sceneTitle || scene.sceneId}</p>
+                    <span className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] ${
+                      active ? "bg-white/15 text-white" : "bg-zinc-100 text-zinc-500"
+                    }`}>
+                      {active ? t.common.current : scene.chapterTitle}
+                    </span>
+                  </div>
+                  <p className={`mt-1 line-clamp-2 text-xs leading-5 ${
+                    active ? "text-zinc-200" : "text-zinc-500"
+                  }`}>
+                    {scene.summary}
+                  </p>
+                </div>
+              )
+            })}
+            {context.nearbyScenes.length === 0 && (
+              <>
+              <p className="rounded-xl border border-dashed border-zinc-300 bg-white px-4 py-5 text-sm text-zinc-500">
+                {t.reader.memory.noPath}
+              </p>
+              {false && (
+              <p className="rounded-xl border border-dashed border-zinc-300 bg-white px-4 py-5 text-sm text-zinc-500">
+                현재 scene을 BOOK.0 scene path에서 찾지 못했습니다.
+              </p>
+              )}
+              </>
+            )}
+          </div>
+        )}
+      </div>
+    </section>
+  )
+}
+
+function SupportUnitCard({
+  unit,
+  compact = false,
+}: {
+  unit: SupportUnit
+  compact?: boolean
+}) {
+  const { t } = useUiStrings()
+  return (
+    <div className="rounded-xl border border-zinc-200 bg-white px-4 py-3 shadow-sm">
+      <div className="flex items-center justify-between gap-3">
+        <span className="rounded-full bg-zinc-100 px-2.5 py-1 text-[11px] font-semibold text-zinc-600">
+          {t.reader.supportKind[unit.kind as keyof typeof t.reader.supportKind] ?? unit.label}
+        </span>
+        <span className="text-[11px] text-zinc-400">
+          {Math.round(unit.priority * 100)}
+        </span>
+      </div>
+      <h4 className={`mt-3 font-semibold text-zinc-900 ${compact ? "text-sm" : "text-base"}`}>
+        {unit.title}
+      </h4>
+      <p className={`${compact ? "mt-1 text-sm leading-6" : "mt-2 text-[15px] leading-7"} text-zinc-600`}>
+        {unit.body}
+      </p>
+    </div>
+  )
+}
+
 type ReaderFocusContext =
   | {
       mode: "global"
@@ -259,16 +692,17 @@ function resolveFocusContext(params: {
   packet: SceneReaderPacket
   activeSubsceneId: string
   selectedCharacterIds: string[]
+  t: UiStrings
 }): ReaderFocusContext {
   const view = params.packet.subscene_views[params.activeSubsceneId]
-  const headline = view?.headline || "Reader support"
+  const headline = view?.headline || params.t.reader.fallback.readerSupport
 
   if (!view) {
     return {
       mode: "global",
       title: headline,
-      subtitle: "Subscene",
-      summary: "No subscene support available.",
+      subtitle: params.t.reader.subscene,
+      summary: params.t.reader.fallback.noSubscene,
       hints: [],
       buttons: [],
       panels: {},
@@ -296,9 +730,9 @@ function resolveFocusContext(params: {
 
     return {
       mode: "pair",
-      title: labels.join(" + ") || "Selected pair",
-      subtitle: "Relation view",
-      summary: "No pair-specific hint was prepared for this combination.",
+      title: labels.join(" + ") || params.t.reader.fallback.selectedPair,
+      subtitle: params.t.reader.fallback.relationView,
+      summary: params.t.reader.fallback.noPairHint,
       hints: [],
       buttons: [],
       panels: {},
@@ -321,7 +755,7 @@ function resolveFocusContext(params: {
   }
 
   const globalView: ReaderGlobalView = view.global_view ?? {
-    summary_hint: view.headline || "Subscene overview.",
+    summary_hint: view.headline || params.t.reader.fallback.subsceneOverview,
     hints: [],
     buttons: view.buttons ?? [],
     panels: view.panels ?? {},
@@ -329,7 +763,7 @@ function resolveFocusContext(params: {
   return {
     mode: "global",
     title: headline,
-    subtitle: "Subscene overview",
+    subtitle: params.t.reader.fallback.subsceneOverview,
     summary: globalView.summary_hint,
     hints: globalView.hints,
     buttons: globalView.buttons,
@@ -340,17 +774,24 @@ function resolveFocusContext(params: {
 interface Props {
   final1: SceneReaderPackageLog
   final2?: OverlayRefinementResult
+  bookMemory?: BookMemorySnapshot
+  readerRunId: string
   topControls?: ReactNode
 }
 
-export default function ReaderScreen({ final1, final2, topControls }: Props) {
+export default function ReaderScreen({ final1, final2, bookMemory, readerRunId, topControls }: Props) {
+  const { t } = useUiStrings()
   const [sceneIdx, setSceneIdx] = useState(0)
   const [subsceneIdx, setSubsceneIdx] = useState(0)
   const [activePanel, setActivePanel] = useState<string | null>(null)
+  const [activeMemoryTab, setActiveMemoryTab] = useState<MemoryTab>("bridges")
   const [showSceneSummary, setShowSceneSummary] = useState(false)
+  const [resumeGapMs] = useState(() => readResumeGapMs(final1.doc_id))
+  const [readerSessionId] = useState(() => createReaderSessionId(final1.doc_id))
   const [selectedCharacterIds, setSelectedCharacterIds] = useState<string[]>([])
   const imageFrameRef = useRef<HTMLDivElement | null>(null)
   const preloadedImageUrlsRef = useRef<Set<string>>(new Set())
+  const loggedSupportEventsRef = useRef<Set<string>>(new Set())
   const [imageMetrics, setImageMetrics] = useState({
     imageKey: "",
     naturalWidth: 0,
@@ -372,7 +813,49 @@ export default function ReaderScreen({ final1, final2, topControls }: Props) {
     packet,
     activeSubsceneId,
     selectedCharacterIds: resolvedSelectedCharacterIds,
+    t,
   })
+  const visualSupportUnits = packet.support?.display_plan?.candidate_units ?? [
+    ...(packet.support?.display_slots.before_text ?? []),
+    ...(packet.support?.display_slots.beside_visual ?? []),
+    ...(packet.support?.display_slots.on_demand ?? []),
+  ]
+  const visualPolicy = scoreVisualSupport(packet, visualSupportUnits)
+  const governedSupport = governReaderSupport(packet.support, {
+    resumeGapMs,
+    reentryGapMs: READER_REENTRY_GAP_MS,
+    visualUseful: visualPolicy.usefulnessScore >= 0.48 || visualPolicy.showBlueprintByDefault,
+  })
+  const supportBeforeText = governedSupport.beforeText
+  const supportBesideVisual = governedSupport.besideVisual
+  const supportOnDemand = governedSupport.onDemand
+  const readerMemoryContext = packet
+    ? buildReaderMemoryContext(bookMemory, final1, packet, readerRunId)
+    : null
+
+  function logSupportUnits(
+    action: ReaderSupportEvent["action"],
+    units: SupportUnit[],
+    reason?: string,
+  ) {
+    if (!packet || units.length === 0) return
+    const sceneKey = `${final1.chapter_id}:${packet.scene_id}`
+    for (const unit of units) {
+      const logKey = `${action}:${sceneKey}:${unit.unit_id}:${reason ?? ""}`
+      if (loggedSupportEventsRef.current.has(logKey)) continue
+      loggedSupportEventsRef.current.add(logKey)
+      postReaderSupportEvent({
+        docId: final1.doc_id,
+        chapterId: final1.chapter_id,
+        sceneId: packet.scene_id,
+        readerRunId,
+        sessionId: readerSessionId,
+        unit,
+        action,
+        reason,
+      })
+    }
+  }
 
   const activeImageKey = packet?.visual.image_path ? `${packet.scene_id}:${packet.visual.image_path}` : ""
   const metricsForActiveImage =
@@ -485,14 +968,119 @@ export default function ReaderScreen({ final1, final2, topControls }: Props) {
     }
   }, [final1.packets, sceneIdx])
 
-  if (!packet) return <div className="p-8 text-zinc-400">No scenes available.</div>
+  useEffect(() => {
+    const storageKey = `story-reader:last-active:${final1.doc_id}`
+    window.localStorage.setItem(storageKey, String(Date.now()))
+
+    function markActive() {
+      window.localStorage.setItem(storageKey, String(Date.now()))
+    }
+
+    window.addEventListener("beforeunload", markActive)
+    return () => {
+      markActive()
+      window.removeEventListener("beforeunload", markActive)
+    }
+  }, [final1.doc_id])
+
+  useEffect(() => {
+    window.localStorage.setItem(`story-reader:last-active:${final1.doc_id}`, String(Date.now()))
+  }, [final1.doc_id, sceneIdx, subsceneIdx])
+
+  useEffect(() => {
+    if (!packet || supportBeforeText.length === 0) return
+    const sceneKey = `${final1.chapter_id}:${packet.scene_id}`
+    for (const unit of supportBeforeText) {
+      const logKey = `shown:${sceneKey}:${unit.unit_id}:default_visible`
+      if (loggedSupportEventsRef.current.has(logKey)) continue
+      loggedSupportEventsRef.current.add(logKey)
+      postReaderSupportEvent({
+        docId: final1.doc_id,
+        chapterId: final1.chapter_id,
+        sceneId: packet.scene_id,
+        readerRunId,
+        sessionId: readerSessionId,
+        unit,
+        action: "shown",
+        reason: "default_visible",
+      })
+    }
+  }, [final1.chapter_id, final1.doc_id, packet, readerRunId, readerSessionId, supportBeforeText])
+
+  if (!packet) return <div className="p-8 text-zinc-400">{t.reader.noScenes}</div>
+
+  const visualAvailable = Boolean(packet.visual.image_path || packet.visual.fallback_blueprint_available)
+  const showVisualByDefault = visualPolicy.showImageByDefault || visualPolicy.showBlueprintByDefault
+
+  function renderVisualFrame() {
+    return (
+      <div
+        className={`relative w-full overflow-hidden rounded-2xl border border-zinc-200 bg-zinc-100 shadow-sm ${
+          packet.visual.image_path ? "" : "min-h-[420px]"
+        }`}
+        style={packet.visual.image_path ? { aspectRatio: imageAspectRatio } : undefined}
+      >
+        {packet.visual.image_path ? (
+          <div ref={imageFrameRef} className="relative h-full w-full p-4">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              key={`${packet.scene_id}:${packet.visual.image_path}`}
+              src={packet.visual.image_path}
+              alt="scene"
+              loading="eager"
+              fetchPriority="high"
+              decoding="async"
+              className="h-full w-full object-contain"
+              onLoad={(event) => {
+                const target = event.currentTarget
+                setImageMetrics((prev) => ({
+                  ...prev,
+                  imageKey: activeImageKey,
+                  naturalWidth: target.naturalWidth,
+                  naturalHeight: target.naturalHeight,
+                  containerWidth: imageFrameRef.current?.clientWidth ?? prev.containerWidth,
+                  containerHeight: imageFrameRef.current?.clientHeight ?? prev.containerHeight,
+                }))
+              }}
+            />
+
+            {mergedOverlay.map(({ coarse, refined }) => {
+              const anchorX = refined?.anchor_x ?? coarse.anchor_x
+              const anchorY = refined?.anchor_y ?? coarse.anchor_y
+              const left =
+                containedRect.left +
+                (Math.max(0, Math.min(100, anchorX)) / 100) * containedRect.width
+              const top =
+                containedRect.top +
+                (Math.max(0, Math.min(100, anchorY)) / 100) * containedRect.height
+
+              return (
+                <CharacterButton
+                  key={coarse.character_id}
+                  coarse={coarse}
+                  left={left}
+                  top={top}
+                  selected={resolvedSelectedCharacterIds.includes(coarse.character_id)}
+                  onToggle={() => toggleCharacterSelection(coarse.character_id)}
+                />
+              )
+            })}
+          </div>
+        ) : (
+          <div className="flex h-full items-center justify-center text-sm text-zinc-400">
+            {packet.visual.fallback_blueprint_available ? t.reader.blueprintAvailable : t.reader.noImage}
+          </div>
+        )}
+      </div>
+    )
+  }
 
   return (
     <div className="mx-auto flex w-full max-w-[2080px] flex-col gap-5 p-6">
       <div className="flex flex-wrap items-center gap-3">
         {topControls}
         <div className="flex items-center gap-3">
-          <label className="text-sm font-medium text-zinc-600">Scene</label>
+          <label className="text-sm font-medium text-zinc-600">{t.reader.scene}</label>
           <select
             value={sceneIdx}
             onChange={(event) => selectScene(Number(event.target.value), 0)}
@@ -518,7 +1106,7 @@ export default function ReaderScreen({ final1, final2, topControls }: Props) {
               onClick={() => setShowSceneSummary((value) => !value)}
               className="rounded-full border border-zinc-200 bg-white px-3 py-1.5 text-sm text-zinc-600 hover:bg-zinc-50"
             >
-              {showSceneSummary ? "Hide Summary" : "Show Summary"}
+              {showSceneSummary ? t.reader.hideSummary : t.reader.showSummary}
             </button>
           </div>
           {showSceneSummary && (
@@ -527,7 +1115,7 @@ export default function ReaderScreen({ final1, final2, topControls }: Props) {
               {subscene?.headline && (
                 <div className="mt-3 border-t border-zinc-200 pt-3">
                   <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
-                    Subscene
+                    {t.reader.subscene}
                   </p>
                   <p className="mt-1 text-zinc-700">{subscene.headline}</p>
                 </div>
@@ -537,7 +1125,7 @@ export default function ReaderScreen({ final1, final2, topControls }: Props) {
         </div>
       </div>
 
-      <div className="grid gap-7 xl:grid-cols-[minmax(0,1.12fr)_minmax(740px,1.14fr)] 2xl:grid-cols-[minmax(0,1.16fr)_minmax(860px,1.18fr)]">
+      <div className="grid gap-7 xl:grid-cols-[minmax(0,1fr)_minmax(360px,560px)] 2xl:grid-cols-[minmax(0,1fr)_minmax(420px,640px)]">
         <div className="flex min-w-0 flex-col gap-5">
           {packet.subscene_nav.length > 0 && (
             <div className="flex flex-col gap-1.5 rounded-xl border border-zinc-200 bg-zinc-50 px-4 py-3">
@@ -559,11 +1147,39 @@ export default function ReaderScreen({ final1, final2, topControls }: Props) {
             </div>
           )}
 
+          {supportBeforeText.length > 0 && (
+            <div className="grid gap-3 md:grid-cols-2">
+              {supportBeforeText.map((unit) => (
+                <SupportUnitCard key={unit.unit_id} unit={unit} />
+              ))}
+            </div>
+          )}
+
           <div className="flex flex-col gap-5 rounded-2xl border border-zinc-200 bg-white px-7 py-6 text-[17px] leading-9 text-zinc-700 shadow-sm xl:text-[18px]">
             {(subscene?.body_paragraphs ?? packet.body_paragraphs).map((paragraph, index) => (
               <p key={index}>{paragraph}</p>
             ))}
           </div>
+
+          {supportOnDemand.length > 0 && (
+            <details
+              className="rounded-xl border border-zinc-200 bg-white"
+              onToggle={(event) => {
+                if (event.currentTarget.open) {
+                  logSupportUnits("opened", supportOnDemand, "on_demand_opened")
+                }
+              }}
+            >
+              <summary className="cursor-pointer px-4 py-3 text-sm font-semibold text-zinc-700">
+                {t.reader.moreSupport} ({supportOnDemand.length})
+              </summary>
+              <div className="grid gap-3 border-t border-zinc-200 bg-zinc-50 p-4 md:grid-cols-2">
+                {supportOnDemand.map((unit) => (
+                  <SupportUnitCard key={unit.unit_id} unit={unit} compact />
+                ))}
+              </div>
+            </details>
+          )}
 
           {(packet.subscene_nav.length > 1 || final1.packets.length > 1) && (
             <div className="flex gap-2">
@@ -572,151 +1188,147 @@ export default function ReaderScreen({ final1, final2, topControls }: Props) {
                 disabled={!hasPrev}
                 className="rounded-lg border border-zinc-200 px-3 py-1.5 text-sm disabled:opacity-30 hover:bg-zinc-50"
               >
-                Prev
+                {t.common.previous}
               </button>
               <button
                 onClick={goNext}
                 disabled={!hasNext}
                 className="rounded-lg border border-zinc-200 px-3 py-1.5 text-sm disabled:opacity-30 hover:bg-zinc-50"
               >
-                Next
+                {t.common.next}
               </button>
             </div>
           )}
         </div>
 
-        <div className="flex min-w-0 flex-col gap-5 xl:sticky xl:top-6 xl:max-h-[calc(100vh-9rem)] xl:self-start xl:overflow-y-auto xl:pr-2">
-          <div
-            className={`relative w-full overflow-hidden rounded-2xl border border-zinc-200 bg-zinc-100 shadow-sm ${
-              packet.visual.image_path ? "" : "min-h-[420px]"
-            }`}
-            style={packet.visual.image_path ? { aspectRatio: imageAspectRatio } : undefined}
-          >
-            {packet.visual.image_path ? (
-              <div ref={imageFrameRef} className="relative h-full w-full p-4">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  key={`${packet.scene_id}:${packet.visual.image_path}`}
-                  src={packet.visual.image_path}
-                  alt="scene"
-                  loading="eager"
-                  fetchPriority="high"
-                  decoding="async"
-                  className="h-full w-full object-contain"
-                  onLoad={(event) => {
-                    const target = event.currentTarget
-                    setImageMetrics((prev) => ({
-                      ...prev,
-                      imageKey: activeImageKey,
-                      naturalWidth: target.naturalWidth,
-                      naturalHeight: target.naturalHeight,
-                      containerWidth: imageFrameRef.current?.clientWidth ?? prev.containerWidth,
-                      containerHeight: imageFrameRef.current?.clientHeight ?? prev.containerHeight,
-                    }))
-                  }}
-                />
+        <div className="flex min-w-0 flex-col gap-5 xl:self-start">
+          <CrossChapterMemoryPanel
+            bookMemory={bookMemory}
+            context={readerMemoryContext}
+            activeTab={activeMemoryTab}
+            onTabChange={setActiveMemoryTab}
+          />
 
-                {mergedOverlay.map(({ coarse, refined }) => {
-                  const anchorX = refined?.anchor_x ?? coarse.anchor_x
-                  const anchorY = refined?.anchor_y ?? coarse.anchor_y
-                  const left =
-                    containedRect.left +
-                    (Math.max(0, Math.min(100, anchorX)) / 100) * containedRect.width
-                  const top =
-                    containedRect.top +
-                    (Math.max(0, Math.min(100, anchorY)) / 100) * containedRect.height
-
-                  return (
-                    <CharacterButton
-                      key={coarse.character_id}
-                      coarse={coarse}
-                      left={left}
-                      top={top}
-                      selected={resolvedSelectedCharacterIds.includes(coarse.character_id)}
-                      onToggle={() => toggleCharacterSelection(coarse.character_id)}
-                    />
-                  )
-                })}
+          {showVisualByDefault ? (
+            renderVisualFrame()
+          ) : visualAvailable ? (
+            <details className="rounded-2xl border border-zinc-200 bg-white shadow-sm">
+              <summary className="cursor-pointer px-4 py-3 text-sm font-semibold text-zinc-700">
+                {t.reader.visualMinimized}
+                <span className="ml-2 font-normal text-zinc-500">
+                  {t.reader.visualScore} {visualPolicy.usefulnessScore.toFixed(2)}
+                </span>
+              </summary>
+              <div className="flex flex-col gap-3 border-t border-zinc-200 bg-zinc-50/60 p-3">
+                <p className="text-xs text-zinc-500">
+                  {t.reader.visualMinimizedMessage}
+                </p>
+                {renderVisualFrame()}
               </div>
-            ) : (
-              <div className="flex h-full items-center justify-center text-sm text-zinc-400">
-                {packet.visual.fallback_blueprint_available ? "Blueprint available" : "No image"}
-              </div>
-            )}
-          </div>
+            </details>
+          ) : (
+            <div className="rounded-2xl border border-dashed border-zinc-300 bg-white px-4 py-6 text-sm text-zinc-500">
+              {t.reader.noVisual}
+            </div>
+          )}
 
           {subsceneView && (
-            <div className="flex flex-col gap-4 rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
-                  {focusContext.mode === "global"
-                    ? "Subscene View"
-                    : focusContext.mode === "character"
-                      ? "Character View"
-                      : "Pair View"}
-                </p>
-                <h3 className="mt-2 text-lg font-semibold text-zinc-900">{focusContext.title}</h3>
-                <p className="mt-1 text-sm text-zinc-500">{focusContext.subtitle}</p>
-                <p className="mt-3 text-[15px] leading-7 text-zinc-700">{focusContext.summary}</p>
-              </div>
-
-              {focusContext.hints.length > 0 && (
-                <div className="grid gap-3 sm:grid-cols-2">
-                  {focusContext.hints.map((hint, index) => (
-                    <div
-                      key={`${focusContext.mode}:hint:${hint.label}:${index}`}
-                      className="rounded-xl border border-zinc-200 bg-zinc-50 px-4 py-3"
-                    >
-                      <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
-                        {hint.label}
-                      </p>
-                      <p className="mt-2 text-sm leading-6 text-zinc-700">{hint.text}</p>
-                    </div>
-                  ))}
+            <details className="rounded-xl border border-zinc-200 bg-white shadow-sm">
+              <summary className="cursor-pointer px-4 py-3 text-sm font-semibold text-zinc-700">
+                {t.reader.sceneFocusDetails}
+              </summary>
+              <div className="flex flex-col gap-4 border-t border-zinc-200 bg-zinc-50/60 p-4">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
+                    {focusContext.mode === "global"
+                      ? t.reader.subsceneView
+                      : focusContext.mode === "character"
+                        ? t.reader.characterView
+                        : t.reader.pairView}
+                  </p>
+                  <h3 className="mt-2 text-lg font-semibold text-zinc-900">{focusContext.title}</h3>
+                  <p className="mt-1 text-sm text-zinc-500">{focusContext.subtitle}</p>
+                  <p className="mt-3 text-[15px] leading-7 text-zinc-700">{focusContext.summary}</p>
                 </div>
-              )}
 
-              <div className="flex flex-wrap gap-1.5">
-                {READER_PANEL_BUTTON_ORDER.map((buttonKey) => {
-                  const button = focusContext.buttons.find((item) => item.key === buttonKey)
-                  const enabled = Boolean(focusContext.panels[buttonKey])
-                  const active = enabled && activePanel === buttonKey
-                  return (
-                    <button
-                      key={buttonKey}
-                      type="button"
-                      disabled={!enabled}
-                      onClick={() => {
-                        if (!enabled) return
-                        setActivePanel(activePanel === buttonKey ? null : buttonKey)
-                      }}
-                      className={`flex items-center gap-2 rounded-2xl border px-4 py-2.5 text-sm font-medium transition-colors ${
-                        !enabled
-                          ? "cursor-not-allowed border-zinc-200 bg-zinc-100 text-zinc-400"
-                          : active
-                            ? (READER_PANEL_BUTTON_META[buttonKey]?.active ?? "border-zinc-800 bg-zinc-800 text-white shadow-sm")
-                            : (READER_PANEL_BUTTON_META[buttonKey]?.idle ?? "border-zinc-300 bg-white text-zinc-700 hover:border-zinc-400")
-                      }`}
-                    >
-                      <span
-                        className={`flex h-6 w-6 items-center justify-center rounded-full text-[11px] font-semibold ${
-                          enabled ? "bg-white/75 text-current" : "bg-white/60 text-zinc-400"
+                {focusContext.hints.length > 0 && (
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    {focusContext.hints.map((hint, index) => (
+                      <div
+                        key={`${focusContext.mode}:hint:${hint.label}:${index}`}
+                        className="rounded-xl border border-zinc-200 bg-white px-4 py-3"
+                      >
+                        <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
+                          {hint.label}
+                        </p>
+                        <p className="mt-2 text-sm leading-6 text-zinc-700">{hint.text}</p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                <div className="flex flex-wrap gap-1.5">
+                  {READER_PANEL_BUTTON_ORDER.map((buttonKey) => {
+                    const button = focusContext.buttons.find((item) => item.key === buttonKey)
+                    const enabled = Boolean(focusContext.panels[buttonKey])
+                    const active = enabled && activePanel === buttonKey
+                    return (
+                      <button
+                        key={buttonKey}
+                        type="button"
+                        disabled={!enabled}
+                        onClick={() => {
+                          if (!enabled) return
+                          setActivePanel(activePanel === buttonKey ? null : buttonKey)
+                        }}
+                        className={`flex items-center gap-2 rounded-2xl border px-4 py-2.5 text-sm font-medium transition-colors ${
+                          !enabled
+                            ? "cursor-not-allowed border-zinc-200 bg-zinc-100 text-zinc-400"
+                            : active
+                              ? (READER_PANEL_BUTTON_META[buttonKey]?.active ?? "border-zinc-800 bg-zinc-800 text-white shadow-sm")
+                              : (READER_PANEL_BUTTON_META[buttonKey]?.idle ?? "border-zinc-300 bg-white text-zinc-700 hover:border-zinc-400")
                         }`}
                       >
-                        {READER_PANEL_BUTTON_META[buttonKey]?.icon ?? "i"}
-                      </span>
-                      <span>{READER_PANEL_BUTTON_LABEL[buttonKey] ?? button?.label ?? buttonKey}</span>
-                    </button>
-                  )
-                })}
-              </div>
-
-              {activePanel && focusContext.panels[activePanel] && (
-                <div className="rounded-lg border border-zinc-200 bg-zinc-50 p-3 text-sm leading-7 text-zinc-600">
-                  {focusContext.panels[activePanel]}
+                        <span
+                          className={`flex h-6 w-6 items-center justify-center rounded-full text-[11px] font-semibold ${
+                            enabled ? "bg-white/75 text-current" : "bg-white/60 text-zinc-400"
+                          }`}
+                        >
+                          {READER_PANEL_BUTTON_META[buttonKey]?.icon ?? "i"}
+                        </span>
+                        <span>{t.reader.panelButton[buttonKey as keyof typeof t.reader.panelButton] ?? button?.label ?? buttonKey}</span>
+                      </button>
+                    )
+                  })}
                 </div>
-              )}
-            </div>
+
+                {activePanel && focusContext.panels[activePanel] && (
+                  <div className="rounded-lg border border-zinc-200 bg-white p-3 text-sm leading-7 text-zinc-600">
+                    {focusContext.panels[activePanel]}
+                  </div>
+                )}
+              </div>
+            </details>
+          )}
+
+          {supportBesideVisual.length > 0 && (
+            <details
+              className="rounded-xl border border-zinc-200 bg-white shadow-sm"
+              onToggle={(event) => {
+                if (event.currentTarget.open) {
+                  logSupportUnits("opened", supportBesideVisual, "side_support_opened")
+                }
+              }}
+            >
+              <summary className="cursor-pointer px-4 py-3 text-sm font-semibold text-zinc-700">
+                {t.reader.castPlaceVisualCues} ({supportBesideVisual.length})
+              </summary>
+              <div className="grid gap-3 border-t border-zinc-200 bg-zinc-50/60 p-4">
+                {supportBesideVisual.map((unit) => (
+                  <SupportUnitCard key={unit.unit_id} unit={unit} compact />
+                ))}
+              </div>
+            </details>
           )}
         </div>
       </div>

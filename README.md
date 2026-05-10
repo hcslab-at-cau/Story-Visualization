@@ -80,6 +80,8 @@ npm run dev
 
 ## 참고 문서
 
-- `docs/source/ui.md`: 현재 UI 동작 방식
-- `docs/source/pipeline-*.md`: stage별 파이프라인 설명
+- `docs/source/README.md`: 문서 인덱스와 읽는 순서
+- `docs/source/current/ui.md`: 현재 UI 동작 방식
+- `docs/source/pipeline/*.md`: stage별 파이프라인 설명
+- `docs/source/review/current-implementation-vs-docs.md`: 현재 구현과 제안 문서 비교
 - `docs/MIGRATION.md`: 이전 이식/마이그레이션 메모

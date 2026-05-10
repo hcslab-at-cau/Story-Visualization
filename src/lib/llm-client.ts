@@ -52,6 +52,84 @@ function repairJsonManual(content: string): string {
   return result
 }
 
+function previewContent(content: string): string {
+  return content.replace(/\s+/g, " ").trim().slice(0, 180)
+}
+
+function extractFirstJsonObject(content: string): string | undefined {
+  const start = content.indexOf("{")
+  if (start < 0) return undefined
+
+  let depth = 0
+  let inString = false
+  let escaped = false
+
+  for (let i = start; i < content.length; i++) {
+    const ch = content[i]
+
+    if (escaped) {
+      escaped = false
+      continue
+    }
+    if (inString && ch === "\\") {
+      escaped = true
+      continue
+    }
+    if (ch === '"') {
+      inString = !inString
+      continue
+    }
+    if (inString) continue
+
+    if (ch === "{") {
+      depth += 1
+    } else if (ch === "}") {
+      depth -= 1
+      if (depth === 0) {
+        return content.slice(start, i + 1)
+      }
+    }
+  }
+
+  return undefined
+}
+
+function parseJsonObjectContent(content: string): Record<string, unknown> {
+  const stripped = stripMarkdownFence(content.trim())
+  const candidates: string[] = [stripped]
+  const extracted = extractFirstJsonObject(stripped)
+  if (extracted && extracted !== stripped) {
+    candidates.push(extracted)
+  }
+
+  let lastError: unknown
+  for (const candidate of candidates) {
+    try {
+      return JSON.parse(candidate) as Record<string, unknown>
+    } catch (e) {
+      lastError = e
+    }
+
+    try {
+      return JSON.parse(repairJson(candidate)) as Record<string, unknown>
+    } catch (e) {
+      lastError = e
+    }
+
+    try {
+      return JSON.parse(repairJsonManual(candidate)) as Record<string, unknown>
+    } catch (e) {
+      lastError = e
+    }
+  }
+
+  const preview = previewContent(stripped)
+  throw new SyntaxError(
+    `Model did not return a valid JSON object. Response starts with: ${preview}`,
+    { cause: lastError },
+  )
+}
+
 export class LLMClient {
   private client: OpenAI
   private model: string
@@ -100,42 +178,60 @@ export class LLMClient {
       prompt,
     })
 
-    const params: OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming = {
-      model: this.model,
-      temperature: 0,
-      max_tokens: this.maxTokens,
-      messages: [
+    const buildMessages = (
+      previousInvalidResponse: string,
+    ): OpenAI.Chat.Completions.ChatCompletionMessageParam[] => {
+      if (!previousInvalidResponse) {
+        return [
+          {
+            role: "system",
+            content: "Return ONLY a valid JSON object. No analysis, prose, or markdown.",
+          },
+          { role: "user", content: prompt },
+        ]
+      }
+
+      return [
         {
           role: "system",
-          content: "Return ONLY valid JSON. Do not wrap in markdown code blocks.",
+          content: "Return ONLY a valid JSON object. No analysis, prose, or markdown.",
         },
-        { role: "user", content: prompt },
-      ],
-    }
-    if (isOpenAICompat(this.model)) {
-      params.response_format = { type: "json_object" }
+        {
+          role: "user",
+          content: `${prompt}
+
+The previous response was not valid JSON. Convert the answer to one valid JSON object that exactly matches the requested schema.
+Do not explain your reasoning. Do not include markdown.
+
+Previous invalid response:
+${previousInvalidResponse.slice(0, 4000)}`,
+        },
+      ]
     }
 
     let lastError: unknown
+    let previousInvalidResponse = ""
     for (let attempt = 0; attempt < maxRetries; attempt++) {
       if (attempt > 0) {
         await new Promise((r) => setTimeout(r, 2 ** attempt * 1000))
       }
       try {
+        const params: OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming = {
+          model: this.model,
+          temperature: 0,
+          max_tokens: this.maxTokens,
+          messages: buildMessages(previousInvalidResponse),
+        }
+        if (isOpenAICompat(this.model)) {
+          params.response_format = { type: "json_object" }
+        }
+
         const chat = await this.client.chat.completions.create(params)
         let content = (chat.choices[0].message.content ?? "").trim()
         content = stripMarkdownFence(content)
         trial.raw_response = content
-
-        try {
-          return JSON.parse(content) as Record<string, unknown>
-        } catch {
-          try {
-            return JSON.parse(repairJson(content)) as Record<string, unknown>
-          } catch {
-            return JSON.parse(repairJsonManual(content)) as Record<string, unknown>
-          }
-        }
+        previousInvalidResponse = content
+        return parseJsonObjectContent(content)
       } catch (e) {
         lastError = e
       }
@@ -171,11 +267,7 @@ export class LLMClient {
         let content = (chat.choices[0].message.content ?? "").trim()
         content = stripMarkdownFence(content)
         trial.raw_response = content
-        try {
-          return JSON.parse(content) as Record<string, unknown>
-        } catch {
-          return JSON.parse(repairJson(content)) as Record<string, unknown>
-        }
+        return parseJsonObjectContent(content)
       } catch (e) {
         lastError = e
       }
@@ -223,7 +315,7 @@ export class LLMClient {
     unresolved_json: string
   }): Promise<Record<string, unknown>> {
     const prompt = this.promptLoader.load("ent3_entity_resolve", params)
-    return this.callJson(prompt, 1, "ent3_entity_resolve")
+    return this.callJson(prompt, 3, "ent3_entity_resolve")
   }
 
   // ---------------------------------------------------------------------------

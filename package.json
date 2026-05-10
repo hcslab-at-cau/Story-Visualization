@@ -13,6 +13,7 @@
     "cheerio": "^1.2.0",
     "epub2": "^3.0.2",
     "firebase": "^12.11.0",
+    "firebase-admin": "^13.8.0",
     "jsonrepair": "^3.13.3",
     "next": "16.2.2",
     "openai": "^6.33.0",
