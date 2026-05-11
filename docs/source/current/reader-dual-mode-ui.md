@@ -19,7 +19,7 @@ Reader 화면을 두 가지 용도로 분리한다.
 독자 화면은 "많은 정보를 보여주는 화면"이 아니라 "필요할 때만 복구 단서를 제공하는 화면"으로 둔다.
 
 - 기본 노출: `Support Governor`가 `before_text`로 선택한 최소 support만 본문 위에 표시한다.
-- 본문 근처 노출: `on_demand`와 `beside_visual` support 중 evidence 문단을 찾을 수 있는 것은 해당 문단 아래 `문단 도움` chip으로 붙인다.
+- 본문 안 노출: `on_demand`와 `beside_visual` support 중 evidence 문단을 찾을 수 있는 것은 해당 문단 텍스트 끝에 작은 inline chip으로 붙인다.
 - 접힘 노출: 문단 anchor를 찾지 못한 support만 "헷갈릴 때만 보기" 안에 fallback으로 둔다.
 - 숨김: Cross-chapter memory panel, scene focus debug panel, cast/place cue debug panel, score/provenance/diagnostics는 숨긴다.
 - 근거: 독자 화면에서는 score 대신 짧은 "근거 문장 보기"만 제공한다.

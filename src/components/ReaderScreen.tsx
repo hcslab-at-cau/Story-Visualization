@@ -822,41 +822,47 @@ function buildInlineSupportPlan(
   return { groups, fallbackUnits, placementByUnitId }
 }
 
-function InlineSupportAnchor({
-  units,
-  onOpen,
+function InlineSupportChip({
+  unit,
+  active,
+  onToggle,
 }: {
-  units: SupportUnit[]
-  onOpen: (units: SupportUnit[]) => void
+  unit: SupportUnit
+  active: boolean
+  onToggle: () => void
 }) {
   return (
-    <details
-      className="mt-4 overflow-hidden rounded-2xl border border-sky-200 bg-sky-50/70"
-      onToggle={(event) => {
-        if (event.currentTarget.open) onOpen(units)
-      }}
-    >
-      <summary className="cursor-pointer list-none px-4 py-3 [&::-webkit-details-marker]:hidden">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="rounded-full bg-sky-100 px-2.5 py-1 text-[11px] font-semibold text-sky-800">
-              문단 도움
-            </span>
-            <span className="text-sm font-semibold text-zinc-800">
-              이 부분에서 헷갈릴 때 보기
-            </span>
-          </div>
-          <span className="rounded-full bg-white px-2.5 py-1 text-xs font-semibold text-zinc-500">
-            {units.length}
-          </span>
-        </div>
-      </summary>
-      <div className="grid gap-3 border-t border-sky-100 bg-white/70 p-4 md:grid-cols-2">
-        {units.map((unit) => (
-          <SupportUnitCard key={unit.unit_id} unit={unit} compact />
-        ))}
+    <span className="ml-2 inline-flex align-baseline">
+      <button
+        type="button"
+        onClick={onToggle}
+        className={`inline-flex translate-y-[-1px] items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-semibold leading-5 transition-colors ${
+          active
+            ? "border-sky-400 bg-sky-500 text-white shadow-sm"
+            : "border-sky-200 bg-sky-50 text-sky-800 hover:border-sky-300 hover:bg-sky-100"
+        }`}
+      >
+        <span>?</span>
+        <span>{getReaderProblemLabel(unit.reader_problem)}</span>
+      </button>
+    </span>
+  )
+}
+
+function InlineSupportDetails({ units }: { units: SupportUnit[] }) {
+  if (units.length === 0) return null
+
+  return (
+    <div className="mt-3 grid gap-2 rounded-2xl border border-sky-200 bg-sky-50/70 p-3 md:grid-cols-2">
+      <div className="md:col-span-2">
+        <span className="rounded-full bg-sky-100 px-2.5 py-1 text-[11px] font-semibold text-sky-800">
+          본문 안 도움
+        </span>
       </div>
-    </details>
+      {units.map((unit) => (
+        <SupportUnitCard key={unit.unit_id} unit={unit} compact />
+      ))}
+    </div>
   )
 }
 
@@ -1573,6 +1579,7 @@ export default function ReaderScreen({
   const [longPauseActive, setLongPauseActive] = useState(false)
   const [backscrollActive, setBackscrollActive] = useState(false)
   const [supportOpenCount, setSupportOpenCount] = useState(0)
+  const [expandedInlineSupportIds, setExpandedInlineSupportIds] = useState<Set<string>>(() => new Set())
   const imageFrameRef = useRef<HTMLDivElement | null>(null)
   const preloadedImageUrlsRef = useRef<Set<string>>(new Set())
   const loggedSupportEventsRef = useRef<Set<string>>(new Set())
@@ -1653,6 +1660,22 @@ export default function ReaderScreen({
     }
   }
 
+  function toggleInlineSupport(unit: SupportUnit) {
+    if (!expandedInlineSupportIds.has(unit.unit_id)) {
+      logSupportUnits("opened", [unit], "inline_support_opened")
+    }
+
+    setExpandedInlineSupportIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(unit.unit_id)) {
+        next.delete(unit.unit_id)
+      } else {
+        next.add(unit.unit_id)
+      }
+      return next
+    })
+  }
+
   const activeImageKey = packet?.visual.image_path ? `${packet.scene_id}:${packet.visual.image_path}` : ""
   const metricsForActiveImage =
     imageMetrics.imageKey === activeImageKey
@@ -1675,6 +1698,7 @@ export default function ReaderScreen({
   function resetFocusState() {
     setActivePanel(null)
     setSelectedCharacterIds([])
+    setExpandedInlineSupportIds(new Set())
   }
 
   function selectScene(nextSceneIdx: number, nextSubsceneIdx = 0) {
@@ -2025,12 +2049,23 @@ export default function ReaderScreen({
               : "border-2 border-zinc-300 ring-4 ring-zinc-50"
           }`}>
             {bodyParagraphs.map((paragraph, index) => (
-              <div key={index}>
-                <p>{paragraph}</p>
-                {!isResearcherMode && inlineSupportPlan.groups.get(index) && (
-                  <InlineSupportAnchor
-                    units={inlineSupportPlan.groups.get(index) ?? []}
-                    onOpen={(units) => logSupportUnits("opened", units, "inline_support_opened")}
+              <div key={index} className="relative">
+                <p>
+                  {paragraph}
+                  {!isResearcherMode && (inlineSupportPlan.groups.get(index) ?? []).map((unit) => (
+                    <InlineSupportChip
+                      key={unit.unit_id}
+                      unit={unit}
+                      active={expandedInlineSupportIds.has(unit.unit_id)}
+                      onToggle={() => toggleInlineSupport(unit)}
+                    />
+                  ))}
+                </p>
+                {!isResearcherMode && (
+                  <InlineSupportDetails
+                    units={(inlineSupportPlan.groups.get(index) ?? []).filter((unit) => (
+                      expandedInlineSupportIds.has(unit.unit_id)
+                    ))}
                   />
                 )}
               </div>
