@@ -1008,6 +1008,174 @@ function ResearcherMetricCard({
   )
 }
 
+type SupportDecisionRow = {
+  unit: SupportUnit
+  proposalSlot: string
+  readerStatus: "on" | "off"
+  readerPlacement: string
+  reason: string
+}
+
+function unitIdSet(units: SupportUnit[]): Set<string> {
+  return new Set(units.map((unit) => unit.unit_id))
+}
+
+function getProposalSlot(unit: SupportUnit, support: SceneReaderPacket["support"]): string {
+  const plan = support?.display_plan
+  if (plan?.default_visible.some((item) => item.unit_id === unit.unit_id)) return "SUP.7 default_visible"
+  if (plan?.expandable.some((item) => item.unit_id === unit.unit_id)) return "SUP.7 expandable"
+  if (plan?.trigger_only.some((item) => item.unit_id === unit.unit_id)) return "SUP.7 trigger_only"
+  if (plan?.suppressed.some((item) => item.unit_id === unit.unit_id)) return "SUP.7 suppressed"
+  if (support?.display_slots.before_text.some((item) => item.unit_id === unit.unit_id)) return "legacy before_text"
+  if (support?.display_slots.on_demand.some((item) => item.unit_id === unit.unit_id)) return "legacy on_demand"
+  if (support?.display_slots.beside_visual.some((item) => item.unit_id === unit.unit_id)) return "legacy beside_visual"
+  return "candidate"
+}
+
+function buildSupportDecisionRows(params: {
+  packet: SceneReaderPacket
+  supportBeforeText: SupportUnit[]
+  readerExpandableSupport: SupportUnit[]
+  governedSupport: ReturnType<typeof governReaderSupport>
+}): SupportDecisionRow[] {
+  const support = params.packet.support
+  if (!support) return []
+
+  const candidateUnits = uniqueSupportUnits(
+    support.display_plan?.candidate_units ?? [
+      ...support.display_slots.before_text,
+      ...support.display_slots.on_demand,
+      ...support.display_slots.beside_visual,
+    ],
+  )
+  const beforeIds = unitIdSet(params.supportBeforeText)
+  const expandableIds = unitIdSet(params.readerExpandableSupport)
+  const triggerIds = unitIdSet(support.display_plan?.trigger_only ?? [])
+  const suppressed = new Map(
+    (support.display_plan?.suppressed ?? []).map((item) => [item.unit_id, item]),
+  )
+
+  return candidateUnits.map((unit) => {
+    if (beforeIds.has(unit.unit_id)) {
+      return {
+        unit,
+        proposalSlot: getProposalSlot(unit, support),
+        readerStatus: "on",
+        readerPlacement: "읽기 전 짧은 단서",
+        reason: "Support Governor가 본문 위 lead clue로 선택했습니다.",
+      }
+    }
+    if (expandableIds.has(unit.unit_id)) {
+      return {
+        unit,
+        proposalSlot: getProposalSlot(unit, support),
+        readerStatus: "on",
+        readerPlacement: "헷갈릴 때만 보기",
+        reason: "독자 화면에서는 필요할 때 펼치는 추가 도움으로 묶입니다.",
+      }
+    }
+
+    const suppressedItem = suppressed.get(unit.unit_id)
+    if (suppressedItem) {
+      return {
+        unit,
+        proposalSlot: getProposalSlot(unit, support),
+        readerStatus: "off",
+        readerPlacement: "숨김",
+        reason: `SUP.6/SUP.7에서 ${suppressedItem.reason} 이유로 제외했습니다.${suppressedItem.note ? ` ${suppressedItem.note}` : ""}`,
+      }
+    }
+
+    if (triggerIds.has(unit.unit_id)) {
+      return {
+        unit,
+        proposalSlot: getProposalSlot(unit, support),
+        readerStatus: "off",
+        readerPlacement: "조건 대기",
+        reason: "session re-entry, visual usefulness, reader request 같은 trigger가 아직 켜지지 않았습니다.",
+      }
+    }
+
+    return {
+      unit,
+      proposalSlot: getProposalSlot(unit, support),
+      readerStatus: "off",
+      readerPlacement: "숨김",
+      reason: params.governedSupport.diagnostics.includes("support_fatigue_high")
+        ? "support fatigue가 높아 기본 노출을 줄였습니다."
+        : "중복, 낮은 우선순위, 또는 현재 독자 화면 slot 제한 때문에 노출하지 않았습니다.",
+    }
+  })
+}
+
+function ResearcherSupportDecisionBoard({
+  rows,
+}: {
+  rows: SupportDecisionRow[]
+}) {
+  const onCount = rows.filter((row) => row.readerStatus === "on").length
+  const offCount = rows.length - onCount
+
+  return (
+    <section className="mt-4 rounded-2xl border border-zinc-200 bg-white p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
+            독자 화면 ON/OFF 결정표
+          </p>
+          <h4 className="mt-1 text-base font-semibold text-zinc-950">
+            제안된 전체 도움 중 실제 독자 화면에 켜지는 것
+          </h4>
+          <p className="mt-1 text-sm leading-6 text-zinc-500">
+            SUP.7이 제안한 후보를 Support Governor가 독자 화면 기준으로 다시 선별한 결과입니다.
+          </p>
+        </div>
+        <div className="flex gap-2 text-xs font-semibold">
+          <span className="rounded-full bg-emerald-100 px-3 py-1 text-emerald-800">ON {onCount}</span>
+          <span className="rounded-full bg-zinc-100 px-3 py-1 text-zinc-600">OFF {offCount}</span>
+        </div>
+      </div>
+
+      <div className="mt-4 overflow-hidden rounded-xl border border-zinc-200">
+        <div className="grid grid-cols-[84px_minmax(180px,1.1fr)_minmax(150px,0.8fr)_minmax(170px,0.8fr)_minmax(220px,1.3fr)] gap-0 bg-zinc-100 px-3 py-2 text-xs font-semibold text-zinc-500">
+          <span>상태</span>
+          <span>도움 후보</span>
+          <span>제안 위치</span>
+          <span>독자 화면 위치</span>
+          <span>이유</span>
+        </div>
+        <div className="max-h-[420px] divide-y divide-zinc-200 overflow-auto bg-white">
+          {rows.length === 0 ? (
+            <div className="px-3 py-6 text-sm text-zinc-500">현재 scene에 support 후보가 없습니다.</div>
+          ) : (
+            rows.map((row) => (
+              <div
+                key={row.unit.unit_id}
+                className="grid grid-cols-[84px_minmax(180px,1.1fr)_minmax(150px,0.8fr)_minmax(170px,0.8fr)_minmax(220px,1.3fr)] gap-0 px-3 py-3 text-sm"
+              >
+                <span className={`w-fit rounded-full px-2.5 py-1 text-xs font-semibold ${
+                  row.readerStatus === "on"
+                    ? "bg-emerald-100 text-emerald-800"
+                    : "bg-zinc-100 text-zinc-500"
+                }`}>
+                  {row.readerStatus.toUpperCase()}
+                </span>
+                <div>
+                  <p className="font-semibold text-zinc-900">{getReaderSupportTitle(row.unit, false)}</p>
+                  <p className="mt-1 line-clamp-2 text-xs leading-5 text-zinc-500">{row.unit.body}</p>
+                </div>
+                <span className="text-xs leading-5 text-zinc-500">{row.proposalSlot}</span>
+                <span className="text-xs font-semibold leading-5 text-zinc-700">{row.readerPlacement}</span>
+                <span className="text-xs leading-5 text-zinc-500">{row.reason}</span>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+    </section>
+  )
+}
+
 function ResearcherArtifactPanel({
   final1,
   packet,
@@ -1016,6 +1184,7 @@ function ResearcherArtifactPanel({
   supportBeforeText,
   supportOnDemand,
   supportBesideVisual,
+  readerExpandableSupport,
   readerMemoryContext,
   governedSupport,
   visualPolicy,
@@ -1027,6 +1196,7 @@ function ResearcherArtifactPanel({
   supportBeforeText: SupportUnit[]
   supportOnDemand: SupportUnit[]
   supportBesideVisual: SupportUnit[]
+  readerExpandableSupport: SupportUnit[]
   readerMemoryContext: ReaderMemoryContext | null
   governedSupport: ReturnType<typeof governReaderSupport>
   visualPolicy: ReturnType<typeof scoreVisualSupport>
@@ -1039,7 +1209,13 @@ function ResearcherArtifactPanel({
     ].length
   const bookBridgeCount = (readerMemoryContext?.incomingEdges.length ?? 0)
     + (readerMemoryContext?.outgoingEdges.length ?? 0)
-  const visibleCount = supportBeforeText.length + supportOnDemand.length + supportBesideVisual.length
+  const visibleCount = supportBeforeText.length + readerExpandableSupport.length
+  const decisionRows = buildSupportDecisionRows({
+    packet,
+    supportBeforeText,
+    readerExpandableSupport,
+    governedSupport,
+  })
   const subsceneView = packet.subscene_views[activeSubsceneId]
   const rawArtifacts = [
     {
@@ -1104,7 +1280,7 @@ function ResearcherArtifactPanel({
         <ResearcherMetricCard
           label="visible after governor"
           value={visibleCount}
-          note={`before ${supportBeforeText.length} / on-demand ${supportOnDemand.length} / side ${supportBesideVisual.length}`}
+          note={`reader lead ${supportBeforeText.length} / reader more ${readerExpandableSupport.length}`}
         />
         <ResearcherMetricCard
           label="hidden or suppressed"
@@ -1117,6 +1293,8 @@ function ResearcherArtifactPanel({
           note={`threads ${readerMemoryContext?.threads.length ?? 0} / nearby path ${readerMemoryContext?.nearbyScenes.length ?? 0}`}
         />
       </div>
+
+      <ResearcherSupportDecisionBoard rows={decisionRows} />
 
       <div className="mt-4 grid gap-3 xl:grid-cols-3">
         <div className="rounded-xl border border-zinc-200 bg-white px-4 py-3">
@@ -1275,9 +1453,8 @@ export default function ReaderScreen({
   const supportBeforeText = governedSupport.beforeText
   const supportBesideVisual = governedSupport.besideVisual
   const supportOnDemand = governedSupport.onDemand
-  const readerExpandableSupport = isResearcherMode
-    ? supportOnDemand
-    : uniqueSupportUnits([...supportOnDemand, ...supportBesideVisual])
+  const readerExpandableSupport = uniqueSupportUnits([...supportOnDemand, ...supportBesideVisual])
+  const renderedExpandableSupport = isResearcherMode ? supportOnDemand : readerExpandableSupport
   const readerMemoryContext = packet
     ? buildReaderMemoryContext(bookMemory, final1, packet, readerRunId)
     : null
@@ -1604,6 +1781,7 @@ export default function ReaderScreen({
           supportBeforeText={supportBeforeText}
           supportOnDemand={supportOnDemand}
           supportBesideVisual={supportBesideVisual}
+          readerExpandableSupport={readerExpandableSupport}
           readerMemoryContext={readerMemoryContext}
           governedSupport={governedSupport}
           visualPolicy={visualPolicy}
@@ -1684,14 +1862,14 @@ export default function ReaderScreen({
             ))}
           </div>
 
-          {readerExpandableSupport.length > 0 && (
+          {renderedExpandableSupport.length > 0 && (
             <details
               className={isResearcherMode
                 ? "rounded-xl border border-zinc-200 bg-white"
                 : "overflow-hidden rounded-3xl border border-sky-200 bg-white shadow-sm"}
               onToggle={(event) => {
                 if (event.currentTarget.open) {
-                  logSupportUnits("opened", readerExpandableSupport, isResearcherMode ? "on_demand_opened" : "reader_more_opened")
+                  logSupportUnits("opened", renderedExpandableSupport, isResearcherMode ? "on_demand_opened" : "reader_more_opened")
                 }
               }}
             >
@@ -1699,7 +1877,7 @@ export default function ReaderScreen({
                 ? "cursor-pointer px-4 py-3 text-sm font-semibold text-zinc-700"
                 : "cursor-pointer list-none px-5 py-4 text-zinc-800 [&::-webkit-details-marker]:hidden"}>
                 {isResearcherMode ? (
-                  `${t.reader.moreSupport} (${readerExpandableSupport.length})`
+                  `${t.reader.moreSupport} (${renderedExpandableSupport.length})`
                 ) : (
                   <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                     <div>
@@ -1707,7 +1885,7 @@ export default function ReaderScreen({
                         추가 도움말
                       </p>
                       <h3 className="mt-1 text-base font-semibold text-zinc-950">
-                        헷갈릴 때만 보기 ({readerExpandableSupport.length})
+                        헷갈릴 때만 보기 ({renderedExpandableSupport.length})
                       </h3>
                       <p className="mt-1 text-sm leading-6 text-zinc-500">
                         본문을 먼저 읽고, 인물·장소·이전 사건이 헷갈릴 때만 펼쳐보는 보조 설명입니다.
@@ -1724,7 +1902,7 @@ export default function ReaderScreen({
                   ? "border-zinc-200 bg-zinc-50"
                   : "border-sky-100 bg-sky-50/60"
               }`}>
-                {readerExpandableSupport.map((unit) => (
+                {renderedExpandableSupport.map((unit) => (
                   <SupportUnitCard key={unit.unit_id} unit={unit} compact technical={isResearcherMode} />
                 ))}
               </div>
