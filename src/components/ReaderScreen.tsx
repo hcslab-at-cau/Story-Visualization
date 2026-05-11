@@ -1057,6 +1057,32 @@ function ResearcherArtifactPanel({
   )
 }
 
+function ReaderModeNotice() {
+  return (
+    <section className="rounded-3xl border border-amber-200 bg-gradient-to-br from-amber-50 via-white to-stone-50 p-5 shadow-sm">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+        <div>
+          <span className="rounded-full bg-amber-200 px-3 py-1 text-xs font-semibold text-amber-950">
+            독자 화면
+          </span>
+          <h3 className="mt-3 text-lg font-semibold text-zinc-950">
+            본문과 도움말을 분리해서 보여줍니다
+          </h3>
+          <p className="mt-2 max-w-3xl text-sm leading-6 text-zinc-600">
+            아래의 노란 영역은 읽기 보조 단서이고, 실제 소설 본문은 별도의 흰색 본문 박스에서 시작됩니다.
+            추가 설명은 본문을 읽은 뒤 필요할 때만 펼쳐볼 수 있습니다.
+          </p>
+        </div>
+        <div className="grid gap-2 text-xs font-semibold text-zinc-600 sm:grid-cols-3 lg:min-w-[420px]">
+          <span className="rounded-2xl border border-amber-200 bg-white px-3 py-2">1. 짧은 단서만 먼저 보기</span>
+          <span className="rounded-2xl border border-zinc-200 bg-white px-3 py-2">2. 흰색 박스가 실제 본문</span>
+          <span className="rounded-2xl border border-sky-200 bg-white px-3 py-2">3. 추가 도움은 접어서 보관</span>
+        </div>
+      </div>
+    </section>
+  )
+}
+
 interface Props {
   mode?: ReaderScreenMode
   final1: SceneReaderPackageLog
@@ -1467,10 +1493,7 @@ export default function ReaderScreen({
       )}
 
       {!isResearcherMode && (supportBeforeText.length > 0 || readerExpandableSupport.length > 0) && (
-        <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-900">
-          이 화면은 실제 독자용입니다. 자동으로 보이는 단서는 최소화했고, 추가 설명은 본문 아래의
-          “헷갈릴 때만 보기”에서 필요할 때만 펼쳐볼 수 있습니다.
-        </div>
+        <ReaderModeNotice />
       )}
 
       <div className="grid gap-7 xl:grid-cols-[minmax(0,1fr)_minmax(360px,560px)] 2xl:grid-cols-[minmax(0,1fr)_minmax(420px,640px)]">
@@ -1496,11 +1519,23 @@ export default function ReaderScreen({
           )}
 
           {supportBeforeText.length > 0 && (
-            <div className="grid gap-3 md:grid-cols-2">
-              {supportBeforeText.map((unit) => (
-                <SupportUnitCard key={unit.unit_id} unit={unit} technical={isResearcherMode} />
-              ))}
-            </div>
+            <section className={isResearcherMode ? "" : "rounded-3xl border border-amber-200 bg-amber-50/70 p-4 shadow-sm"}>
+              {!isResearcherMode && (
+                <div className="mb-4 flex flex-col gap-1 border-b border-amber-200 pb-3">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-amber-900">
+                    읽기 전 단서
+                  </p>
+                  <p className="text-sm leading-6 text-zinc-600">
+                    이 부분은 본문이 아니라, 현재 장면을 덜 헷갈리게 만들기 위한 짧은 보조 정보입니다.
+                  </p>
+                </div>
+              )}
+              <div className="grid gap-3 md:grid-cols-2">
+                {supportBeforeText.map((unit) => (
+                  <SupportUnitCard key={unit.unit_id} unit={unit} technical={isResearcherMode} />
+                ))}
+              </div>
+            </section>
           )}
           {isResearcherMode && (governedSupport.diagnostics.length > 0 || governedSupport.suppressedCount > 0 || governedSupport.hiddenTriggerCount > 0) && (
             <div className="flex flex-wrap gap-2 rounded-xl border border-zinc-200 bg-zinc-50 px-4 py-3 text-[11px] font-semibold text-zinc-500">
@@ -1516,7 +1551,21 @@ export default function ReaderScreen({
             </div>
           )}
 
-          <div className="flex flex-col gap-5 rounded-2xl border border-zinc-200 bg-white px-7 py-6 text-[17px] leading-9 text-zinc-700 shadow-sm xl:text-[18px]">
+          {!isResearcherMode && (
+            <div className="flex items-center gap-3">
+              <div className="h-px flex-1 bg-zinc-200" />
+              <span className="rounded-full border border-zinc-200 bg-white px-3 py-1 text-xs font-semibold uppercase tracking-wide text-zinc-500">
+                본문
+              </span>
+              <div className="h-px flex-1 bg-zinc-200" />
+            </div>
+          )}
+
+          <div className={`flex flex-col gap-5 rounded-2xl bg-white px-7 py-6 text-[17px] leading-9 text-zinc-700 shadow-sm xl:text-[18px] ${
+            isResearcherMode
+              ? "border border-zinc-200"
+              : "border-2 border-zinc-300 ring-4 ring-zinc-50"
+          }`}>
             {(subscene?.body_paragraphs ?? packet.body_paragraphs).map((paragraph, index) => (
               <p key={index}>{paragraph}</p>
             ))}
@@ -1524,17 +1573,44 @@ export default function ReaderScreen({
 
           {readerExpandableSupport.length > 0 && (
             <details
-              className="rounded-xl border border-zinc-200 bg-white"
+              className={isResearcherMode
+                ? "rounded-xl border border-zinc-200 bg-white"
+                : "overflow-hidden rounded-3xl border border-sky-200 bg-white shadow-sm"}
               onToggle={(event) => {
                 if (event.currentTarget.open) {
                   logSupportUnits("opened", readerExpandableSupport, isResearcherMode ? "on_demand_opened" : "reader_more_opened")
                 }
               }}
             >
-              <summary className="cursor-pointer px-4 py-3 text-sm font-semibold text-zinc-700">
-                {isResearcherMode ? t.reader.moreSupport : "헷갈릴 때만 보기"} ({readerExpandableSupport.length})
+              <summary className={isResearcherMode
+                ? "cursor-pointer px-4 py-3 text-sm font-semibold text-zinc-700"
+                : "cursor-pointer list-none px-5 py-4 text-zinc-800 [&::-webkit-details-marker]:hidden"}>
+                {isResearcherMode ? (
+                  `${t.reader.moreSupport} (${readerExpandableSupport.length})`
+                ) : (
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-wide text-sky-700">
+                        추가 도움말
+                      </p>
+                      <h3 className="mt-1 text-base font-semibold text-zinc-950">
+                        헷갈릴 때만 보기 ({readerExpandableSupport.length})
+                      </h3>
+                      <p className="mt-1 text-sm leading-6 text-zinc-500">
+                        본문을 먼저 읽고, 인물·장소·이전 사건이 헷갈릴 때만 펼쳐보는 보조 설명입니다.
+                      </p>
+                    </div>
+                    <span className="rounded-full bg-sky-100 px-3 py-1 text-xs font-semibold text-sky-800">
+                      펼치기
+                    </span>
+                  </div>
+                )}
               </summary>
-              <div className="grid gap-3 border-t border-zinc-200 bg-zinc-50 p-4 md:grid-cols-2">
+              <div className={`grid gap-3 border-t p-4 md:grid-cols-2 ${
+                isResearcherMode
+                  ? "border-zinc-200 bg-zinc-50"
+                  : "border-sky-100 bg-sky-50/60"
+              }`}>
                 {readerExpandableSupport.map((unit) => (
                   <SupportUnitCard key={unit.unit_id} unit={unit} compact technical={isResearcherMode} />
                 ))}
