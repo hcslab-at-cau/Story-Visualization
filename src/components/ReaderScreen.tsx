@@ -8,6 +8,7 @@
 
 import { useEffect, useRef, useState, type ReactNode } from "react"
 import { useUiStrings } from "@/components/LanguageProvider"
+import { compactReaderText, realizeSupportUnit, splitSupportBridgeBody } from "@/lib/support-realization"
 import { governReaderSupport } from "@/lib/support-governor"
 import type { UiStrings } from "@/lib/ui-strings"
 import { scoreVisualSupport } from "@/lib/visual-support-policy"
@@ -663,15 +664,7 @@ function getReaderProblemLabel(problem?: string): string {
 
 function getReaderSupportTitle(unit: SupportUnit, technical: boolean): string {
   if (technical) return unit.title
-  if (unit.kind === "causal_bridge") return "이전 사건이 왜 지금 이어지는지"
-  if (unit.kind === "reentry_recap") return "다시 읽기 전 확인할 점"
-  if (unit.kind === "snapshot") return "지금 장면의 핵심 상태"
-  if (unit.kind === "boundary_delta") return "방금 바뀐 흐름"
-  if (unit.kind === "reference_repair") return "헷갈릴 수 있는 지시어"
-  if (unit.kind === "spatial_continuity") return "장소와 이동 흐름"
-  if (unit.kind === "character_focus") return "다시 떠올릴 인물 단서"
-  if (unit.kind === "relation_delta") return "관계가 달라진 부분"
-  return getReaderProblemLabel(unit.reader_problem)
+  return realizeSupportUnit(unit).title
 }
 
 function getReaderSupportBody(unit: SupportUnit, technical: boolean): string {
@@ -691,35 +684,15 @@ function getReaderSupportBody(unit: SupportUnit, technical: boolean): string {
 }
 
 function splitCausalBridgeBody(body: string): { previous: string; current: string } | null {
-  const parts = body
-    .split(/\s*(?:->|→|=>)\s*/)
-    .map((part) => part.trim())
-    .filter(Boolean)
-
-  if (parts.length < 2) return null
-
-  return {
-    previous: parts.slice(0, -1).join(" -> "),
-    current: parts[parts.length - 1],
-  }
+  return splitSupportBridgeBody(body)
 }
 
 function compactSupportText(text: string, maxLength = 110): string {
-  const normalized = text.replace(/\s+/g, " ").trim()
-  if (normalized.length <= maxLength) return normalized
-  return `${normalized.slice(0, maxLength - 1).trim()}…`
+  return compactReaderText(text, maxLength)
 }
 
 function getReaderLeadClueText(unit: SupportUnit): string {
-  const bridgeParts = unit.reader_problem === "causal_gap"
-    ? splitCausalBridgeBody(unit.body)
-    : null
-
-  if (bridgeParts) {
-    return `${compactSupportText(bridgeParts.previous, 58)} → ${compactSupportText(bridgeParts.current, 58)}`
-  }
-
-  return compactSupportText(unit.body)
+  return compactSupportText(realizeSupportUnit(unit).preview)
 }
 
 function ReaderLeadClueStrip({ units }: { units: SupportUnit[] }) {
@@ -734,17 +707,20 @@ function ReaderLeadClueStrip({ units }: { units: SupportUnit[] }) {
         </p>
       </div>
       <div className="grid gap-2">
-        {units.slice(0, 2).map((unit) => (
-          <div
-            key={unit.unit_id}
-            className="flex flex-col gap-2 rounded-2xl border border-amber-200 bg-white px-4 py-3 sm:flex-row sm:items-start"
-          >
-            <span className="shrink-0 rounded-full bg-amber-100 px-2.5 py-1 text-[11px] font-semibold text-amber-900">
-              {getReaderProblemLabel(unit.reader_problem)}
-            </span>
-            <p className="text-sm leading-6 text-zinc-800">{getReaderLeadClueText(unit)}</p>
-          </div>
-        ))}
+        {units.slice(0, 2).map((unit) => {
+          const realized = realizeSupportUnit(unit)
+          return (
+            <div
+              key={unit.unit_id}
+              className="flex flex-col gap-2 rounded-2xl border border-amber-200 bg-white px-4 py-3 sm:flex-row sm:items-start"
+            >
+              <span className="shrink-0 rounded-full bg-amber-100 px-2.5 py-1 text-[11px] font-semibold text-amber-900">
+                {realized.chipLabel}
+              </span>
+              <p className="text-sm leading-6 text-zinc-800">{realized.preview}</p>
+            </div>
+          )
+        })}
       </div>
     </section>
   )
@@ -831,6 +807,7 @@ function InlineSupportChip({
   active: boolean
   onToggle: () => void
 }) {
+  const realized = realizeSupportUnit(unit)
   return (
     <span className="ml-2 inline-flex align-baseline">
       <button
@@ -843,7 +820,7 @@ function InlineSupportChip({
         }`}
       >
         <span>?</span>
-        <span>{getReaderProblemLabel(unit.reader_problem)}</span>
+        <span>{realized.chipLabel}</span>
       </button>
     </span>
   )
@@ -876,15 +853,14 @@ function ReaderSupportBody({
   technical: boolean
 }) {
   const paragraphClass = `${compact ? "mt-1 text-sm leading-6" : "mt-2 text-[15px] leading-7"} text-zinc-600`
-  const bridgeParts = !technical && unit.reader_problem === "causal_gap"
-    ? splitCausalBridgeBody(unit.body)
-    : null
+  const realized = realizeSupportUnit(unit)
+  const bridgeParts = !technical ? realized.bridge : null
 
   if (!technical && bridgeParts) {
     return (
       <div className="mt-3 space-y-3">
         <p className="text-sm leading-6 text-zinc-600">
-          이전 장면과 현재 장면의 연결만 분리해서 보여줍니다.
+          {realized.detail}
         </p>
         <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] md:items-stretch">
           <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-3">
@@ -907,9 +883,7 @@ function ReaderSupportBody({
     )
   }
 
-  const body = !technical && unit.reader_problem === "causal_gap"
-    ? unit.body
-    : getReaderSupportBody(unit, technical)
+  const body = technical ? getReaderSupportBody(unit, true) : realized.detail
 
   return <p className={paragraphClass}>{body}</p>
 }
@@ -943,16 +917,17 @@ function SupportUnitCard({
     typeof unit.intrusion_cost === "number" ? `intrude ${unit.intrusion_cost.toFixed(2)}` : "",
     typeof unit.confidence === "number" ? `conf ${unit.confidence.toFixed(2)}` : "",
   ].filter(Boolean)
+  const realized = realizeSupportUnit(unit)
 
   if (compact && !technical) {
     return (
       <div className="rounded-xl border border-zinc-200 bg-white px-3 py-2.5 shadow-sm">
         <div className="flex flex-wrap items-center gap-2">
           <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-900">
-            {getReaderProblemLabel(unit.reader_problem)}
+            {realized.chipLabel}
           </span>
           <h4 className="text-sm font-semibold text-zinc-900">
-            {getReaderSupportTitle(unit, false)}
+            {realized.title}
           </h4>
         </div>
         <p className="mt-1 line-clamp-2 text-xs leading-5 text-zinc-500">
@@ -983,7 +958,7 @@ function SupportUnitCard({
         }`}>
           {technical
             ? (t.reader.supportKind[unit.kind as keyof typeof t.reader.supportKind] ?? unit.label)
-            : getReaderProblemLabel(unit.reader_problem)}
+            : realized.categoryLabel}
         </span>
         {technical && (
           <span className="text-[11px] text-zinc-400">
@@ -992,7 +967,7 @@ function SupportUnitCard({
         )}
       </div>
       <h4 className={`mt-3 font-semibold text-zinc-900 ${compact ? "text-sm" : "text-base"}`}>
-        {getReaderSupportTitle(unit, technical)}
+        {technical ? getReaderSupportTitle(unit, true) : realized.title}
       </h4>
       <ReaderSupportBody unit={unit} compact={compact} technical={technical} />
       {technical ? (
@@ -1221,7 +1196,7 @@ function buildSupportPipelineStages(params: {
       description: "SUP.2~5와 이전 support branch에서 만들어진 후보 전체입니다.",
       items: allUnits.map((unit) => ({
         unit,
-        meta: getReaderProblemLabel(unit.reader_problem),
+        meta: realizeSupportUnit(unit).categoryLabel,
         placement: unit.source_stage_ids.join(", ") || unit.kind,
       })),
     },
@@ -1232,7 +1207,7 @@ function buildSupportPipelineStages(params: {
       description: "SUP.7 display plan에서 독자 화면 후보로 유지한 항목입니다.",
       items: sup7Units.map((unit) => ({
         unit,
-        meta: getReaderProblemLabel(unit.reader_problem),
+        meta: realizeSupportUnit(unit).categoryLabel,
         placement: getSup7Slot(unit, support),
       })),
     },
@@ -1243,7 +1218,7 @@ function buildSupportPipelineStages(params: {
       description: "현재 독자 화면에서 lead, inline, fallback으로 실제 표시되는 항목입니다.",
       items: governorUnits.map((unit) => ({
         unit,
-        meta: getReaderProblemLabel(unit.reader_problem),
+        meta: realizeSupportUnit(unit).categoryLabel,
         placement: params.supportBeforeText.some((item) => item.unit_id === unit.unit_id)
           ? "읽기 전 짧은 단서"
           : (params.inlinePlacementByUnitId.get(unit.unit_id) ?? "헷갈릴 때만 보기"),
