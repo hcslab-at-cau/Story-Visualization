@@ -1354,20 +1354,20 @@ function ReaderModeNotice({
     : "이 장면은 먼저 띄울 만큼 확실한 짧은 단서가 없어서, 실제 소설 본문을 먼저 보여줍니다."
   return (
     <section className="rounded-3xl border border-amber-200 bg-gradient-to-br from-amber-50 via-white to-stone-50 p-5 shadow-sm">
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-        <div>
+      <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+        <div className="min-w-0 flex-1">
           <span className="rounded-full bg-amber-200 px-3 py-1 text-xs font-semibold text-amber-950">
             독자 화면
           </span>
           <h3 className="mt-3 text-lg font-semibold text-zinc-950">
             본문과 도움말을 분리해서 보여줍니다
           </h3>
-          <p className="mt-2 max-w-3xl text-sm leading-6 text-zinc-600">
+          <p className="mt-2 max-w-none break-keep text-sm leading-6 text-zinc-600">
             {leadDescription}
             {hasExpandableSupport ? " 추가 설명은 본문을 읽은 뒤 필요할 때만 펼쳐볼 수 있습니다." : ""}
           </p>
         </div>
-        <div className="grid gap-2 text-xs font-semibold text-zinc-600 sm:grid-cols-3 lg:min-w-[420px]">
+        <div className="grid gap-2 text-xs font-semibold text-zinc-600 sm:grid-cols-3 xl:min-w-[620px] xl:shrink-0">
           <span className="rounded-2xl border border-amber-200 bg-white px-3 py-2">{leadLabel}</span>
           <span className="rounded-2xl border border-zinc-200 bg-white px-3 py-2">2. 흰색 박스가 실제 본문</span>
           <span className="rounded-2xl border border-sky-200 bg-white px-3 py-2">
