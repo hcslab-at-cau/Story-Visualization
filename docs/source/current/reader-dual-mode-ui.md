@@ -19,7 +19,8 @@ Reader 화면을 두 가지 용도로 분리한다.
 독자 화면은 "많은 정보를 보여주는 화면"이 아니라 "필요할 때만 복구 단서를 제공하는 화면"으로 둔다.
 
 - 기본 노출: `Support Governor`가 `before_text`로 선택한 최소 support만 본문 위에 표시한다.
-- 접힘 노출: `on_demand`와 `beside_visual` support를 합쳐 "헷갈릴 때만 보기" 안에 둔다.
+- 본문 근처 노출: `on_demand`와 `beside_visual` support 중 evidence 문단을 찾을 수 있는 것은 해당 문단 아래 `문단 도움` chip으로 붙인다.
+- 접힘 노출: 문단 anchor를 찾지 못한 support만 "헷갈릴 때만 보기" 안에 fallback으로 둔다.
 - 숨김: Cross-chapter memory panel, scene focus debug panel, cast/place cue debug panel, score/provenance/diagnostics는 숨긴다.
 - 근거: 독자 화면에서는 score 대신 짧은 "근거 문장 보기"만 제공한다.
 - 이미지: VIS score가 낮으면 자동 노출하지 않고 "장면 이미지 보기"로 접는다.
@@ -32,6 +33,7 @@ Reader 화면을 두 가지 용도로 분리한다.
 - `SUP.7 support plan`: candidate/display/suppressed support 구조를 확인한다.
 - `BOOK.0 reader memory context`: 현재 scene에 연결된 incoming/outgoing edge, entity thread, nearby path를 확인한다.
 - `Runtime governor and visual policy`: support가 왜 보이거나 숨겨졌는지 확인한다.
+- `Reader support decision board`: 전체 후보마다 독자 화면 기준 ON/OFF를 좌우형 segmented switch로 표시하고, 실제 표시 위치가 `읽기 전 짧은 단서`, `본문 n번째 문단`, `헷갈릴 때만 보기`, `숨김/조건 대기` 중 어디인지 보여준다.
 - `Active subscene view`: 기존 subscene/global/character/pair view artifact를 확인한다.
 
 ## 화면에서 확인할 항목

@@ -750,6 +750,116 @@ function ReaderLeadClueStrip({ units }: { units: SupportUnit[] }) {
   )
 }
 
+interface InlineSupportPlan {
+  groups: Map<number, SupportUnit[]>
+  fallbackUnits: SupportUnit[]
+  placementByUnitId: Map<string, string>
+}
+
+function normalizeSupportMatchText(text: string): string {
+  return text.replace(/\s+/g, " ").trim().toLowerCase()
+}
+
+function textMatchesParagraph(candidate: string | undefined, paragraph: string): boolean {
+  if (!candidate) return false
+  const normalizedCandidate = normalizeSupportMatchText(candidate)
+  const normalizedParagraph = normalizeSupportMatchText(paragraph)
+  if (normalizedCandidate.length < 18 || normalizedParagraph.length < 18) return false
+  if (normalizedParagraph.includes(normalizedCandidate)) return true
+  if (normalizedCandidate.includes(normalizedParagraph)) return true
+  const compactCandidate = normalizedCandidate.slice(0, Math.min(80, normalizedCandidate.length))
+  return compactCandidate.length >= 24 && normalizedParagraph.includes(compactCandidate)
+}
+
+function findInlineSupportParagraphIndex(
+  unit: SupportUnit,
+  paragraphs: string[],
+  activeSubsceneId: string,
+): number | null {
+  const evidenceTexts = unit.evidence
+    .filter((ref) => !ref.subscene_id || ref.subscene_id === activeSubsceneId)
+    .map((ref) => ref.text)
+    .filter(Boolean)
+
+  const bridgeParts = unit.reader_problem === "causal_gap"
+    ? splitCausalBridgeBody(unit.body)
+    : null
+  const candidates = [
+    ...evidenceTexts,
+    bridgeParts?.current,
+  ].filter(Boolean)
+
+  for (const candidate of candidates) {
+    const index = paragraphs.findIndex((paragraph) => textMatchesParagraph(candidate, paragraph))
+    if (index >= 0) return index
+  }
+
+  return null
+}
+
+function buildInlineSupportPlan(
+  units: SupportUnit[],
+  paragraphs: string[],
+  activeSubsceneId: string,
+): InlineSupportPlan {
+  const groups = new Map<number, SupportUnit[]>()
+  const fallbackUnits: SupportUnit[] = []
+  const placementByUnitId = new Map<string, string>()
+
+  for (const unit of units) {
+    const index = findInlineSupportParagraphIndex(unit, paragraphs, activeSubsceneId)
+    if (index === null) {
+      fallbackUnits.push(unit)
+      placementByUnitId.set(unit.unit_id, "헷갈릴 때만 보기")
+      continue
+    }
+
+    const existing = groups.get(index) ?? []
+    groups.set(index, [...existing, unit])
+    placementByUnitId.set(unit.unit_id, `본문 ${index + 1}번째 문단`)
+  }
+
+  return { groups, fallbackUnits, placementByUnitId }
+}
+
+function InlineSupportAnchor({
+  units,
+  onOpen,
+}: {
+  units: SupportUnit[]
+  onOpen: (units: SupportUnit[]) => void
+}) {
+  return (
+    <details
+      className="mt-4 overflow-hidden rounded-2xl border border-sky-200 bg-sky-50/70"
+      onToggle={(event) => {
+        if (event.currentTarget.open) onOpen(units)
+      }}
+    >
+      <summary className="cursor-pointer list-none px-4 py-3 [&::-webkit-details-marker]:hidden">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="rounded-full bg-sky-100 px-2.5 py-1 text-[11px] font-semibold text-sky-800">
+              문단 도움
+            </span>
+            <span className="text-sm font-semibold text-zinc-800">
+              이 부분에서 헷갈릴 때 보기
+            </span>
+          </div>
+          <span className="rounded-full bg-white px-2.5 py-1 text-xs font-semibold text-zinc-500">
+            {units.length}
+          </span>
+        </div>
+      </summary>
+      <div className="grid gap-3 border-t border-sky-100 bg-white/70 p-4 md:grid-cols-2">
+        {units.map((unit) => (
+          <SupportUnitCard key={unit.unit_id} unit={unit} compact />
+        ))}
+      </div>
+    </details>
+  )
+}
+
 function ReaderSupportBody({
   unit,
   compact,
@@ -1036,6 +1146,7 @@ function buildSupportDecisionRows(params: {
   packet: SceneReaderPacket
   supportBeforeText: SupportUnit[]
   readerExpandableSupport: SupportUnit[]
+  inlinePlacementByUnitId: Map<string, string>
   governedSupport: ReturnType<typeof governReaderSupport>
 }): SupportDecisionRow[] {
   const support = params.packet.support
@@ -1070,8 +1181,10 @@ function buildSupportDecisionRows(params: {
         unit,
         proposalSlot: getProposalSlot(unit, support),
         readerStatus: "on",
-        readerPlacement: "헷갈릴 때만 보기",
-        reason: "독자 화면에서는 필요할 때 펼치는 추가 도움으로 묶입니다.",
+        readerPlacement: params.inlinePlacementByUnitId.get(unit.unit_id) ?? "헷갈릴 때만 보기",
+        reason: params.inlinePlacementByUnitId.has(unit.unit_id)
+          ? "본문 문단과 evidence가 매칭되어 문단 근처의 inline chip으로 표시됩니다."
+          : "문단 anchor를 찾지 못해 아래쪽 fallback 도움으로 묶입니다.",
       }
     }
 
@@ -1108,6 +1221,23 @@ function buildSupportDecisionRows(params: {
   })
 }
 
+function SupportDecisionSwitch({ status }: { status: "on" | "off" }) {
+  return (
+    <div className="inline-grid w-[112px] grid-cols-2 rounded-full border border-zinc-200 bg-zinc-100 p-0.5 text-[11px] font-semibold">
+      <span className={`rounded-full px-2 py-1 text-center ${
+        status === "off" ? "bg-zinc-700 text-white shadow-sm" : "text-zinc-400"
+      }`}>
+        OFF
+      </span>
+      <span className={`rounded-full px-2 py-1 text-center ${
+        status === "on" ? "bg-emerald-500 text-white shadow-sm" : "text-zinc-400"
+      }`}>
+        ON
+      </span>
+    </div>
+  )
+}
+
 function ResearcherSupportDecisionBoard({
   rows,
 }: {
@@ -1137,7 +1267,7 @@ function ResearcherSupportDecisionBoard({
       </div>
 
       <div className="mt-4 overflow-hidden rounded-xl border border-zinc-200">
-        <div className="grid grid-cols-[84px_minmax(180px,1.1fr)_minmax(150px,0.8fr)_minmax(170px,0.8fr)_minmax(220px,1.3fr)] gap-0 bg-zinc-100 px-3 py-2 text-xs font-semibold text-zinc-500">
+        <div className="grid grid-cols-[128px_minmax(180px,1.1fr)_minmax(150px,0.8fr)_minmax(170px,0.8fr)_minmax(220px,1.3fr)] gap-0 bg-zinc-100 px-3 py-2 text-xs font-semibold text-zinc-500">
           <span>상태</span>
           <span>도움 후보</span>
           <span>제안 위치</span>
@@ -1151,15 +1281,9 @@ function ResearcherSupportDecisionBoard({
             rows.map((row) => (
               <div
                 key={row.unit.unit_id}
-                className="grid grid-cols-[84px_minmax(180px,1.1fr)_minmax(150px,0.8fr)_minmax(170px,0.8fr)_minmax(220px,1.3fr)] gap-0 px-3 py-3 text-sm"
+                className="grid grid-cols-[128px_minmax(180px,1.1fr)_minmax(150px,0.8fr)_minmax(170px,0.8fr)_minmax(220px,1.3fr)] gap-0 px-3 py-3 text-sm"
               >
-                <span className={`w-fit rounded-full px-2.5 py-1 text-xs font-semibold ${
-                  row.readerStatus === "on"
-                    ? "bg-emerald-100 text-emerald-800"
-                    : "bg-zinc-100 text-zinc-500"
-                }`}>
-                  {row.readerStatus.toUpperCase()}
-                </span>
+                <SupportDecisionSwitch status={row.readerStatus} />
                 <div>
                   <p className="font-semibold text-zinc-900">{getReaderSupportTitle(row.unit, false)}</p>
                   <p className="mt-1 line-clamp-2 text-xs leading-5 text-zinc-500">{row.unit.body}</p>
@@ -1185,6 +1309,7 @@ function ResearcherArtifactPanel({
   supportOnDemand,
   supportBesideVisual,
   readerExpandableSupport,
+  inlinePlacementByUnitId,
   readerMemoryContext,
   governedSupport,
   visualPolicy,
@@ -1197,6 +1322,7 @@ function ResearcherArtifactPanel({
   supportOnDemand: SupportUnit[]
   supportBesideVisual: SupportUnit[]
   readerExpandableSupport: SupportUnit[]
+  inlinePlacementByUnitId: Map<string, string>
   readerMemoryContext: ReaderMemoryContext | null
   governedSupport: ReturnType<typeof governReaderSupport>
   visualPolicy: ReturnType<typeof scoreVisualSupport>
@@ -1214,6 +1340,7 @@ function ResearcherArtifactPanel({
     packet,
     supportBeforeText,
     readerExpandableSupport,
+    inlinePlacementByUnitId,
     governedSupport,
   })
   const subsceneView = packet.subscene_views[activeSubsceneId]
@@ -1425,6 +1552,7 @@ export default function ReaderScreen({
   const refinementScene = final2?.scenes.find((scene) => scene.scene_id === packet.scene_id)
   const subscene = packet?.subscene_nav[subsceneIdx]
   const activeSubsceneId = subscene?.subscene_id ?? packet?.default_active_subscene_id ?? ""
+  const bodyParagraphs = subscene?.body_paragraphs ?? packet.body_paragraphs
   const subsceneView = packet?.subscene_views[activeSubsceneId]
   const mergedOverlay = packet ? buildMergedOverlay(packet, activeSubsceneId, refinementScene) : []
   const availableCharacterIds = new Set(mergedOverlay.map(({ coarse }) => coarse.character_id))
@@ -1454,7 +1582,8 @@ export default function ReaderScreen({
   const supportBesideVisual = governedSupport.besideVisual
   const supportOnDemand = governedSupport.onDemand
   const readerExpandableSupport = uniqueSupportUnits([...supportOnDemand, ...supportBesideVisual])
-  const renderedExpandableSupport = isResearcherMode ? supportOnDemand : readerExpandableSupport
+  const inlineSupportPlan = buildInlineSupportPlan(readerExpandableSupport, bodyParagraphs, activeSubsceneId)
+  const renderedExpandableSupport = isResearcherMode ? supportOnDemand : inlineSupportPlan.fallbackUnits
   const readerMemoryContext = packet
     ? buildReaderMemoryContext(bookMemory, final1, packet, readerRunId)
     : null
@@ -1782,6 +1911,7 @@ export default function ReaderScreen({
           supportOnDemand={supportOnDemand}
           supportBesideVisual={supportBesideVisual}
           readerExpandableSupport={readerExpandableSupport}
+          inlinePlacementByUnitId={inlineSupportPlan.placementByUnitId}
           readerMemoryContext={readerMemoryContext}
           governedSupport={governedSupport}
           visualPolicy={visualPolicy}
@@ -1857,8 +1987,16 @@ export default function ReaderScreen({
               ? "border border-zinc-200"
               : "border-2 border-zinc-300 ring-4 ring-zinc-50"
           }`}>
-            {(subscene?.body_paragraphs ?? packet.body_paragraphs).map((paragraph, index) => (
-              <p key={index}>{paragraph}</p>
+            {bodyParagraphs.map((paragraph, index) => (
+              <div key={index}>
+                <p>{paragraph}</p>
+                {!isResearcherMode && inlineSupportPlan.groups.get(index) && (
+                  <InlineSupportAnchor
+                    units={inlineSupportPlan.groups.get(index) ?? []}
+                    onOpen={(units) => logSupportUnits("opened", units, "inline_support_opened")}
+                  />
+                )}
+              </div>
             ))}
           </div>
 
