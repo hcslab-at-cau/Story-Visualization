@@ -690,6 +690,114 @@ function getReaderSupportBody(unit: SupportUnit, technical: boolean): string {
   return unit.body
 }
 
+function splitCausalBridgeBody(body: string): { previous: string; current: string } | null {
+  const parts = body
+    .split(/\s*(?:->|→|=>)\s*/)
+    .map((part) => part.trim())
+    .filter(Boolean)
+
+  if (parts.length < 2) return null
+
+  return {
+    previous: parts.slice(0, -1).join(" -> "),
+    current: parts[parts.length - 1],
+  }
+}
+
+function compactSupportText(text: string, maxLength = 110): string {
+  const normalized = text.replace(/\s+/g, " ").trim()
+  if (normalized.length <= maxLength) return normalized
+  return `${normalized.slice(0, maxLength - 1).trim()}…`
+}
+
+function getReaderLeadClueText(unit: SupportUnit): string {
+  const bridgeParts = unit.reader_problem === "causal_gap"
+    ? splitCausalBridgeBody(unit.body)
+    : null
+
+  if (bridgeParts) {
+    return `${compactSupportText(bridgeParts.previous, 58)} → ${compactSupportText(bridgeParts.current, 58)}`
+  }
+
+  return compactSupportText(unit.body)
+}
+
+function ReaderLeadClueStrip({ units }: { units: SupportUnit[] }) {
+  return (
+    <section className="rounded-3xl border border-amber-200 bg-amber-50/70 p-4 shadow-sm">
+      <div className="mb-4 flex flex-col gap-1 border-b border-amber-200 pb-3">
+        <p className="text-xs font-semibold uppercase tracking-wide text-amber-900">
+          읽기 전 짧은 단서
+        </p>
+        <p className="text-sm leading-6 text-zinc-600">
+          아래 단서는 본문을 대신하는 요약이 아니라, 현재 장면에 들어가기 전에 확인할 최소 단서입니다.
+        </p>
+      </div>
+      <div className="grid gap-2">
+        {units.slice(0, 2).map((unit) => (
+          <div
+            key={unit.unit_id}
+            className="flex flex-col gap-2 rounded-2xl border border-amber-200 bg-white px-4 py-3 sm:flex-row sm:items-start"
+          >
+            <span className="shrink-0 rounded-full bg-amber-100 px-2.5 py-1 text-[11px] font-semibold text-amber-900">
+              {getReaderProblemLabel(unit.reader_problem)}
+            </span>
+            <p className="text-sm leading-6 text-zinc-800">{getReaderLeadClueText(unit)}</p>
+          </div>
+        ))}
+      </div>
+    </section>
+  )
+}
+
+function ReaderSupportBody({
+  unit,
+  compact,
+  technical,
+}: {
+  unit: SupportUnit
+  compact: boolean
+  technical: boolean
+}) {
+  const paragraphClass = `${compact ? "mt-1 text-sm leading-6" : "mt-2 text-[15px] leading-7"} text-zinc-600`
+  const bridgeParts = !technical && unit.reader_problem === "causal_gap"
+    ? splitCausalBridgeBody(unit.body)
+    : null
+
+  if (!technical && bridgeParts) {
+    return (
+      <div className="mt-3 space-y-3">
+        <p className="text-sm leading-6 text-zinc-600">
+          이전 장면과 현재 장면의 연결만 분리해서 보여줍니다.
+        </p>
+        <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] md:items-stretch">
+          <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-3">
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-amber-900">
+              이전 사건
+            </p>
+            <p className="mt-2 text-sm leading-6 text-zinc-800">{bridgeParts.previous}</p>
+          </div>
+          <div className="hidden items-center justify-center text-xs font-semibold text-zinc-400 md:flex">
+            이어짐
+          </div>
+          <div className="rounded-xl border border-sky-200 bg-sky-50 px-3 py-3">
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-sky-900">
+              현재 장면
+            </p>
+            <p className="mt-2 text-sm leading-6 text-zinc-800">{bridgeParts.current}</p>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  const body = !technical && unit.reader_problem === "causal_gap"
+    ? unit.body
+    : getReaderSupportBody(unit, technical)
+
+  return <p className={paragraphClass}>{body}</p>
+}
+
 function uniqueSupportUnits(units: SupportUnit[]): SupportUnit[] {
   const seen = new Set<string>()
   const unique: SupportUnit[] = []
@@ -738,9 +846,7 @@ function SupportUnitCard({
       <h4 className={`mt-3 font-semibold text-zinc-900 ${compact ? "text-sm" : "text-base"}`}>
         {getReaderSupportTitle(unit, technical)}
       </h4>
-      <p className={`${compact ? "mt-1 text-sm leading-6" : "mt-2 text-[15px] leading-7"} text-zinc-600`}>
-        {getReaderSupportBody(unit, technical)}
-      </p>
+      <ReaderSupportBody unit={unit} compact={compact} technical={technical} />
       {technical ? (
       <details className="mt-3 rounded-lg border border-zinc-100 bg-zinc-50 px-3 py-2">
         <summary className="cursor-pointer text-[11px] font-semibold uppercase tracking-wide text-zinc-500">
@@ -1057,7 +1163,17 @@ function ResearcherArtifactPanel({
   )
 }
 
-function ReaderModeNotice() {
+function ReaderModeNotice({
+  hasLeadClues,
+  hasExpandableSupport,
+}: {
+  hasLeadClues: boolean
+  hasExpandableSupport: boolean
+}) {
+  const leadLabel = hasLeadClues ? "1. 짧은 단서 먼저 보기" : "1. 본문 먼저 읽기"
+  const leadDescription = hasLeadClues
+    ? "아래 노란 영역은 읽기 보조 단서이고, 실제 소설 본문은 별도의 흰색 본문 박스에서 시작됩니다."
+    : "이 장면은 먼저 띄울 만큼 확실한 짧은 단서가 없어서, 실제 소설 본문을 먼저 보여줍니다."
   return (
     <section className="rounded-3xl border border-amber-200 bg-gradient-to-br from-amber-50 via-white to-stone-50 p-5 shadow-sm">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
@@ -1069,14 +1185,16 @@ function ReaderModeNotice() {
             본문과 도움말을 분리해서 보여줍니다
           </h3>
           <p className="mt-2 max-w-3xl text-sm leading-6 text-zinc-600">
-            아래의 노란 영역은 읽기 보조 단서이고, 실제 소설 본문은 별도의 흰색 본문 박스에서 시작됩니다.
-            추가 설명은 본문을 읽은 뒤 필요할 때만 펼쳐볼 수 있습니다.
+            {leadDescription}
+            {hasExpandableSupport ? " 추가 설명은 본문을 읽은 뒤 필요할 때만 펼쳐볼 수 있습니다." : ""}
           </p>
         </div>
         <div className="grid gap-2 text-xs font-semibold text-zinc-600 sm:grid-cols-3 lg:min-w-[420px]">
-          <span className="rounded-2xl border border-amber-200 bg-white px-3 py-2">1. 짧은 단서만 먼저 보기</span>
+          <span className="rounded-2xl border border-amber-200 bg-white px-3 py-2">{leadLabel}</span>
           <span className="rounded-2xl border border-zinc-200 bg-white px-3 py-2">2. 흰색 박스가 실제 본문</span>
-          <span className="rounded-2xl border border-sky-200 bg-white px-3 py-2">3. 추가 도움은 접어서 보관</span>
+          <span className="rounded-2xl border border-sky-200 bg-white px-3 py-2">
+            3. {hasExpandableSupport ? "추가 도움은 접어서 보관" : "추가 도움 없음"}
+          </span>
         </div>
       </div>
     </section>
@@ -1493,7 +1611,10 @@ export default function ReaderScreen({
       )}
 
       {!isResearcherMode && (supportBeforeText.length > 0 || readerExpandableSupport.length > 0) && (
-        <ReaderModeNotice />
+        <ReaderModeNotice
+          hasLeadClues={supportBeforeText.length > 0}
+          hasExpandableSupport={readerExpandableSupport.length > 0}
+        />
       )}
 
       <div className="grid gap-7 xl:grid-cols-[minmax(0,1fr)_minmax(360px,560px)] 2xl:grid-cols-[minmax(0,1fr)_minmax(420px,640px)]">
@@ -1519,23 +1640,15 @@ export default function ReaderScreen({
           )}
 
           {supportBeforeText.length > 0 && (
-            <section className={isResearcherMode ? "" : "rounded-3xl border border-amber-200 bg-amber-50/70 p-4 shadow-sm"}>
-              {!isResearcherMode && (
-                <div className="mb-4 flex flex-col gap-1 border-b border-amber-200 pb-3">
-                  <p className="text-xs font-semibold uppercase tracking-wide text-amber-900">
-                    읽기 전 단서
-                  </p>
-                  <p className="text-sm leading-6 text-zinc-600">
-                    이 부분은 본문이 아니라, 현재 장면을 덜 헷갈리게 만들기 위한 짧은 보조 정보입니다.
-                  </p>
-                </div>
-              )}
+            isResearcherMode ? (
               <div className="grid gap-3 md:grid-cols-2">
                 {supportBeforeText.map((unit) => (
-                  <SupportUnitCard key={unit.unit_id} unit={unit} technical={isResearcherMode} />
+                  <SupportUnitCard key={unit.unit_id} unit={unit} technical />
                 ))}
               </div>
-            </section>
+            ) : (
+              <ReaderLeadClueStrip units={supportBeforeText} />
+            )
           )}
           {isResearcherMode && (governedSupport.diagnostics.length > 0 || governedSupport.suppressedCount > 0 || governedSupport.hiddenTriggerCount > 0) && (
             <div className="flex flex-wrap gap-2 rounded-xl border border-zinc-200 bg-zinc-50 px-4 py-3 text-[11px] font-semibold text-zinc-500">
