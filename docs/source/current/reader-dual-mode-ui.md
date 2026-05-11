@@ -33,7 +33,7 @@ Reader 화면을 두 가지 용도로 분리한다.
 - `SUP.7 support plan`: candidate/display/suppressed support 구조를 확인한다.
 - `BOOK.0 reader memory context`: 현재 scene에 연결된 incoming/outgoing edge, entity thread, nearby path를 확인한다.
 - `Runtime governor and visual policy`: support가 왜 보이거나 숨겨졌는지 확인한다.
-- `Reader support decision board`: 전체 후보마다 독자 화면 기준 ON/OFF를 좌우형 segmented switch로 표시하고, 실제 표시 위치가 `읽기 전 짧은 단서`, `본문 n번째 문단`, `헷갈릴 때만 보기`, `숨김/조건 대기` 중 어디인지 보여준다.
+- `Support narrowing pipeline`: `전체 생성 후보`, `SUP.7이 남긴 후보`, `Governor 최종 표시`를 3단계 컬럼으로 나눠 보여준다. 각 항목은 compact card로 접어 두고, 실제 표시 위치는 `읽기 전 짧은 단서`, `본문 n번째 문단`, `헷갈릴 때만 보기` 중 어디인지 표시한다.
 - `Active subscene view`: 기존 subscene/global/character/pair view artifact를 확인한다.
 
 ## 화면에서 확인할 항목

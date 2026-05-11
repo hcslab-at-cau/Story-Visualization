@@ -937,6 +937,38 @@ function SupportUnitCard({
     typeof unit.intrusion_cost === "number" ? `intrude ${unit.intrusion_cost.toFixed(2)}` : "",
     typeof unit.confidence === "number" ? `conf ${unit.confidence.toFixed(2)}` : "",
   ].filter(Boolean)
+
+  if (compact && !technical) {
+    return (
+      <div className="rounded-xl border border-zinc-200 bg-white px-3 py-2.5 shadow-sm">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-900">
+            {getReaderProblemLabel(unit.reader_problem)}
+          </span>
+          <h4 className="text-sm font-semibold text-zinc-900">
+            {getReaderSupportTitle(unit, false)}
+          </h4>
+        </div>
+        <p className="mt-1 line-clamp-2 text-xs leading-5 text-zinc-500">
+          {getReaderLeadClueText(unit)}
+        </p>
+        <details className="mt-2 rounded-lg border border-zinc-100 bg-zinc-50 px-2.5 py-1.5">
+          <summary className="cursor-pointer text-[11px] font-semibold text-zinc-500">
+            자세히 보기
+          </summary>
+          <div className="mt-2">
+            <ReaderSupportBody unit={unit} compact={false} technical={false} />
+            {evidencePreview && (
+              <p className="mt-2 rounded-md bg-white px-2 py-1 text-xs leading-5 text-zinc-500">
+                근거: {evidencePreview}
+              </p>
+            )}
+          </div>
+        </details>
+      </div>
+    )
+  }
+
   return (
     <div className="rounded-xl border border-zinc-200 bg-white px-4 py-3 shadow-sm">
       <div className="flex items-center justify-between gap-3">
@@ -1118,183 +1150,189 @@ function ResearcherMetricCard({
   )
 }
 
-type SupportDecisionRow = {
-  unit: SupportUnit
-  proposalSlot: string
-  readerStatus: "on" | "off"
-  readerPlacement: string
-  reason: string
+type SupportPipelineStage = {
+  key: "all" | "sup7" | "governor"
+  title: string
+  eyebrow: string
+  description: string
+  items: Array<{
+    unit: SupportUnit
+    meta: string
+    placement?: string
+  }>
 }
 
-function unitIdSet(units: SupportUnit[]): Set<string> {
-  return new Set(units.map((unit) => unit.unit_id))
-}
-
-function getProposalSlot(unit: SupportUnit, support: SceneReaderPacket["support"]): string {
+function getSup7Slot(unit: SupportUnit, support: SceneReaderPacket["support"]): string {
   const plan = support?.display_plan
-  if (plan?.default_visible.some((item) => item.unit_id === unit.unit_id)) return "SUP.7 default_visible"
-  if (plan?.expandable.some((item) => item.unit_id === unit.unit_id)) return "SUP.7 expandable"
-  if (plan?.trigger_only.some((item) => item.unit_id === unit.unit_id)) return "SUP.7 trigger_only"
-  if (plan?.suppressed.some((item) => item.unit_id === unit.unit_id)) return "SUP.7 suppressed"
-  if (support?.display_slots.before_text.some((item) => item.unit_id === unit.unit_id)) return "legacy before_text"
-  if (support?.display_slots.on_demand.some((item) => item.unit_id === unit.unit_id)) return "legacy on_demand"
-  if (support?.display_slots.beside_visual.some((item) => item.unit_id === unit.unit_id)) return "legacy beside_visual"
+  if (plan?.default_visible.some((item) => item.unit_id === unit.unit_id)) return "default visible"
+  if (plan?.expandable.some((item) => item.unit_id === unit.unit_id)) return "expandable"
+  if (plan?.trigger_only.some((item) => item.unit_id === unit.unit_id)) return "trigger only"
+  if (plan?.suppressed.some((item) => item.unit_id === unit.unit_id)) return "suppressed"
+  if (support?.display_slots.before_text.some((item) => item.unit_id === unit.unit_id)) return "before text"
+  if (support?.display_slots.on_demand.some((item) => item.unit_id === unit.unit_id)) return "on demand"
+  if (support?.display_slots.beside_visual.some((item) => item.unit_id === unit.unit_id)) return "beside visual"
   return "candidate"
 }
 
-function buildSupportDecisionRows(params: {
+function buildSupportPipelineStages(params: {
   packet: SceneReaderPacket
   supportBeforeText: SupportUnit[]
   readerExpandableSupport: SupportUnit[]
   inlinePlacementByUnitId: Map<string, string>
-  governedSupport: ReturnType<typeof governReaderSupport>
-}): SupportDecisionRow[] {
+}): SupportPipelineStage[] {
   const support = params.packet.support
   if (!support) return []
 
-  const candidateUnits = uniqueSupportUnits(
-    support.display_plan?.candidate_units ?? [
-      ...support.display_slots.before_text,
-      ...support.display_slots.on_demand,
-      ...support.display_slots.beside_visual,
-    ],
-  )
-  const beforeIds = unitIdSet(params.supportBeforeText)
-  const expandableIds = unitIdSet(params.readerExpandableSupport)
-  const triggerIds = unitIdSet(support.display_plan?.trigger_only ?? [])
-  const suppressed = new Map(
-    (support.display_plan?.suppressed ?? []).map((item) => [item.unit_id, item]),
-  )
+  const allUnits = uniqueSupportUnits([
+    ...support.primary_units,
+    ...support.overflow_units,
+    ...support.display_slots.before_text,
+    ...support.display_slots.on_demand,
+    ...support.display_slots.beside_visual,
+    ...(support.display_plan?.candidate_units ?? []),
+  ])
+  const sup7Units = support.display_plan
+    ? uniqueSupportUnits([
+        ...support.display_plan.default_visible,
+        ...support.display_plan.expandable,
+        ...support.display_plan.trigger_only,
+      ])
+    : uniqueSupportUnits([
+        ...support.display_slots.before_text,
+        ...support.display_slots.on_demand,
+        ...support.display_slots.beside_visual,
+      ])
+  const governorUnits = uniqueSupportUnits([
+    ...params.supportBeforeText,
+    ...params.readerExpandableSupport,
+  ])
 
-  return candidateUnits.map((unit) => {
-    if (beforeIds.has(unit.unit_id)) {
-      return {
+  return [
+    {
+      key: "all",
+      eyebrow: "1. generated",
+      title: "전체 생성 후보",
+      description: "SUP.2~5와 이전 support branch에서 만들어진 후보 전체입니다.",
+      items: allUnits.map((unit) => ({
         unit,
-        proposalSlot: getProposalSlot(unit, support),
-        readerStatus: "on",
-        readerPlacement: "읽기 전 짧은 단서",
-        reason: "Support Governor가 본문 위 lead clue로 선택했습니다.",
-      }
-    }
-    if (expandableIds.has(unit.unit_id)) {
-      return {
+        meta: getReaderProblemLabel(unit.reader_problem),
+        placement: unit.source_stage_ids.join(", ") || unit.kind,
+      })),
+    },
+    {
+      key: "sup7",
+      eyebrow: "2. SUP.7 plan",
+      title: "SUP.7이 남긴 후보",
+      description: "SUP.7 display plan에서 독자 화면 후보로 유지한 항목입니다.",
+      items: sup7Units.map((unit) => ({
         unit,
-        proposalSlot: getProposalSlot(unit, support),
-        readerStatus: "on",
-        readerPlacement: params.inlinePlacementByUnitId.get(unit.unit_id) ?? "헷갈릴 때만 보기",
-        reason: params.inlinePlacementByUnitId.has(unit.unit_id)
-          ? "본문 문단과 evidence가 매칭되어 문단 근처의 inline chip으로 표시됩니다."
-          : "문단 anchor를 찾지 못해 아래쪽 fallback 도움으로 묶입니다.",
-      }
-    }
-
-    const suppressedItem = suppressed.get(unit.unit_id)
-    if (suppressedItem) {
-      return {
+        meta: getReaderProblemLabel(unit.reader_problem),
+        placement: getSup7Slot(unit, support),
+      })),
+    },
+    {
+      key: "governor",
+      eyebrow: "3. reader output",
+      title: "Governor 최종 표시",
+      description: "현재 독자 화면에서 lead, inline, fallback으로 실제 표시되는 항목입니다.",
+      items: governorUnits.map((unit) => ({
         unit,
-        proposalSlot: getProposalSlot(unit, support),
-        readerStatus: "off",
-        readerPlacement: "숨김",
-        reason: `SUP.6/SUP.7에서 ${suppressedItem.reason} 이유로 제외했습니다.${suppressedItem.note ? ` ${suppressedItem.note}` : ""}`,
-      }
-    }
-
-    if (triggerIds.has(unit.unit_id)) {
-      return {
-        unit,
-        proposalSlot: getProposalSlot(unit, support),
-        readerStatus: "off",
-        readerPlacement: "조건 대기",
-        reason: "session re-entry, visual usefulness, reader request 같은 trigger가 아직 켜지지 않았습니다.",
-      }
-    }
-
-    return {
-      unit,
-      proposalSlot: getProposalSlot(unit, support),
-      readerStatus: "off",
-      readerPlacement: "숨김",
-      reason: params.governedSupport.diagnostics.includes("support_fatigue_high")
-        ? "support fatigue가 높아 기본 노출을 줄였습니다."
-        : "중복, 낮은 우선순위, 또는 현재 독자 화면 slot 제한 때문에 노출하지 않았습니다.",
-    }
-  })
+        meta: getReaderProblemLabel(unit.reader_problem),
+        placement: params.supportBeforeText.some((item) => item.unit_id === unit.unit_id)
+          ? "읽기 전 짧은 단서"
+          : (params.inlinePlacementByUnitId.get(unit.unit_id) ?? "헷갈릴 때만 보기"),
+      })),
+    },
+  ]
 }
 
-function SupportDecisionSwitch({ status }: { status: "on" | "off" }) {
+function SupportPipelineMiniCard({
+  item,
+}: {
+  item: SupportPipelineStage["items"][number]
+}) {
   return (
-    <div className="inline-grid w-[112px] grid-cols-2 rounded-full border border-zinc-200 bg-zinc-100 p-0.5 text-[11px] font-semibold">
-      <span className={`rounded-full px-2 py-1 text-center ${
-        status === "off" ? "bg-zinc-700 text-white shadow-sm" : "text-zinc-400"
-      }`}>
-        OFF
-      </span>
-      <span className={`rounded-full px-2 py-1 text-center ${
-        status === "on" ? "bg-emerald-500 text-white shadow-sm" : "text-zinc-400"
-      }`}>
-        ON
-      </span>
-    </div>
+    <details className="rounded-xl border border-zinc-200 bg-white px-3 py-2">
+      <summary className="cursor-pointer list-none [&::-webkit-details-marker]:hidden">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <p className="truncate text-sm font-semibold text-zinc-900">
+              {getReaderSupportTitle(item.unit, false)}
+            </p>
+            <p className="mt-0.5 truncate text-[11px] text-zinc-500">
+              {item.meta} · {item.placement}
+            </p>
+          </div>
+          <span className="shrink-0 rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] font-semibold text-zinc-500">
+            {item.unit.kind}
+          </span>
+        </div>
+      </summary>
+      <p className="mt-2 border-t border-zinc-100 pt-2 text-xs leading-5 text-zinc-500">
+        {item.unit.body}
+      </p>
+    </details>
   )
 }
 
 function ResearcherSupportDecisionBoard({
-  rows,
+  stages,
 }: {
-  rows: SupportDecisionRow[]
+  stages: SupportPipelineStage[]
 }) {
-  const onCount = rows.filter((row) => row.readerStatus === "on").length
-  const offCount = rows.length - onCount
+  const totalCount = stages[0]?.items.length ?? 0
+  const sup7Count = stages[1]?.items.length ?? 0
+  const governorCount = stages[2]?.items.length ?? 0
 
   return (
     <section className="mt-4 rounded-2xl border border-zinc-200 bg-white p-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
-            독자 화면 ON/OFF 결정표
+            Support narrowing pipeline
           </p>
           <h4 className="mt-1 text-base font-semibold text-zinc-950">
-            제안된 전체 도움 중 실제 독자 화면에 켜지는 것
+            전체 후보에서 독자 화면 표시까지 3단계로 보기
           </h4>
           <p className="mt-1 text-sm leading-6 text-zinc-500">
-            SUP.7이 제안한 후보를 Support Governor가 독자 화면 기준으로 다시 선별한 결과입니다.
+            리스트는 간결하게 접어 두고, 각 단계가 몇 개를 남겼는지와 어디에 표시되는지만 먼저 보여줍니다.
           </p>
         </div>
-        <div className="flex gap-2 text-xs font-semibold">
-          <span className="rounded-full bg-emerald-100 px-3 py-1 text-emerald-800">ON {onCount}</span>
-          <span className="rounded-full bg-zinc-100 px-3 py-1 text-zinc-600">OFF {offCount}</span>
+        <div className="flex flex-wrap gap-2 text-xs font-semibold">
+          <span className="rounded-full bg-zinc-100 px-3 py-1 text-zinc-600">전체 {totalCount}</span>
+          <span className="rounded-full bg-amber-100 px-3 py-1 text-amber-800">SUP.7 {sup7Count}</span>
+          <span className="rounded-full bg-emerald-100 px-3 py-1 text-emerald-800">Governor {governorCount}</span>
         </div>
       </div>
 
-      <div className="mt-4 overflow-hidden rounded-xl border border-zinc-200">
-        <div className="grid grid-cols-[128px_minmax(180px,1.1fr)_minmax(150px,0.8fr)_minmax(170px,0.8fr)_minmax(220px,1.3fr)] gap-0 bg-zinc-100 px-3 py-2 text-xs font-semibold text-zinc-500">
-          <span>상태</span>
-          <span>도움 후보</span>
-          <span>제안 위치</span>
-          <span>독자 화면 위치</span>
-          <span>이유</span>
-        </div>
-        <div className="max-h-[420px] divide-y divide-zinc-200 overflow-auto bg-white">
-          {rows.length === 0 ? (
-            <div className="px-3 py-6 text-sm text-zinc-500">현재 scene에 support 후보가 없습니다.</div>
-          ) : (
-            rows.map((row) => (
-              <div
-                key={row.unit.unit_id}
-                className="grid grid-cols-[128px_minmax(180px,1.1fr)_minmax(150px,0.8fr)_minmax(170px,0.8fr)_minmax(220px,1.3fr)] gap-0 px-3 py-3 text-sm"
-              >
-                <SupportDecisionSwitch status={row.readerStatus} />
-                <div>
-                  <p className="font-semibold text-zinc-900">{getReaderSupportTitle(row.unit, false)}</p>
-                  <p className="mt-1 line-clamp-2 text-xs leading-5 text-zinc-500">{row.unit.body}</p>
-                </div>
-                <span className="text-xs leading-5 text-zinc-500">{row.proposalSlot}</span>
-                <span className="text-xs font-semibold leading-5 text-zinc-700">{row.readerPlacement}</span>
-                <span className="text-xs leading-5 text-zinc-500">{row.reason}</span>
+      <div className="mt-4 grid gap-3 xl:grid-cols-3">
+        {stages.map((stage) => (
+          <div key={stage.key} className="rounded-2xl border border-zinc-200 bg-zinc-50 p-3">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">
+                  {stage.eyebrow}
+                </p>
+                <h5 className="mt-1 text-sm font-semibold text-zinc-950">{stage.title}</h5>
               </div>
-            ))
-          )}
-        </div>
+              <span className="rounded-full bg-white px-2.5 py-1 text-xs font-semibold text-zinc-500">
+                {stage.items.length}
+              </span>
+            </div>
+            <p className="mt-2 text-xs leading-5 text-zinc-500">{stage.description}</p>
+            <div className="mt-3 grid max-h-[360px] gap-2 overflow-auto pr-1">
+              {stage.items.length === 0 ? (
+                <div className="rounded-xl border border-dashed border-zinc-300 bg-white px-3 py-4 text-xs text-zinc-500">
+                  항목 없음
+                </div>
+              ) : (
+                stage.items.map((item) => (
+                  <SupportPipelineMiniCard key={`${stage.key}:${item.unit.unit_id}`} item={item} />
+                ))
+              )}
+            </div>
+          </div>
+        ))}
       </div>
     </section>
   )
@@ -1336,12 +1374,11 @@ function ResearcherArtifactPanel({
   const bookBridgeCount = (readerMemoryContext?.incomingEdges.length ?? 0)
     + (readerMemoryContext?.outgoingEdges.length ?? 0)
   const visibleCount = supportBeforeText.length + readerExpandableSupport.length
-  const decisionRows = buildSupportDecisionRows({
+  const supportPipelineStages = buildSupportPipelineStages({
     packet,
     supportBeforeText,
     readerExpandableSupport,
     inlinePlacementByUnitId,
-    governedSupport,
   })
   const subsceneView = packet.subscene_views[activeSubsceneId]
   const rawArtifacts = [
@@ -1421,7 +1458,7 @@ function ResearcherArtifactPanel({
         />
       </div>
 
-      <ResearcherSupportDecisionBoard rows={decisionRows} />
+      <ResearcherSupportDecisionBoard stages={supportPipelineStages} />
 
       <div className="mt-4 grid gap-3 xl:grid-cols-3">
         <div className="rounded-xl border border-zinc-200 bg-white px-4 py-3">
