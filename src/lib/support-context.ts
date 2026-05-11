@@ -7,6 +7,8 @@ import type {
   BookMemorySceneRef,
   BookMemorySnapshot,
 } from "@/types/book-memory"
+import { queryNarrativeGraphSnapshot } from "@/lib/narrative-graph"
+import { verifySupportUnits } from "@/lib/support-verifier"
 import type {
   NarrativeClaim,
   ReaderProblem,
@@ -240,7 +242,7 @@ function supportUnitFromBookEdge(edge: BookMemoryEdge, sceneId: string): Support
   )
   const intrusionCost = kind === "causal_bridge" ? 0.42 : 0.32
 
-  return {
+  const unit: SupportUnit = {
     unit_id: `${sceneId}:book_context:${safeId(edge.edgeId)}`,
     scene_id: sceneId,
     kind,
@@ -269,6 +271,7 @@ function supportUnitFromBookEdge(edge: BookMemoryEdge, sceneId: string): Support
     ],
     claims: [narrativeClaimForEdge(edge, evidence)],
   }
+  return verifySupportUnits([unit])[0]?.unit ?? unit
 }
 
 function runtimeRulesForUnits(units: SupportUnit[]): SupportRuntimeRule[] {
@@ -303,7 +306,18 @@ function mergeSupportPlan(
     ...packet.primary_units,
     ...packet.overflow_units,
   ]
-  const candidateUnits = uniqueUnits([...baseCandidateUnits, ...additions])
+  const verification = verifySupportUnits(uniqueUnits([...baseCandidateUnits, ...additions]))
+  const candidateUnits = verification.filter((item) => !item.suppressed).map((item) => item.unit)
+  const suppressed = [
+    ...(plan?.suppressed ?? []),
+    ...verification
+      .filter((item) => item.suppressed && item.reason)
+      .map((item) => ({
+        unit_id: item.unit.unit_id,
+        reason: item.reason!,
+        note: item.note,
+      })),
+  ]
   const defaultVisible = candidateUnits.filter((unit) => unit.default_display === "visible")
   const expandable = candidateUnits.filter((unit) => unit.default_display === "expandable")
   const triggerOnly = candidateUnits.filter((unit) => unit.default_display === "trigger_only")
@@ -314,7 +328,7 @@ function mergeSupportPlan(
     default_visible: defaultVisible,
     expandable,
     trigger_only: triggerOnly,
-    suppressed: plan?.suppressed ?? [],
+    suppressed,
     runtime_rules: uniqueRuntimeRules([
       ...(plan?.runtime_rules ?? runtimeRulesForUnits(baseCandidateUnits)),
       ...runtimeRulesForUnits(additions),
@@ -451,6 +465,11 @@ export function buildSupportContext(
   ))
   const filteredSafeEdges = filterEdgesForKind(safeEdges, supportKind)
     .sort((a, b) => edgePriority(a) - edgePriority(b) || b.weight - a.weight)
+  const narrativeGraph = queryNarrativeGraphSnapshot(snapshot, {
+    chapterId: params.chapterId,
+    sceneId: params.sceneId,
+    supportKind,
+  })
   const incomingEdges = filteredSafeEdges.filter((edge) => edge.toSceneKey === sceneKey)
   const outgoingEdges = filteredSafeEdges.filter((edge) => (
     edge.fromSceneKey === sceneKey && allowedSceneKeys.has(edge.toSceneKey)
@@ -497,6 +516,7 @@ export function buildSupportContext(
     causalEdges,
     placeChain: buildPlaceChain(orderedScenes, currentSceneIndex, currentScene),
     entityThreads,
+    narrativeClaims: narrativeGraph.claims,
     nearbyScenes,
     evidenceRefs: uniqueEvidence([...incomingEdges, ...outgoingEdges]),
     safetyFilterResult: {

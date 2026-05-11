@@ -27,6 +27,7 @@ import type {
   ValidatedSubscene,
   ValidatedSubscenes,
 } from "@/types/schema"
+import { verifySupportUnits } from "@/lib/support-verifier"
 
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -334,17 +335,22 @@ function buildReaderSupportPlan(
   candidateUnits: SupportUnit[],
   suppressedUnits: Array<{ unit: SupportUnit; reason: SupportSuppressionReason; note?: string }>,
 ): ReaderSupportPlan {
-  const defaultVisible = candidateUnits.filter((unit) => unit.default_display === "visible")
-  const expandable = candidateUnits.filter((unit) => unit.default_display === "expandable")
-  const triggerOnly = candidateUnits.filter((unit) => unit.default_display === "trigger_only")
+  const verification = verifySupportUnits(candidateUnits)
+  const verifiedUnits = verification.filter((item) => !item.suppressed).map((item) => item.unit)
+  const verifierSuppressed = verification
+    .filter((item) => item.suppressed && item.reason)
+    .map((item) => ({ unit: item.unit, reason: item.reason!, note: item.note }))
+  const defaultVisible = verifiedUnits.filter((unit) => unit.default_display === "visible")
+  const expandable = verifiedUnits.filter((unit) => unit.default_display === "expandable")
+  const triggerOnly = verifiedUnits.filter((unit) => unit.default_display === "trigger_only")
 
   return {
     scene_id: sceneId,
-    candidate_units: candidateUnits,
+    candidate_units: verifiedUnits,
     default_visible: defaultVisible,
     expandable,
     trigger_only: triggerOnly,
-    suppressed: suppressedUnits.map((item) => ({
+    suppressed: [...suppressedUnits, ...verifierSuppressed].map((item) => ({
       unit_id: item.unit.unit_id,
       reason: item.reason,
       note: item.note,

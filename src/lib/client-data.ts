@@ -1,10 +1,13 @@
 import { stageKey } from "./stage-key"
 import type { PipelineArtifact, StageId } from "@/types/schema"
 import type { BookMemorySnapshot } from "@/types/book-memory"
+import type { NarrativeGraphQueryResult } from "@/types/narrative-graph"
 import type {
   KnowledgeGraphNodeKind,
   KnowledgeGraphQueryResult,
 } from "@/types/graph"
+import type { RunReadinessReport } from "@/types/readiness"
+import type { SupportContextKind } from "@/types/support-context"
 
 export { stageKey }
 
@@ -195,6 +198,40 @@ export async function loadBookMemory(
     `/api/book-memory?${query.toString()}`,
   )
   return data.snapshot
+}
+
+export async function loadRunReadiness(params: {
+  docId: string
+  chapterId: string
+  runId: string
+}): Promise<RunReadinessReport> {
+  const query = new URLSearchParams({
+    docId: params.docId,
+    chapterId: params.chapterId,
+    runId: params.runId,
+  })
+  const data = await requestJson<{ report: RunReadinessReport }>(
+    `/api/run-readiness?${query.toString()}`,
+  )
+  return data.report
+}
+
+export async function loadNarrativeGraph(params: {
+  docId: string
+  bookRunId?: string
+  chapterId?: string
+  sceneId?: string
+  supportKind?: SupportContextKind
+}): Promise<NarrativeGraphQueryResult> {
+  const query = new URLSearchParams({ docId: params.docId })
+  if (params.bookRunId) query.set("bookRunId", params.bookRunId)
+  if (params.chapterId) query.set("chapterId", params.chapterId)
+  if (params.sceneId) query.set("sceneId", params.sceneId)
+  if (params.supportKind && params.supportKind !== "all") query.set("supportKind", params.supportKind)
+  const data = await requestJson<{ graph: NarrativeGraphQueryResult }>(
+    `/api/narrative-graph?${query.toString()}`,
+  )
+  return data.graph
 }
 
 export async function buildBookMemory(params: {

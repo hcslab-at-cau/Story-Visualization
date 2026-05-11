@@ -6,8 +6,10 @@ import EpubUploader from "@/components/EpubUploader"
 import ExistingDocumentsPicker from "@/components/ExistingDocumentsPicker"
 import KnowledgeGraphExplorer from "@/components/KnowledgeGraphExplorer"
 import { LanguageProvider, LanguageSwitcher, useUiStrings } from "@/components/LanguageProvider"
+import NarrativeGraphInspector from "@/components/NarrativeGraphInspector"
 import PipelineRunner from "@/components/PipelineRunner"
 import ReaderScreen from "@/components/ReaderScreen"
+import RunReadinessPanel from "@/components/RunReadinessPanel"
 import SupportSystemShowcase from "@/components/SupportSystemShowcase"
 import {
   deleteRun,
@@ -530,6 +532,7 @@ function GraphView({
 
       {runId ? (
         <>
+          <RunReadinessPanel docId={docId} chapterId={chapterId} runId={runId} onRunChange={onRunChange} />
           <SupportSystemShowcase docId={docId} chapterId={chapterId} runId={runId} />
           <BookMemoryPanel
             docId={docId}
@@ -537,6 +540,7 @@ function GraphView({
             currentChapterId={chapterId}
             chapters={chapters}
           />
+          <NarrativeGraphInspector docId={docId} chapterId={chapterId} />
           <KnowledgeGraphExplorer docId={docId} chapterId={chapterId} runId={runId} />
         </>
       ) : (
@@ -862,6 +866,9 @@ function ReaderView({
         <div className="rounded-lg border border-dashed border-zinc-300 bg-white px-4 py-3 text-sm text-zinc-500">
           {t.readerPage.noResult}
         </div>
+        {source !== "legacy" && (
+          <RunReadinessPanel docId={docId} chapterId={chapterId} runId={runId} />
+        )}
         {false && null}
         <div className="hidden" aria-hidden="true">
           결과가 없습니다. 실행해주세요.

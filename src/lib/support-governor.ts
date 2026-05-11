@@ -7,6 +7,7 @@ export interface GovernedReaderSupport {
   hiddenTriggerCount: number
   suppressedCount: number
   reentryActive: boolean
+  diagnostics: string[]
 }
 
 const DEFAULT_REENTRY_GAP_MS = 10 * 60 * 1000
@@ -34,12 +35,25 @@ function triggerAllowed(unit: SupportUnit, options: { reentryActive: boolean; vi
   return false
 }
 
+function isRecoveryUnit(unit: SupportUnit): boolean {
+  return (
+    unit.reader_problem === "state_recovery" ||
+    unit.reader_problem === "boundary_update" ||
+    unit.kind === "snapshot" ||
+    unit.kind === "boundary_delta"
+  )
+}
+
 export function governReaderSupport(
   support: ReaderSupportPacket | undefined,
   options: {
     resumeGapMs?: number
     reentryGapMs?: number
     visualUseful?: boolean
+    sceneBoundaryActive?: boolean
+    longPauseActive?: boolean
+    backscrollActive?: boolean
+    supportFatigueScore?: number
   } = {},
 ): GovernedReaderSupport {
   if (!support) {
@@ -50,27 +64,39 @@ export function governReaderSupport(
       hiddenTriggerCount: 0,
       suppressedCount: 0,
       reentryActive: false,
+      diagnostics: ["support_missing"],
     }
   }
 
   const reentryActive = (options.resumeGapMs ?? 0) >= (options.reentryGapMs ?? DEFAULT_REENTRY_GAP_MS)
   const visualUseful = options.visualUseful ?? true
+  const sceneBoundaryActive = options.sceneBoundaryActive ?? true
+  const readerRecoverySignal = Boolean(options.longPauseActive || options.backscrollActive)
+  const supportFatigueScore = Math.max(0, Math.min(1, options.supportFatigueScore ?? 0))
+  const fatigueHigh = supportFatigueScore >= 0.65
+  const diagnostics = [
+    reentryActive ? "session_reentry" : "",
+    readerRecoverySignal ? "recovery_signal" : "",
+    visualUseful ? "visual_useful" : "visual_suppressed",
+    fatigueHigh ? "support_fatigue_high" : "",
+  ].filter(Boolean)
   const plan = support.display_plan
 
   if (!plan) {
-    const beforeText = support.display_slots.before_text.slice(0, 1)
+    const beforeText = fatigueHigh ? [] : support.display_slots.before_text.slice(0, 1)
     const overflowBeforeText = support.display_slots.before_text.slice(1)
     return {
       beforeText,
       besideVisual: support.display_slots.beside_visual,
-      onDemand: uniqueUnits([...overflowBeforeText, ...support.display_slots.on_demand]),
+      onDemand: uniqueUnits([...support.display_slots.before_text.filter((unit) => !beforeText.includes(unit)), ...overflowBeforeText, ...support.display_slots.on_demand]),
       hiddenTriggerCount: 0,
       suppressedCount: 0,
       reentryActive,
+      diagnostics,
     }
   }
 
-  const beforeText = plan.default_visible.slice(0, 1)
+  let beforeText = sceneBoundaryActive && !fatigueHigh ? plan.default_visible.slice(0, 1) : []
   const overflowVisible = plan.default_visible.slice(1)
   const runtimeSuppressed = visualUseful
     ? []
@@ -80,14 +106,23 @@ export function governReaderSupport(
   const besideVisual = expandable.filter((unit) => isBesideVisualUnit(unit, { visualUseful }))
   const expandableOnDemand = expandable.filter((unit) => !isBesideVisualUnit(unit, { visualUseful }))
   const triggered = triggerOnly.filter((unit) => triggerAllowed(unit, { reentryActive, visualUseful }))
+  if (beforeText.length === 0 && readerRecoverySignal && !fatigueHigh) {
+    const recoveryUnit = uniqueUnits([...expandableOnDemand, ...triggered, ...overflowVisible])
+      .find(isRecoveryUnit)
+    if (recoveryUnit) {
+      beforeText = [recoveryUnit]
+      diagnostics.push("promoted_recovery_unit")
+    }
+  }
   const hiddenTriggerCount = Math.max(0, plan.trigger_only.length - triggered.length)
 
   return {
     beforeText,
     besideVisual,
-    onDemand: uniqueUnits([...overflowVisible, ...expandableOnDemand, ...triggered]),
+    onDemand: uniqueUnits([...overflowVisible, ...expandableOnDemand, ...triggered].filter((unit) => !beforeText.includes(unit))),
     hiddenTriggerCount,
     suppressedCount: plan.suppressed.length + runtimeSuppressed.length,
     reentryActive,
+    diagnostics,
   }
 }

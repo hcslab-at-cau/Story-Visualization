@@ -639,6 +639,13 @@ function SupportUnitCard({
   compact?: boolean
 }) {
   const { t } = useUiStrings()
+  const evidencePreview = unit.evidence.find((ref) => ref.text?.trim())?.text
+  const scoreParts = [
+    typeof unit.usefulness_score === "number" ? `use ${unit.usefulness_score.toFixed(2)}` : "",
+    typeof unit.grounding_score === "number" ? `ground ${unit.grounding_score.toFixed(2)}` : "",
+    typeof unit.intrusion_cost === "number" ? `intrude ${unit.intrusion_cost.toFixed(2)}` : "",
+    typeof unit.confidence === "number" ? `conf ${unit.confidence.toFixed(2)}` : "",
+  ].filter(Boolean)
   return (
     <div className="rounded-xl border border-zinc-200 bg-white px-4 py-3 shadow-sm">
       <div className="flex items-center justify-between gap-3">
@@ -655,6 +662,24 @@ function SupportUnitCard({
       <p className={`${compact ? "mt-1 text-sm leading-6" : "mt-2 text-[15px] leading-7"} text-zinc-600`}>
         {unit.body}
       </p>
+      <details className="mt-3 rounded-lg border border-zinc-100 bg-zinc-50 px-3 py-2">
+        <summary className="cursor-pointer text-[11px] font-semibold uppercase tracking-wide text-zinc-500">
+          provenance / scores
+        </summary>
+        <div className="mt-2 space-y-2 text-xs leading-5 text-zinc-500">
+          <p>problem: {unit.reader_problem ?? "-"} · display: {unit.default_display ?? "-"} · spoiler: {unit.spoiler_risk ?? "none"}</p>
+          {scoreParts.length > 0 && <p>{scoreParts.join(" · ")}</p>}
+          {unit.source_stage_ids.length > 0 && <p>source: {unit.source_stage_ids.join(", ")}</p>}
+          {unit.claims && unit.claims.length > 0 && (
+            <p>claims: {unit.claims.map((claim) => `${claim.claim_type}:${claim.support_level}`).join(", ")}</p>
+          )}
+          <p>{t.common.evidence}: {unit.evidence.length}</p>
+          {evidencePreview && <p className="rounded-md bg-white px-2 py-1 text-zinc-600">{evidencePreview}</p>}
+          {unit.score_notes && unit.score_notes.length > 0 && (
+            <p>notes: {unit.score_notes.slice(0, 4).join(" · ")}</p>
+          )}
+        </div>
+      </details>
     </div>
   )
 }
@@ -789,6 +814,9 @@ export default function ReaderScreen({ final1, final2, bookMemory, readerRunId, 
   const [resumeGapMs] = useState(() => readResumeGapMs(final1.doc_id))
   const [readerSessionId] = useState(() => createReaderSessionId(final1.doc_id))
   const [selectedCharacterIds, setSelectedCharacterIds] = useState<string[]>([])
+  const [longPauseActive, setLongPauseActive] = useState(false)
+  const [backscrollActive, setBackscrollActive] = useState(false)
+  const [supportOpenCount, setSupportOpenCount] = useState(0)
   const imageFrameRef = useRef<HTMLDivElement | null>(null)
   const preloadedImageUrlsRef = useRef<Set<string>>(new Set())
   const loggedSupportEventsRef = useRef<Set<string>>(new Set())
@@ -825,6 +853,10 @@ export default function ReaderScreen({ final1, final2, bookMemory, readerRunId, 
     resumeGapMs,
     reentryGapMs: READER_REENTRY_GAP_MS,
     visualUseful: visualPolicy.usefulnessScore >= 0.48 || visualPolicy.showBlueprintByDefault,
+    sceneBoundaryActive: subsceneIdx === 0,
+    longPauseActive,
+    backscrollActive,
+    supportFatigueScore: Math.min(1, supportOpenCount / 8),
   })
   const supportBeforeText = governedSupport.beforeText
   const supportBesideVisual = governedSupport.besideVisual
@@ -839,6 +871,9 @@ export default function ReaderScreen({ final1, final2, bookMemory, readerRunId, 
     reason?: string,
   ) {
     if (!packet || units.length === 0) return
+    if (action === "opened") {
+      setSupportOpenCount((value) => Math.min(20, value + units.length))
+    }
     const sceneKey = `${final1.chapter_id}:${packet.scene_id}`
     for (const unit of units) {
       const logKey = `${action}:${sceneKey}:${unit.unit_id}:${reason ?? ""}`
@@ -884,11 +919,15 @@ export default function ReaderScreen({ final1, final2, bookMemory, readerRunId, 
   function selectScene(nextSceneIdx: number, nextSubsceneIdx = 0) {
     setSceneIdx(nextSceneIdx)
     setSubsceneIdx(nextSubsceneIdx)
+    setLongPauseActive(false)
+    setBackscrollActive(false)
     resetFocusState()
   }
 
   function selectSubscene(nextSubsceneIdx: number) {
     setSubsceneIdx(nextSubsceneIdx)
+    setLongPauseActive(false)
+    setBackscrollActive(false)
     resetFocusState()
   }
 
@@ -988,6 +1027,11 @@ export default function ReaderScreen({ final1, final2, bookMemory, readerRunId, 
   }, [final1.doc_id, sceneIdx, subsceneIdx])
 
   useEffect(() => {
+    const timer = window.setTimeout(() => setLongPauseActive(true), 45_000)
+    return () => window.clearTimeout(timer)
+  }, [sceneIdx, subsceneIdx])
+
+  useEffect(() => {
     if (!packet || supportBeforeText.length === 0) return
     const sceneKey = `${final1.chapter_id}:${packet.scene_id}`
     for (const unit of supportBeforeText) {
@@ -1076,7 +1120,12 @@ export default function ReaderScreen({ final1, final2, bookMemory, readerRunId, 
   }
 
   return (
-    <div className="mx-auto flex w-full max-w-[2080px] flex-col gap-5 p-6">
+    <div
+      className="mx-auto flex w-full max-w-[2080px] flex-col gap-5 p-6"
+      onWheel={(event) => {
+        if (event.deltaY < -24) setBackscrollActive(true)
+      }}
+    >
       <div className="flex flex-wrap items-center gap-3">
         {topControls}
         <div className="flex items-center gap-3">
@@ -1152,6 +1201,19 @@ export default function ReaderScreen({ final1, final2, bookMemory, readerRunId, 
               {supportBeforeText.map((unit) => (
                 <SupportUnitCard key={unit.unit_id} unit={unit} />
               ))}
+            </div>
+          )}
+          {(governedSupport.diagnostics.length > 0 || governedSupport.suppressedCount > 0 || governedSupport.hiddenTriggerCount > 0) && (
+            <div className="flex flex-wrap gap-2 rounded-xl border border-zinc-200 bg-zinc-50 px-4 py-3 text-[11px] font-semibold text-zinc-500">
+              {governedSupport.diagnostics.map((item) => (
+                <span key={item} className="rounded-full bg-white px-2.5 py-1">{item}</span>
+              ))}
+              {governedSupport.hiddenTriggerCount > 0 && (
+                <span className="rounded-full bg-white px-2.5 py-1">hidden triggers {governedSupport.hiddenTriggerCount}</span>
+              )}
+              {governedSupport.suppressedCount > 0 && (
+                <span className="rounded-full bg-white px-2.5 py-1">suppressed {governedSupport.suppressedCount}</span>
+              )}
             </div>
           )}
 
