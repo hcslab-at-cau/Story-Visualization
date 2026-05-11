@@ -34,6 +34,7 @@ import type {
 
 const CONF_THRESHOLD = 0.5
 const READER_REENTRY_GAP_MS = 10 * 60 * 1000
+export type ReaderScreenMode = "reader" | "researcher"
 
 function readResumeGapMs(docId: string): number {
   if (typeof window === "undefined") return 0
@@ -489,7 +490,9 @@ function CrossChapterMemoryPanel({
       <div className="border-b border-zinc-200 px-4 py-3">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">{t.reader.memory.eyebrow}</p>
+            <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
+              연구자용 BOOK.0 연결 결과
+            </p>
             <h3 className="mt-1 text-base font-semibold text-zinc-900">
               {context.sceneRef?.sceneTitle ?? context.sceneKey}
             </h3>
@@ -510,6 +513,10 @@ function CrossChapterMemoryPanel({
           )}
           </>
         )}
+        <p className="mt-2 text-xs leading-5 text-zinc-500">
+          이 패널은 독자에게 바로 보여줄 문장이 아니라, 현재 scene이 cross-chapter memory의 어떤
+          edge/thread/path와 연결되는지 확인하는 디버그 뷰입니다.
+        </p>
       </div>
 
       <div className="flex gap-1 border-b border-zinc-200 bg-white/70 px-3 py-2">
@@ -631,12 +638,78 @@ function CrossChapterMemoryPanel({
   )
 }
 
+function getReaderProblemLabel(problem?: string): string {
+  switch (problem) {
+    case "boundary_update":
+      return "달라진 점"
+    case "state_recovery":
+      return "현재 상황"
+    case "causal_gap":
+      return "왜 이어지나요?"
+    case "reference_ambiguity":
+      return "지시어 단서"
+    case "character_reentry":
+      return "인물 기억"
+    case "relation_delta":
+      return "관계 변화"
+    case "spatial_disorientation":
+      return "장소 단서"
+    case "session_reentry":
+      return "다시 읽기"
+    default:
+      return "읽기 단서"
+  }
+}
+
+function getReaderSupportTitle(unit: SupportUnit, technical: boolean): string {
+  if (technical) return unit.title
+  if (unit.kind === "causal_bridge") return "이전 사건이 왜 지금 이어지는지"
+  if (unit.kind === "reentry_recap") return "다시 읽기 전 확인할 점"
+  if (unit.kind === "snapshot") return "지금 장면의 핵심 상태"
+  if (unit.kind === "boundary_delta") return "방금 바뀐 흐름"
+  if (unit.kind === "reference_repair") return "헷갈릴 수 있는 지시어"
+  if (unit.kind === "spatial_continuity") return "장소와 이동 흐름"
+  if (unit.kind === "character_focus") return "다시 떠올릴 인물 단서"
+  if (unit.kind === "relation_delta") return "관계가 달라진 부분"
+  return getReaderProblemLabel(unit.reader_problem)
+}
+
+function getReaderSupportBody(unit: SupportUnit, technical: boolean): string {
+  if (technical) return unit.body
+  if (unit.source_stage_ids.includes("BOOK.0")) {
+    if (unit.reader_problem === "causal_gap") {
+      return `이전 장면에서 이어진 연결만 짧게 확인하세요. ${unit.body}`
+    }
+    if (unit.reader_problem === "spatial_disorientation") {
+      return `장소나 이동이 이어지는 부분입니다. ${unit.body}`
+    }
+    if (unit.reader_problem === "character_reentry" || unit.reader_problem === "relation_delta") {
+      return `앞에서 나온 인물/관계가 현재 장면과 연결되는 지점입니다. ${unit.body}`
+    }
+  }
+  return unit.body
+}
+
+function uniqueSupportUnits(units: SupportUnit[]): SupportUnit[] {
+  const seen = new Set<string>()
+  const unique: SupportUnit[] = []
+  for (const unit of units) {
+    const key = unit.unit_id || `${unit.kind}:${unit.title}:${unit.body}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    unique.push(unit)
+  }
+  return unique
+}
+
 function SupportUnitCard({
   unit,
   compact = false,
+  technical = false,
 }: {
   unit: SupportUnit
   compact?: boolean
+  technical?: boolean
 }) {
   const { t } = useUiStrings()
   const evidencePreview = unit.evidence.find((ref) => ref.text?.trim())?.text
@@ -649,19 +722,26 @@ function SupportUnitCard({
   return (
     <div className="rounded-xl border border-zinc-200 bg-white px-4 py-3 shadow-sm">
       <div className="flex items-center justify-between gap-3">
-        <span className="rounded-full bg-zinc-100 px-2.5 py-1 text-[11px] font-semibold text-zinc-600">
-          {t.reader.supportKind[unit.kind as keyof typeof t.reader.supportKind] ?? unit.label}
+        <span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${
+          technical ? "bg-zinc-100 text-zinc-600" : "bg-amber-100 text-amber-900"
+        }`}>
+          {technical
+            ? (t.reader.supportKind[unit.kind as keyof typeof t.reader.supportKind] ?? unit.label)
+            : getReaderProblemLabel(unit.reader_problem)}
         </span>
-        <span className="text-[11px] text-zinc-400">
-          {Math.round(unit.priority * 100)}
-        </span>
+        {technical && (
+          <span className="text-[11px] text-zinc-400">
+            {Math.round(unit.priority * 100)}
+          </span>
+        )}
       </div>
       <h4 className={`mt-3 font-semibold text-zinc-900 ${compact ? "text-sm" : "text-base"}`}>
-        {unit.title}
+        {getReaderSupportTitle(unit, technical)}
       </h4>
       <p className={`${compact ? "mt-1 text-sm leading-6" : "mt-2 text-[15px] leading-7"} text-zinc-600`}>
-        {unit.body}
+        {getReaderSupportBody(unit, technical)}
       </p>
+      {technical ? (
       <details className="mt-3 rounded-lg border border-zinc-100 bg-zinc-50 px-3 py-2">
         <summary className="cursor-pointer text-[11px] font-semibold uppercase tracking-wide text-zinc-500">
           provenance / scores
@@ -680,6 +760,14 @@ function SupportUnitCard({
           )}
         </div>
       </details>
+      ) : evidencePreview ? (
+        <details className="mt-3 rounded-lg border border-amber-100 bg-amber-50/60 px-3 py-2">
+          <summary className="cursor-pointer text-[11px] font-semibold text-amber-800">
+            근거 문장 보기
+          </summary>
+          <p className="mt-2 text-xs leading-5 text-zinc-600">{evidencePreview}</p>
+        </details>
+      ) : null}
     </div>
   )
 }
@@ -796,7 +884,181 @@ function resolveFocusContext(params: {
   }
 }
 
+function ResearcherMetricCard({
+  label,
+  value,
+  note,
+}: {
+  label: string
+  value: string | number
+  note?: string
+}) {
+  return (
+    <div className="rounded-xl border border-zinc-200 bg-white px-4 py-3">
+      <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">{label}</p>
+      <p className="mt-2 text-2xl font-semibold text-zinc-900">{value}</p>
+      {note && <p className="mt-1 text-xs leading-5 text-zinc-500">{note}</p>}
+    </div>
+  )
+}
+
+function ResearcherArtifactPanel({
+  final1,
+  packet,
+  activeSubsceneId,
+  readerRunId,
+  supportBeforeText,
+  supportOnDemand,
+  supportBesideVisual,
+  readerMemoryContext,
+  governedSupport,
+  visualPolicy,
+}: {
+  final1: SceneReaderPackageLog
+  packet: SceneReaderPacket
+  activeSubsceneId: string
+  readerRunId: string
+  supportBeforeText: SupportUnit[]
+  supportOnDemand: SupportUnit[]
+  supportBesideVisual: SupportUnit[]
+  readerMemoryContext: ReaderMemoryContext | null
+  governedSupport: ReturnType<typeof governReaderSupport>
+  visualPolicy: ReturnType<typeof scoreVisualSupport>
+}) {
+  const candidateCount = packet.support?.display_plan?.candidate_units?.length
+    ?? [
+      ...(packet.support?.display_slots.before_text ?? []),
+      ...(packet.support?.display_slots.beside_visual ?? []),
+      ...(packet.support?.display_slots.on_demand ?? []),
+    ].length
+  const bookBridgeCount = (readerMemoryContext?.incomingEdges.length ?? 0)
+    + (readerMemoryContext?.outgoingEdges.length ?? 0)
+  const visibleCount = supportBeforeText.length + supportOnDemand.length + supportBesideVisual.length
+  const subsceneView = packet.subscene_views[activeSubsceneId]
+  const rawArtifacts = [
+    {
+      label: "FINAL.1 current packet",
+      value: {
+        doc_id: final1.doc_id,
+        chapter_id: final1.chapter_id,
+        run_id: final1.run_id,
+        reader_run_id: readerRunId,
+        scene_id: packet.scene_id,
+        active_subscene_id: activeSubsceneId,
+        packet,
+      },
+    },
+    {
+      label: "SUP.7 support plan",
+      value: packet.support ?? null,
+    },
+    {
+      label: "BOOK.0 reader memory context",
+      value: readerMemoryContext,
+    },
+    {
+      label: "Runtime governor and visual policy",
+      value: {
+        governedSupport,
+        visualPolicy,
+      },
+    },
+    {
+      label: "Active subscene view",
+      value: subsceneView ?? null,
+    },
+  ]
+
+  return (
+    <section className="rounded-2xl border border-zinc-200 bg-zinc-50 p-4 shadow-sm">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
+            연구자 화면 해석 패널
+          </p>
+          <h3 className="mt-1 text-lg font-semibold text-zinc-900">
+            현재 Reader가 어떤 산출물을 사용하고 있는지 요약
+          </h3>
+          <p className="mt-1 max-w-4xl text-sm leading-6 text-zinc-500">
+            독자 화면에는 보이지 않는 SUP.7, BOOK.0, Support Governor, Visual Policy 결과를 한 곳에서
+            확인합니다. 아래 수치는 실제 화면 노출과 raw artifact 사이의 차이를 점검하기 위한 것입니다.
+          </p>
+        </div>
+        <span className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-zinc-500 shadow-sm">
+          {final1.chapter_id} / {packet.scene_id}
+        </span>
+      </div>
+
+      <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+        <ResearcherMetricCard
+          label="candidate units"
+          value={candidateCount}
+          note="SUP.7 display plan 또는 display slots에 남아 있는 전체 후보"
+        />
+        <ResearcherMetricCard
+          label="visible after governor"
+          value={visibleCount}
+          note={`before ${supportBeforeText.length} / on-demand ${supportOnDemand.length} / side ${supportBesideVisual.length}`}
+        />
+        <ResearcherMetricCard
+          label="hidden or suppressed"
+          value={governedSupport.hiddenTriggerCount + governedSupport.suppressedCount}
+          note={`trigger ${governedSupport.hiddenTriggerCount} / suppressed ${governedSupport.suppressedCount}`}
+        />
+        <ResearcherMetricCard
+          label="BOOK.0 links"
+          value={bookBridgeCount}
+          note={`threads ${readerMemoryContext?.threads.length ?? 0} / nearby path ${readerMemoryContext?.nearbyScenes.length ?? 0}`}
+        />
+      </div>
+
+      <div className="mt-4 grid gap-3 xl:grid-cols-3">
+        <div className="rounded-xl border border-zinc-200 bg-white px-4 py-3">
+          <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">화면 표시 결정</p>
+          <div className="mt-2 flex flex-wrap gap-2 text-xs font-semibold text-zinc-600">
+            <span className="rounded-full bg-zinc-100 px-2.5 py-1">visual score {visualPolicy.usefulnessScore.toFixed(2)}</span>
+            <span className="rounded-full bg-zinc-100 px-2.5 py-1">
+              visual {visualPolicy.showImageByDefault || visualPolicy.showBlueprintByDefault ? "default" : "collapsed"}
+            </span>
+            {governedSupport.diagnostics.map((item) => (
+              <span key={item} className="rounded-full bg-zinc-100 px-2.5 py-1">{item}</span>
+            ))}
+          </div>
+        </div>
+        <div className="rounded-xl border border-zinc-200 bg-white px-4 py-3 xl:col-span-2">
+          <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">독자 화면에 남는 도움말</p>
+          <div className="mt-2 flex flex-wrap gap-2 text-xs text-zinc-600">
+            {[...supportBeforeText, ...supportOnDemand, ...supportBesideVisual].length === 0 ? (
+              <span className="rounded-full bg-zinc-100 px-2.5 py-1">현재 scene에서 노출되는 support 없음</span>
+            ) : (
+              [...supportBeforeText, ...supportOnDemand, ...supportBesideVisual].map((unit) => (
+                <span key={unit.unit_id} className="rounded-full bg-zinc-100 px-2.5 py-1">
+                  {getReaderProblemLabel(unit.reader_problem)} · {unit.default_display}
+                </span>
+              ))
+            )}
+          </div>
+        </div>
+      </div>
+
+      <div className="mt-4 grid gap-3 xl:grid-cols-2">
+        {rawArtifacts.map((artifact) => (
+          <details key={artifact.label} className="rounded-xl border border-zinc-200 bg-white">
+            <summary className="cursor-pointer px-4 py-3 text-sm font-semibold text-zinc-700">
+              Raw artifact: {artifact.label}
+            </summary>
+            <pre className="max-h-96 overflow-auto border-t border-zinc-200 bg-zinc-950 p-4 text-xs leading-5 text-zinc-100">
+              {JSON.stringify(artifact.value, null, 2)}
+            </pre>
+          </details>
+        ))}
+      </div>
+    </section>
+  )
+}
+
 interface Props {
+  mode?: ReaderScreenMode
   final1: SceneReaderPackageLog
   final2?: OverlayRefinementResult
   bookMemory?: BookMemorySnapshot
@@ -804,8 +1066,16 @@ interface Props {
   topControls?: ReactNode
 }
 
-export default function ReaderScreen({ final1, final2, bookMemory, readerRunId, topControls }: Props) {
+export default function ReaderScreen({
+  mode = "reader",
+  final1,
+  final2,
+  bookMemory,
+  readerRunId,
+  topControls,
+}: Props) {
   const { t } = useUiStrings()
+  const isResearcherMode = mode === "researcher"
   const [sceneIdx, setSceneIdx] = useState(0)
   const [subsceneIdx, setSubsceneIdx] = useState(0)
   const [activePanel, setActivePanel] = useState<string | null>(null)
@@ -861,6 +1131,9 @@ export default function ReaderScreen({ final1, final2, bookMemory, readerRunId, 
   const supportBeforeText = governedSupport.beforeText
   const supportBesideVisual = governedSupport.besideVisual
   const supportOnDemand = governedSupport.onDemand
+  const readerExpandableSupport = isResearcherMode
+    ? supportOnDemand
+    : uniqueSupportUnits([...supportOnDemand, ...supportBesideVisual])
   const readerMemoryContext = packet
     ? buildReaderMemoryContext(bookMemory, final1, packet, readerRunId)
     : null
@@ -870,6 +1143,7 @@ export default function ReaderScreen({ final1, final2, bookMemory, readerRunId, 
     units: SupportUnit[],
     reason?: string,
   ) {
+    if (isResearcherMode) return
     if (!packet || units.length === 0) return
     if (action === "opened") {
       setSupportOpenCount((value) => Math.min(20, value + units.length))
@@ -1032,6 +1306,7 @@ export default function ReaderScreen({ final1, final2, bookMemory, readerRunId, 
   }, [sceneIdx, subsceneIdx])
 
   useEffect(() => {
+    if (isResearcherMode) return
     if (!packet || supportBeforeText.length === 0) return
     const sceneKey = `${final1.chapter_id}:${packet.scene_id}`
     for (const unit of supportBeforeText) {
@@ -1049,7 +1324,7 @@ export default function ReaderScreen({ final1, final2, bookMemory, readerRunId, 
         reason: "default_visible",
       })
     }
-  }, [final1.chapter_id, final1.doc_id, packet, readerRunId, readerSessionId, supportBeforeText])
+  }, [final1.chapter_id, final1.doc_id, isResearcherMode, packet, readerRunId, readerSessionId, supportBeforeText])
 
   if (!packet) return <div className="p-8 text-zinc-400">{t.reader.noScenes}</div>
 
@@ -1149,6 +1424,7 @@ export default function ReaderScreen({ final1, final2, bookMemory, readerRunId, 
           <h2 className="text-2xl font-semibold text-zinc-900">
             {packet.scene_title || packet.scene_id}
           </h2>
+          {isResearcherMode && (
           <div className="mt-2 flex flex-wrap items-center gap-2">
             <button
               type="button"
@@ -1158,7 +1434,8 @@ export default function ReaderScreen({ final1, final2, bookMemory, readerRunId, 
               {showSceneSummary ? t.reader.hideSummary : t.reader.showSummary}
             </button>
           </div>
-          {showSceneSummary && (
+          )}
+          {isResearcherMode && showSceneSummary && (
             <div className="mt-3 max-w-3xl rounded-xl border border-zinc-200 bg-white px-4 py-3 text-[15px] leading-7 text-zinc-600 shadow-sm">
               <p>{packet.scene_summary}</p>
               {subscene?.headline && (
@@ -1174,12 +1451,34 @@ export default function ReaderScreen({ final1, final2, bookMemory, readerRunId, 
         </div>
       </div>
 
+      {isResearcherMode && (
+        <ResearcherArtifactPanel
+          final1={final1}
+          packet={packet}
+          activeSubsceneId={activeSubsceneId}
+          readerRunId={readerRunId}
+          supportBeforeText={supportBeforeText}
+          supportOnDemand={supportOnDemand}
+          supportBesideVisual={supportBesideVisual}
+          readerMemoryContext={readerMemoryContext}
+          governedSupport={governedSupport}
+          visualPolicy={visualPolicy}
+        />
+      )}
+
+      {!isResearcherMode && (supportBeforeText.length > 0 || readerExpandableSupport.length > 0) && (
+        <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-900">
+          이 화면은 실제 독자용입니다. 자동으로 보이는 단서는 최소화했고, 추가 설명은 본문 아래의
+          “헷갈릴 때만 보기”에서 필요할 때만 펼쳐볼 수 있습니다.
+        </div>
+      )}
+
       <div className="grid gap-7 xl:grid-cols-[minmax(0,1fr)_minmax(360px,560px)] 2xl:grid-cols-[minmax(0,1fr)_minmax(420px,640px)]">
         <div className="flex min-w-0 flex-col gap-5">
           {packet.subscene_nav.length > 0 && (
             <div className="flex flex-col gap-1.5 rounded-xl border border-zinc-200 bg-zinc-50 px-4 py-3">
               <p className="text-xs font-medium uppercase tracking-wide text-zinc-400">
-                {subsceneIdx + 1} / {packet.subscene_nav.length} · {subscene?.label}
+                {subsceneIdx + 1} / {packet.subscene_nav.length} - {subscene?.label}
               </p>
               <div className="mt-1 flex gap-1.5">
                 {packet.subscene_nav.map((_, index) => (
@@ -1199,11 +1498,11 @@ export default function ReaderScreen({ final1, final2, bookMemory, readerRunId, 
           {supportBeforeText.length > 0 && (
             <div className="grid gap-3 md:grid-cols-2">
               {supportBeforeText.map((unit) => (
-                <SupportUnitCard key={unit.unit_id} unit={unit} />
+                <SupportUnitCard key={unit.unit_id} unit={unit} technical={isResearcherMode} />
               ))}
             </div>
           )}
-          {(governedSupport.diagnostics.length > 0 || governedSupport.suppressedCount > 0 || governedSupport.hiddenTriggerCount > 0) && (
+          {isResearcherMode && (governedSupport.diagnostics.length > 0 || governedSupport.suppressedCount > 0 || governedSupport.hiddenTriggerCount > 0) && (
             <div className="flex flex-wrap gap-2 rounded-xl border border-zinc-200 bg-zinc-50 px-4 py-3 text-[11px] font-semibold text-zinc-500">
               {governedSupport.diagnostics.map((item) => (
                 <span key={item} className="rounded-full bg-white px-2.5 py-1">{item}</span>
@@ -1223,21 +1522,21 @@ export default function ReaderScreen({ final1, final2, bookMemory, readerRunId, 
             ))}
           </div>
 
-          {supportOnDemand.length > 0 && (
+          {readerExpandableSupport.length > 0 && (
             <details
               className="rounded-xl border border-zinc-200 bg-white"
               onToggle={(event) => {
                 if (event.currentTarget.open) {
-                  logSupportUnits("opened", supportOnDemand, "on_demand_opened")
+                  logSupportUnits("opened", readerExpandableSupport, isResearcherMode ? "on_demand_opened" : "reader_more_opened")
                 }
               }}
             >
               <summary className="cursor-pointer px-4 py-3 text-sm font-semibold text-zinc-700">
-                {t.reader.moreSupport} ({supportOnDemand.length})
+                {isResearcherMode ? t.reader.moreSupport : "헷갈릴 때만 보기"} ({readerExpandableSupport.length})
               </summary>
               <div className="grid gap-3 border-t border-zinc-200 bg-zinc-50 p-4 md:grid-cols-2">
-                {supportOnDemand.map((unit) => (
-                  <SupportUnitCard key={unit.unit_id} unit={unit} compact />
+                {readerExpandableSupport.map((unit) => (
+                  <SupportUnitCard key={unit.unit_id} unit={unit} compact technical={isResearcherMode} />
                 ))}
               </div>
             </details>
@@ -1264,21 +1563,25 @@ export default function ReaderScreen({ final1, final2, bookMemory, readerRunId, 
         </div>
 
         <div className="flex min-w-0 flex-col gap-5 xl:self-start">
-          <CrossChapterMemoryPanel
-            bookMemory={bookMemory}
-            context={readerMemoryContext}
-            activeTab={activeMemoryTab}
-            onTabChange={setActiveMemoryTab}
-          />
+          {isResearcherMode && (
+            <CrossChapterMemoryPanel
+              bookMemory={bookMemory}
+              context={readerMemoryContext}
+              activeTab={activeMemoryTab}
+              onTabChange={setActiveMemoryTab}
+            />
+          )}
 
           {showVisualByDefault ? (
             renderVisualFrame()
           ) : visualAvailable ? (
             <details className="rounded-2xl border border-zinc-200 bg-white shadow-sm">
               <summary className="cursor-pointer px-4 py-3 text-sm font-semibold text-zinc-700">
-                {t.reader.visualMinimized}
+                {isResearcherMode ? t.reader.visualMinimized : "장면 이미지 보기"}
                 <span className="ml-2 font-normal text-zinc-500">
-                  {t.reader.visualScore} {visualPolicy.usefulnessScore.toFixed(2)}
+                  {isResearcherMode
+                    ? `${t.reader.visualScore} ${visualPolicy.usefulnessScore.toFixed(2)}`
+                    : "필요할 때만 펼쳐서 확인"}
                 </span>
               </summary>
               <div className="flex flex-col gap-3 border-t border-zinc-200 bg-zinc-50/60 p-3">
@@ -1294,7 +1597,7 @@ export default function ReaderScreen({ final1, final2, bookMemory, readerRunId, 
             </div>
           )}
 
-          {subsceneView && (
+          {isResearcherMode && subsceneView && (
             <details className="rounded-xl border border-zinc-200 bg-white shadow-sm">
               <summary className="cursor-pointer px-4 py-3 text-sm font-semibold text-zinc-700">
                 {t.reader.sceneFocusDetails}
@@ -1373,7 +1676,7 @@ export default function ReaderScreen({ final1, final2, bookMemory, readerRunId, 
             </details>
           )}
 
-          {supportBesideVisual.length > 0 && (
+          {isResearcherMode && supportBesideVisual.length > 0 && (
             <details
               className="rounded-xl border border-zinc-200 bg-white shadow-sm"
               onToggle={(event) => {
@@ -1387,7 +1690,7 @@ export default function ReaderScreen({ final1, final2, bookMemory, readerRunId, 
               </summary>
               <div className="grid gap-3 border-t border-zinc-200 bg-zinc-50/60 p-4">
                 {supportBesideVisual.map((unit) => (
-                  <SupportUnitCard key={unit.unit_id} unit={unit} compact />
+                  <SupportUnitCard key={unit.unit_id} unit={unit} compact technical />
                 ))}
               </div>
             </details>
