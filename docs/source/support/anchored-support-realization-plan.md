@@ -6,6 +6,17 @@
 
 핵심 목표는 support를 더 크게 보여주는 것이 아니라, 독자가 본문 흐름을 유지한 채 필요한 순간에만 작은 도움을 얻도록 만드는 것이다.
 
+## 구현 상태
+
+2026-05-12 기준으로 이 문서의 핵심 UX는 구현되어 있다.
+
+- 본문 anchor 기반으로 support를 연다.
+- 같은 단어/구절/문장/문단에 여러 support가 겹치면 작은 popover에서 종류를 고른다.
+- 독자 모드는 조용한 anchor와 가벼운 설명 surface를 사용한다.
+- 연구자 모드는 같은 화면에서 anchor, kind badge, provenance/debug 정보를 더 명확하게 보여준다.
+- `SupportUnit.reader_copy`와 `SupportUnit.anchor_hint`를 추가해 새로 생성되는 support가 독자용 문구와 붙을 위치를 직접 제공할 수 있다.
+- legacy `SupportUnit.body`만 있는 기존 run도 `realizeAnchoredSupportUnit()` fallback으로 계속 표시한다.
+
 ## 현재 문제
 
 ### UI 문제
@@ -183,6 +194,40 @@ SUP.7 / FINAL.1 SupportUnit
 -> AnchoredSupportCard
 ```
 
+## SupportUnit 확장 필드
+
+새로 생성되는 support는 기존 `title/body`만으로 독자 화면을 만들지 않고, 다음 optional field를 함께 제공한다.
+
+```ts
+interface SupportReaderCopy {
+  title?: string
+  lead?: string
+  points?: Array<{
+    label?: string
+    text: string
+  }>
+  evidence_label?: string
+}
+
+interface SupportAnchorHint {
+  preferred_text?: string
+  granularity?: "paragraph" | "sentence" | "phrase" | "word"
+  reason?: string
+}
+
+interface SupportUnit {
+  reader_copy?: SupportReaderCopy
+  anchor_hint?: SupportAnchorHint
+}
+```
+
+역할:
+
+- `reader_copy`: card 첫 화면에 보여줄 독자용 제목, 핵심 문장, 짧은 항목을 제공한다.
+- `anchor_hint`: support가 본문에서 어떤 텍스트와 단위에 붙는 것이 자연스러운지 생성 단계에서 알려준다.
+- 둘 다 optional이다. 기존 run에는 이 필드가 없으므로 `SupportUnit.body` parser와 fallback realization이 계속 동작한다.
+- `causal_bridge`처럼 구조가 명확한 support는 bridge parser가 우선되고, 그 밖의 support는 `reader_copy`가 있으면 우선 사용된다.
+
 ## 새 realization API
 
 `src/lib/support-realization.ts`에 다음 함수를 추가한다.
@@ -200,7 +245,10 @@ export interface AnchoredSupportRealization {
   categoryLabel: string
   title: string
   lead: string
-  bullets: string[]
+  bullets: Array<{
+    label: string
+    text: string
+  }>
   detail?: string
   bridge?: {
     previous: string
@@ -208,7 +256,7 @@ export interface AnchoredSupportRealization {
   }
   evidenceLabel?: string
   debug?: {
-    parsedFrom: "structured_body" | "bridge_body" | "legacy_body" | "fallback"
+    parsedFrom: "reader_copy" | "structured_body" | "bridge_body" | "legacy_body" | "fallback"
     rawTitle: string
     rawBody: string
   }
@@ -308,12 +356,12 @@ interface ActiveSupportSelection {
 독자 카드:
 
 - Badge: `지금`
-- Title: `지금 이 부분에서 확인할 상황`
+- Title: `지금 장면만 짧게 잡기` 또는 legacy fallback `지금 무슨 상황인가요?`
 - Lead: 선택한 문장이 현재 scene의 어떤 상태에 속하는지 1문장으로 설명한다.
 - Bullets:
-  - `장소`: 현재 장소
-  - `인물`: active cast
-  - `목표`: immediate goal
+  - `어디`: 현재 장소
+  - `누가`: active cast
+  - `무엇을 보나`: immediate goal
 
 Parser:
 
@@ -321,6 +369,7 @@ Parser:
 - `Cast: ...`
 - `Goals: ...`
 - 나머지 문장은 summary로 둔다.
+- 새 run에서는 `anchor_hint.granularity = "paragraph"`로 생성한다. snapshot은 한 단어 설명이 아니라 현재 문단/장면 상태를 짧게 정렬하는 도움이다.
 
 독자 모드 예:
 
@@ -347,7 +396,7 @@ Parser:
 독자 카드:
 
 - Badge: `변화`
-- Title: `방금 바뀐 점`
+- Title: `방금 달라진 점`
 - Lead: 선택한 문장이 어떤 전환 신호인지 말한다.
 - Bullets:
   - 장소 변화
@@ -430,12 +479,12 @@ Alice는 이상한 토끼를 보고 호기심이 생겼기 때문에, 지금 토
 독자 카드:
 
 - Badge: `인물`
-- Title: `이 부분에서 중요한 인물`
+- Title: `누가 중심인가요?`
 - Lead: active cast가 선택 텍스트에서 어떤 역할을 하는지 말한다.
 - Bullets:
-  - 인물
-  - 현재 행동
-  - 현재 의도 또는 제약
+  - 중심 인물
+  - 현재 행동 또는 목표
+  - 본문에서 보이는 단서
 
 Parser:
 
@@ -505,7 +554,7 @@ Parser:
 독자 카드:
 
 - Badge: `장소`
-- Title: `지금 어디에서 이어지나요?`
+- Title: `어디로 이어지나요?`
 - Lead: 선택 텍스트가 현재 장소 또는 이동 흐름에서 어떤 역할인지 말한다.
 - Bullets:
   - 현재 장소
@@ -543,7 +592,7 @@ Parser:
 독자 카드:
 
 - Badge: `누구?`
-- Title: `이 표현이 가리키는 대상`
+- Title: `누구를 가리키나요?`
 - Lead: 선택한 표현이 어떤 인물/대상을 가리키는지 설명한다.
 - Bullets:
   - 표현
@@ -552,9 +601,11 @@ Parser:
 
 Parser:
 
-- `resolve them first against: ...`
+- `Expression: ... Candidates: ...`
 - active cast list
 - selected text가 pronoun/name이면 우선 사용
+- 새 run에서는 근거 문장 안에 실제 대명사나 짧은 지칭이 있을 때만 `reference_repair`를 생성한다.
+- `anchor_hint.preferred_text`는 해당 대명사 또는 짧은 표현이고, granularity는 보통 `word`다.
 
 독자 모드 예:
 
@@ -584,7 +635,7 @@ Parser:
 독자 카드:
 
 - Badge: `단서`
-- Title: `장면을 떠올릴 단서`
+- Title: `장면을 떠올려 보면`
 - Lead: 선택 텍스트의 공간/사물/분위기 단서를 짚는다.
 - Bullets:
   - 공간 단서
@@ -621,7 +672,7 @@ Parser:
 독자 카드:
 
 - Badge: `복귀`
-- Title: `다시 읽기 전에 기억할 것`
+- Title: `다시 이어 읽기`
 - Lead: 이 위치에 다시 들어올 때 필요한 직전 흐름을 말한다.
 - Bullets:
   - 직전 장면
@@ -725,6 +776,28 @@ parsed fields
 
 ## 구현 단계
 
+이번 implementation은 다음 순서로 나누어 커밋한다.
+
+1. Reader copy fallback 개선
+   - `support-realization.ts`의 legacy body parser가 `선택한 표현 ...` 같은 딱딱한 문장을 덜 만들도록 조정한다.
+   - snapshot, boundary, character, relation, spatial, reference, visual, reentry의 fallback 문구를 각 support 목적에 맞춘다.
+2. 힌트 surface 정보 구조 개선
+   - 독자 모드에서 큰 `선택한 본문` 박스를 제거하고, 필요한 경우 작은 본문 chip만 보여준다.
+   - bullet을 artifact field처럼 보이는 `dt/dd` 카드가 아니라 `함께 보면` 목록으로 표현한다.
+   - 근거 문장은 `본문에서 확인하기`로 접어 둔다.
+3. `SupportUnit` schema 확장
+   - `reader_copy`와 `anchor_hint` optional field를 추가한다.
+   - `realizeAnchoredSupportUnit()`은 `reader_copy`가 있으면 우선 사용한다.
+   - `buildInlineSupportPlan()`은 `anchor_hint`를 기존 body/evidence matching보다 먼저 사용한다.
+4. SUP 생성 단계 개선
+   - snapshot은 문단 단위 anchor로 생성한다.
+   - reference repair는 실제 대명사/짧은 지칭이 evidence에 있을 때만 생성한다.
+   - spatial/visual/character/relation support는 가능한 경우 본문에 등장하는 local cue를 `preferred_text`로 제공한다.
+   - 새 run에서는 독자용 title/lead/points가 `reader_copy`에 저장된다.
+5. 문서와 검증
+   - 이 문서에 실제 schema와 구현 상태를 반영한다.
+   - `npm run lint`, `npm run build`, `git diff --check`로 확인한다.
+
 ### Phase 1. Rule-based anchored realization
 
 수정 파일:
@@ -824,6 +897,9 @@ Rule-based layer가 충분히 안정화된 뒤에만 고려한다.
 - 실제 설명은 데스크톱에서 오른쪽 side view, 모바일에서 bottom sheet로 열린다.
 - 열린 힌트는 support kind별로 다른 제목과 구조를 가진다.
 - raw `SupportUnit.title/body`가 첫 화면에 그대로 노출되지 않는다.
+- `선택한 표현 "..."` 같은 meta 설명이 핵심 lead로 반복되지 않는다.
+- `snapshot`은 단어에 억지로 붙지 않고 문단/상황 단위로 열린다.
+- `reference_repair`는 실제 지시어가 있을 때만 생성되고, 해당 지시어 단어에 붙는다.
 - 한 card는 5~7줄을 넘지 않는다.
 - 같은 anchor에 support가 여러 개 있어도 본문 읽기를 방해하지 않는다.
 
@@ -863,6 +939,9 @@ Rule-based layer가 충분히 안정화된 뒤에만 고려한다.
 - 독자 모드 card 제목이 `Current-state snapshot`처럼 artifact 이름이다.
 - `A -> B`가 그대로 본문 카드 첫 줄에 노출된다.
 - 모든 support가 같은 카드 형태로 보인다.
+- 모든 support lead가 `선택한 표현/구절/문장` 같은 meta 문장으로 시작한다.
+- 실제 대명사가 없는 장면에도 `누구?` reference support가 생긴다.
+- snapshot이 특정 단어에 붙어서 그 단어의 의미 설명처럼 보인다.
 - anchor가 본문보다 더 눈에 띈다.
 - 도움 설명이 매번 full modal로 떠서 본문을 가린다.
 - 단어 support가 문장 support에 merge되어 별도로 선택할 수 없다.
