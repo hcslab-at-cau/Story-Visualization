@@ -56,6 +56,10 @@
 - `support/reader-support-design.md`
   - reader-support 형태와 설계 원칙
 
+- `support/anchored-support-realization-plan.md`
+  - 본문 anchor를 누르면 support kind별 독자용 힌트를 보여주는 UI/content 계획
+  - Reader mode와 Researcher mode의 표시 강도, card copy, debug/provenance 분리
+
 - `support/roadmap.md`
   - support system 실행 로드맵
 
@@ -124,12 +128,13 @@
 다음 아키텍처를 보고 싶다면:
 
 1. `support/reader-support-design.md`
-2. `research/narrative-relation-graph.md`
-3. `research/direction-roadmap.md`
-4. `support/roadmap.md`
-5. `support/memory-schema.md`
-6. `support/pipeline-plan.md`
-7. `support/reliability-and-ops-plan.md`
+2. `support/anchored-support-realization-plan.md`
+3. `research/narrative-relation-graph.md`
+4. `research/direction-roadmap.md`
+5. `support/roadmap.md`
+6. `support/memory-schema.md`
+7. `support/pipeline-plan.md`
+8. `support/reliability-and-ops-plan.md`
 
 연구 기여 관점으로 보고 싶다면:
 

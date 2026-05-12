@@ -6,9 +6,15 @@
  * and renders the clean reader UI.
  */
 
-import { useEffect, useRef, useState, type ReactNode } from "react"
+import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react"
 import { useUiStrings } from "@/components/LanguageProvider"
-import { compactReaderText, realizeSupportUnit, splitSupportBridgeBody } from "@/lib/support-realization"
+import {
+  compactReaderText,
+  realizeAnchoredSupportUnit,
+  realizeSupportUnit,
+  splitSupportBridgeBody,
+  type AnchoredSupportContext,
+} from "@/lib/support-realization"
 import { governReaderSupport } from "@/lib/support-governor"
 import type { UiStrings } from "@/lib/ui-strings"
 import { scoreVisualSupport } from "@/lib/visual-support-policy"
@@ -695,63 +701,163 @@ function getReaderLeadClueText(unit: SupportUnit): string {
   return compactSupportText(realizeSupportUnit(unit).preview)
 }
 
-function ReaderLeadClueStrip({ units }: { units: SupportUnit[] }) {
-  return (
-    <section className="rounded-3xl border border-amber-200 bg-amber-50/70 p-4 shadow-sm">
-      <div className="mb-4 flex flex-col gap-1 border-b border-amber-200 pb-3">
-        <p className="text-xs font-semibold uppercase tracking-wide text-amber-900">
-          읽기 전 짧은 단서
-        </p>
-        <p className="text-sm leading-6 text-zinc-600">
-          아래 단서는 본문을 대신하는 요약이 아니라, 현재 장면에 들어가기 전에 확인할 최소 단서입니다.
-        </p>
-      </div>
-      <div className="grid gap-2">
-        {units.slice(0, 2).map((unit) => {
-          const realized = realizeSupportUnit(unit)
-          return (
-            <div
-              key={unit.unit_id}
-              className="flex flex-col gap-2 rounded-2xl border border-amber-200 bg-white px-4 py-3 sm:flex-row sm:items-start"
-            >
-              <span className="shrink-0 rounded-full bg-amber-100 px-2.5 py-1 text-[11px] font-semibold text-amber-900">
-                {realized.chipLabel}
-              </span>
-              <p className="text-sm leading-6 text-zinc-800">{realized.preview}</p>
-            </div>
-          )
-        })}
-      </div>
-    </section>
-  )
-}
-
 interface InlineSupportPlan {
-  groups: Map<number, SupportUnit[]>
+  groups: Map<number, SupportTextAnchor[]>
   fallbackUnits: SupportUnit[]
   placementByUnitId: Map<string, string>
+}
+
+type SupportAnchorGranularity = "paragraph" | "sentence" | "phrase" | "word"
+
+interface SupportTextAnchor {
+  anchorId: string
+  unit: SupportUnit
+  paragraphIndex: number
+  start: number | null
+  end: number | null
+  granularity: SupportAnchorGranularity
+}
+
+interface SupportAnchorGroup {
+  anchorId: string
+  units: SupportUnit[]
+  start: number | null
+  end: number | null
+  granularity: SupportAnchorGranularity
+}
+
+interface SupportAnchorSelectionInput extends SupportAnchorGroup {
+  selectedText: string
+  paragraphText: string
+  label: string
+}
+
+interface ActiveSupportSelection extends SupportAnchorSelectionInput {
+  selectedUnitId: string | null
 }
 
 function normalizeSupportMatchText(text: string): string {
   return text.replace(/\s+/g, " ").trim().toLowerCase()
 }
 
+function buildNormalizedIndex(text: string): { normalized: string; indexMap: number[] } {
+  let normalized = ""
+  const indexMap: number[] = []
+  let previousWasSpace = false
+
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index]
+    if (/\s/.test(char)) {
+      if (!previousWasSpace) {
+        normalized += " "
+        indexMap.push(index)
+        previousWasSpace = true
+      }
+      continue
+    }
+
+    normalized += char.toLowerCase()
+    indexMap.push(index)
+    previousWasSpace = false
+  }
+
+  return { normalized: normalized.trim(), indexMap }
+}
+
+function findTextRange(candidate: string, paragraph: string): { start: number; end: number } | null {
+  const trimmed = candidate.trim()
+  if (!trimmed) return null
+
+  const exactIndex = paragraph.indexOf(trimmed)
+  if (exactIndex >= 0) {
+    return { start: exactIndex, end: exactIndex + trimmed.length }
+  }
+
+  const normalizedCandidate = normalizeSupportMatchText(trimmed)
+  const { normalized, indexMap } = buildNormalizedIndex(paragraph)
+  const normalizedIndex = normalized.indexOf(normalizedCandidate)
+  if (normalizedIndex < 0) return null
+
+  const start = indexMap[normalizedIndex]
+  const lastMappedIndex = indexMap[normalizedIndex + normalizedCandidate.length - 1]
+  if (typeof start !== "number" || typeof lastMappedIndex !== "number") return null
+  return { start, end: lastMappedIndex + 1 }
+}
+
+function expandRangeToSentence(paragraph: string, range: { start: number; end: number }): { start: number; end: number } {
+  const sentenceBoundary = /[.!?。！？…]/
+  let start = range.start
+  let end = range.end
+
+  for (let index = range.start - 1; index >= 0; index -= 1) {
+    if (sentenceBoundary.test(paragraph[index])) {
+      start = index + 1
+      break
+    }
+    if (index === 0) start = 0
+  }
+
+  for (let index = range.end; index < paragraph.length; index += 1) {
+    if (sentenceBoundary.test(paragraph[index])) {
+      end = index + 1
+      break
+    }
+    if (index === paragraph.length - 1) end = paragraph.length
+  }
+
+  while (start < end && /\s/.test(paragraph[start])) start += 1
+  while (end > start && /\s/.test(paragraph[end - 1])) end -= 1
+
+  return { start, end }
+}
+
+function anchorGranularity(
+  paragraph: string,
+  range: { start: number; end: number } | null,
+): { start: number | null; end: number | null; granularity: SupportAnchorGranularity } {
+  if (!range) return { start: null, end: null, granularity: "paragraph" }
+
+  const length = range.end - range.start
+  const paragraphLength = Math.max(1, paragraph.length)
+  if (length / paragraphLength > 0.65 || length > 220) {
+    return { start: null, end: null, granularity: "paragraph" }
+  }
+
+  const selectedText = paragraph.slice(range.start, range.end).trim()
+  if (selectedText.length <= 18 && !/\s/.test(selectedText)) {
+    return { ...range, granularity: "word" }
+  }
+
+  if (length >= 45) {
+    const sentenceRange = expandRangeToSentence(paragraph, range)
+    const sentenceLength = sentenceRange.end - sentenceRange.start
+    if (sentenceLength / paragraphLength <= 0.75 && sentenceLength <= 260) {
+      return { ...sentenceRange, granularity: "sentence" }
+    }
+  }
+
+  return { ...range, granularity: "phrase" }
+}
+
 function textMatchesParagraph(candidate: string | undefined, paragraph: string): boolean {
   if (!candidate) return false
   const normalizedCandidate = normalizeSupportMatchText(candidate)
   const normalizedParagraph = normalizeSupportMatchText(paragraph)
-  if (normalizedCandidate.length < 18 || normalizedParagraph.length < 18) return false
+  if (normalizedParagraph.length < 2) return false
+  if (normalizedCandidate.length < 18) {
+    return normalizedCandidate.length >= 4 && normalizedParagraph.includes(normalizedCandidate)
+  }
   if (normalizedParagraph.includes(normalizedCandidate)) return true
   if (normalizedCandidate.includes(normalizedParagraph)) return true
   const compactCandidate = normalizedCandidate.slice(0, Math.min(80, normalizedCandidate.length))
   return compactCandidate.length >= 24 && normalizedParagraph.includes(compactCandidate)
 }
 
-function findInlineSupportParagraphIndex(
+function findSupportTextAnchor(
   unit: SupportUnit,
   paragraphs: string[],
   activeSubsceneId: string,
-): number | null {
+): SupportTextAnchor | null {
   const evidenceTexts = unit.evidence
     .filter((ref) => !ref.subscene_id || ref.subscene_id === activeSubsceneId)
     .map((ref) => ref.text)
@@ -763,11 +869,24 @@ function findInlineSupportParagraphIndex(
   const candidates = [
     ...evidenceTexts,
     bridgeParts?.current,
-  ].filter(Boolean)
+  ].filter((candidate): candidate is string => Boolean(candidate))
 
   for (const candidate of candidates) {
-    const index = paragraphs.findIndex((paragraph) => textMatchesParagraph(candidate, paragraph))
-    if (index >= 0) return index
+    for (let paragraphIndex = 0; paragraphIndex < paragraphs.length; paragraphIndex += 1) {
+      const paragraph = paragraphs[paragraphIndex]
+      if (!textMatchesParagraph(candidate, paragraph)) continue
+
+      const range = findTextRange(candidate, paragraph)
+      const anchor = anchorGranularity(paragraph, range)
+      return {
+        anchorId: `${unit.unit_id}:${paragraphIndex}:${anchor.start ?? "paragraph"}:${anchor.end ?? "paragraph"}`,
+        unit,
+        paragraphIndex,
+        start: anchor.start,
+        end: anchor.end,
+        granularity: anchor.granularity,
+      }
+    }
   }
 
   return null
@@ -778,67 +897,369 @@ function buildInlineSupportPlan(
   paragraphs: string[],
   activeSubsceneId: string,
 ): InlineSupportPlan {
-  const groups = new Map<number, SupportUnit[]>()
+  const groups = new Map<number, SupportTextAnchor[]>()
   const fallbackUnits: SupportUnit[] = []
   const placementByUnitId = new Map<string, string>()
 
   for (const unit of units) {
-    const index = findInlineSupportParagraphIndex(unit, paragraphs, activeSubsceneId)
-    if (index === null) {
+    const anchor = findSupportTextAnchor(unit, paragraphs, activeSubsceneId)
+    if (!anchor) {
       fallbackUnits.push(unit)
       placementByUnitId.set(unit.unit_id, "헷갈릴 때만 보기")
       continue
     }
 
-    const existing = groups.get(index) ?? []
-    groups.set(index, [...existing, unit])
-    placementByUnitId.set(unit.unit_id, `본문 ${index + 1}번째 문단`)
+    const existing = groups.get(anchor.paragraphIndex) ?? []
+    groups.set(anchor.paragraphIndex, [...existing, anchor])
+    const placementLabel = anchor.granularity === "paragraph"
+      ? "문단"
+      : anchor.granularity === "sentence"
+        ? "문장"
+        : anchor.granularity === "word"
+          ? "단어"
+          : "구절"
+    placementByUnitId.set(unit.unit_id, `본문 ${anchor.paragraphIndex + 1}번째 ${placementLabel}`)
   }
 
   return { groups, fallbackUnits, placementByUnitId }
 }
 
-function InlineSupportChip({
-  unit,
-  active,
-  onToggle,
-}: {
-  unit: SupportUnit
-  active: boolean
-  onToggle: () => void
-}) {
-  const realized = realizeSupportUnit(unit)
+function paragraphAnchorId(index: number): string {
+  return `paragraph:${index}`
+}
+
+function anchorGroupLabel(group: SupportAnchorGroup): string {
+  if (group.granularity === "paragraph") return "문단 관련 힌트"
+  if (group.granularity === "sentence") return "문장 관련 힌트"
+  if (group.granularity === "word") return "단어 관련 힌트"
+  return "구절 관련 힌트"
+}
+
+function supportTypeLabels(units: SupportUnit[]): string[] {
+  return Array.from(new Set(units.map((unit) => realizeSupportUnit(unit).chipLabel))).slice(0, 3)
+}
+
+function SupportTypeBadgeRow({ units }: { units: SupportUnit[] }) {
+  const labels = supportTypeLabels(units)
+  if (labels.length === 0) return null
+
   return (
-    <span className="ml-2 inline-flex align-baseline">
-      <button
-        type="button"
-        onClick={onToggle}
-        className={`inline-flex translate-y-[-1px] items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-semibold leading-5 transition-colors ${
-          active
-            ? "border-sky-400 bg-sky-500 text-white shadow-sm"
-            : "border-sky-200 bg-sky-50 text-sky-800 hover:border-sky-300 hover:bg-sky-100"
-        }`}
-      >
-        <span>?</span>
-        <span>{realized.chipLabel}</span>
-      </button>
+    <span className="ml-1.5 inline-flex translate-y-[-1px] items-center gap-1 align-baseline">
+      {labels.map((label) => (
+        <span
+          key={label}
+          className="rounded-full border border-sky-300 bg-white px-1.5 py-0.5 text-[10px] font-semibold leading-none text-sky-800"
+        >
+          {label}
+        </span>
+      ))}
     </span>
   )
 }
 
-function InlineSupportDetails({ units }: { units: SupportUnit[] }) {
-  if (units.length === 0) return null
+const SUPPORT_GRANULARITY_RANK: Record<SupportAnchorGranularity, number> = {
+  word: 0,
+  phrase: 1,
+  sentence: 2,
+  paragraph: 3,
+}
+
+function smallestGranularity(granularities: SupportAnchorGranularity[]): SupportAnchorGranularity {
+  return granularities.sort((a, b) => SUPPORT_GRANULARITY_RANK[a] - SUPPORT_GRANULARITY_RANK[b])[0] ?? "paragraph"
+}
+
+function sameSupportUnits(left: SupportUnit[], right: SupportUnit[]): boolean {
+  if (left.length !== right.length) return false
+  const leftIds = left.map((unit) => unit.unit_id).sort().join("|")
+  const rightIds = right.map((unit) => unit.unit_id).sort().join("|")
+  return leftIds === rightIds
+}
+
+function segmentRangeAnchors(
+  anchors: SupportTextAnchor[],
+  paragraphUnits: SupportUnit[],
+  paragraph: string,
+  paragraphIndex: number,
+): SupportAnchorGroup[] {
+  const rangeAnchors = anchors
+    .filter((anchor) => anchor.start !== null && anchor.end !== null && anchor.end > anchor.start)
+    .sort((a, b) => (a.start ?? 0) - (b.start ?? 0) || (b.end ?? 0) - (a.end ?? 0))
+  if (rangeAnchors.length === 0) return []
+
+  const boundaries = Array.from(new Set(rangeAnchors.flatMap((anchor) => [anchor.start ?? 0, anchor.end ?? 0])))
+    .filter((value) => value >= 0 && value <= paragraph.length)
+    .sort((a, b) => a - b)
+
+  const groups: SupportAnchorGroup[] = []
+  for (let index = 0; index < boundaries.length - 1; index += 1) {
+    const start = boundaries[index]
+    const end = boundaries[index + 1]
+    if (end <= start || !paragraph.slice(start, end).trim()) continue
+
+    const coveringAnchors = rangeAnchors.filter((anchor) => {
+      const anchorStart = anchor.start ?? 0
+      const anchorEnd = anchor.end ?? anchorStart
+      return anchorStart <= start && anchorEnd >= end
+    })
+    if (coveringAnchors.length === 0) continue
+
+    const units = uniqueSupportUnits([
+      ...coveringAnchors.map((anchor) => anchor.unit),
+      ...paragraphUnits,
+    ])
+    const granularity = smallestGranularity(coveringAnchors.map((anchor) => anchor.granularity))
+    const previous = groups[groups.length - 1]
+
+    if (
+      previous &&
+      previous.end === start &&
+      previous.granularity === granularity &&
+      sameSupportUnits(previous.units, units)
+    ) {
+      previous.end = end
+      previous.anchorId = `segment:${paragraphIndex}:${previous.start}:${previous.end}`
+      continue
+    }
+
+    groups.push({
+      anchorId: `segment:${paragraphIndex}:${start}:${end}`,
+      units,
+      start,
+      end,
+      granularity,
+    })
+  }
+
+  return groups
+}
+
+function supportSelectionContext(selection: ActiveSupportSelection, mode: ReaderScreenMode): AnchoredSupportContext {
+  return {
+    selectedText: selection.selectedText,
+    paragraphText: selection.paragraphText,
+    granularity: selection.granularity,
+    mode,
+  }
+}
+
+function SupportChoicePopover({
+  selection,
+  selectedUnitId,
+  onPick,
+  onClose,
+  variant = "reader",
+}: {
+  selection: SupportAnchorSelectionInput
+  selectedUnitId: string | null
+  onPick: (unit: SupportUnit) => void
+  onClose: () => void
+  variant?: "reader" | "researcher"
+}) {
+  if (selection.units.length <= 1) return null
 
   return (
-    <div className="mt-3 grid gap-2 rounded-2xl border border-sky-200 bg-sky-50/70 p-3 md:grid-cols-2">
-      <div className="md:col-span-2">
-        <span className="rounded-full bg-sky-100 px-2.5 py-1 text-[11px] font-semibold text-sky-800">
-          본문 안 도움
-        </span>
+    <div className={`mt-3 max-w-xl rounded-xl border p-2.5 shadow-lg ${
+      variant === "researcher"
+        ? "border-sky-200 bg-white"
+        : "border-zinc-200 bg-white/95"
+    }`}>
+      <div className="flex items-center justify-between gap-3 px-1 pb-2">
+        <div>
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">
+            {selection.label}
+          </p>
+          <p className="mt-0.5 text-xs text-zinc-500">
+            {selection.units.length}개의 도움 중 선택
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={onClose}
+          className="rounded-full border border-zinc-200 px-2.5 py-1 text-xs font-semibold text-zinc-500 hover:bg-zinc-50"
+        >
+          닫기
+        </button>
       </div>
-      {units.map((unit) => (
-        <SupportUnitCard key={unit.unit_id} unit={unit} compact />
-      ))}
+      <div className="grid gap-1.5">
+        {selection.units.map((unit) => {
+          const realized = realizeAnchoredSupportUnit(unit, {
+            selectedText: selection.selectedText,
+            paragraphText: selection.paragraphText,
+            granularity: selection.granularity,
+            mode: variant,
+          })
+          const active = selectedUnitId === unit.unit_id
+          return (
+            <button
+              key={unit.unit_id}
+              type="button"
+              onClick={() => onPick(unit)}
+              className={`w-full rounded-lg border px-3 py-2 text-left transition-colors ${
+                active
+                  ? "border-sky-300 bg-sky-50"
+                  : "border-transparent hover:border-zinc-200 hover:bg-zinc-50"
+              }`}
+            >
+              <span className="flex min-w-0 items-start gap-2">
+                <span className="mt-0.5 shrink-0 rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-semibold text-sky-800">
+                  {realized.chipLabel}
+                </span>
+                <span className="min-w-0">
+                  <span className="block text-sm font-semibold leading-5 text-zinc-900">
+                    {realized.title}
+                  </span>
+                  <span className="mt-0.5 line-clamp-1 block text-xs leading-5 text-zinc-500">
+                    {realized.lead}
+                  </span>
+                  {variant === "researcher" && (
+                    <span className="mt-1 block text-[11px] font-medium text-zinc-400">
+                      {unit.kind} · {unit.reader_problem ?? "reader_problem 없음"} · priority {unit.priority.toFixed(2)}
+                    </span>
+                  )}
+                </span>
+              </span>
+            </button>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+function ReaderTextParagraph({
+  paragraph,
+  index,
+  anchors,
+  activeAnchorId,
+  selectedUnitId,
+  onSelect,
+  onPickUnit,
+  onCloseSelection,
+  variant = "reader",
+}: {
+  paragraph: string
+  index: number
+  anchors: SupportTextAnchor[]
+  activeAnchorId: string | null
+  selectedUnitId: string | null
+  onSelect: (selection: SupportAnchorSelectionInput) => void
+  onPickUnit: (unit: SupportUnit) => void
+  onCloseSelection: () => void
+  variant?: "reader" | "researcher"
+}) {
+  const isResearcherVariant = variant === "researcher"
+  const paragraphUnits = uniqueSupportUnits(
+    anchors.filter((anchor) => anchor.granularity === "paragraph").map((anchor) => anchor.unit),
+  )
+  const paragraphGroup: SupportAnchorGroup | null = paragraphUnits.length > 0
+    ? {
+        anchorId: paragraphAnchorId(index),
+        units: paragraphUnits,
+        start: null,
+        end: null,
+        granularity: "paragraph",
+      }
+    : null
+  const rangeGroups = segmentRangeAnchors(anchors, paragraphUnits, paragraph, index)
+  const activeGroup = [paragraphGroup, ...rangeGroups].find((group) => group?.anchorId === activeAnchorId) ?? null
+  const paragraphInteractive = Boolean(paragraphGroup)
+
+  function buildSelection(group: SupportAnchorGroup): SupportAnchorSelectionInput {
+    const selectedText = group.start === null || group.end === null
+      ? compactSupportText(paragraph, 150)
+      : paragraph.slice(group.start, group.end).trim()
+    return {
+      ...group,
+      selectedText,
+      paragraphText: paragraph,
+      label: anchorGroupLabel(group),
+    }
+  }
+
+  function handleParagraphSelect() {
+    if (!paragraphGroup) return
+    onSelect(buildSelection(paragraphGroup))
+  }
+
+  function handleParagraphKeyDown(event: KeyboardEvent<HTMLParagraphElement>) {
+    if (!paragraphGroup) return
+    if (event.key !== "Enter" && event.key !== " ") return
+    event.preventDefault()
+    handleParagraphSelect()
+  }
+
+  let cursor = 0
+  const content: ReactNode[] = []
+  for (const group of rangeGroups) {
+    if (group.start === null || group.end === null) continue
+    if (group.start > cursor) {
+      content.push(paragraph.slice(cursor, group.start))
+    }
+    const active = activeAnchorId === group.anchorId
+    content.push(
+      <button
+        key={group.anchorId}
+        type="button"
+        onClick={(event) => {
+          event.stopPropagation()
+          onSelect(buildSelection(group))
+        }}
+        className={`rounded-sm border-b px-0.5 text-left text-inherit [font:inherit] focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-300 ${
+          isResearcherVariant
+            ? active
+              ? "border-sky-500 bg-sky-100 text-sky-950 ring-1 ring-sky-200"
+              : "border-sky-300 bg-sky-50/80 text-sky-950 hover:bg-sky-100"
+            : active
+              ? "border-sky-400 bg-sky-100 text-sky-950"
+              : "border-transparent hover:border-sky-300 hover:bg-sky-50/80"
+        }`}
+        title={anchorGroupLabel(group)}
+      >
+        {paragraph.slice(group.start, group.end)}
+        {isResearcherVariant && <SupportTypeBadgeRow units={group.units} />}
+      </button>,
+    )
+    cursor = group.end
+  }
+  if (cursor < paragraph.length) {
+    content.push(paragraph.slice(cursor))
+  }
+
+  const paragraphClass = isResearcherVariant
+    ? paragraphInteractive
+      ? activeAnchorId === paragraphGroup?.anchorId
+        ? "cursor-help rounded-lg border-l-4 border-sky-400 bg-sky-50/90 px-3 py-2 outline outline-1 outline-sky-100"
+        : "cursor-help rounded-lg border-l-4 border-sky-300 bg-sky-50/50 px-3 py-2 hover:bg-sky-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-200"
+      : "rounded-lg px-3 py-2"
+    : paragraphInteractive
+      ? activeAnchorId === paragraphGroup?.anchorId
+        ? "rounded-lg bg-sky-50/80"
+        : "cursor-help rounded-lg transition-colors hover:bg-zinc-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-200"
+      : "rounded-lg transition-colors"
+
+  return (
+    <div className="relative">
+      <p
+        role={paragraphInteractive ? "button" : undefined}
+        tabIndex={paragraphInteractive ? 0 : undefined}
+        onClick={paragraphInteractive ? handleParagraphSelect : undefined}
+        onKeyDown={paragraphInteractive ? handleParagraphKeyDown : undefined}
+        className={paragraphClass}
+      >
+        {content.length > 0 ? content : paragraph}
+        {isResearcherVariant && paragraphGroup && (
+          <SupportTypeBadgeRow units={paragraphGroup.units} />
+        )}
+      </p>
+      {activeGroup ? (
+        <SupportChoicePopover
+          selection={buildSelection(activeGroup)}
+          selectedUnitId={selectedUnitId}
+          onPick={onPickUnit}
+          onClose={onCloseSelection}
+          variant={variant}
+        />
+      ) : null}
     </div>
   )
 }
@@ -1001,6 +1422,122 @@ function SupportUnitCard({
   )
 }
 
+function AnchoredSupportSurface({
+  selection,
+  unit,
+  mode,
+  onClose,
+  surface = "side",
+}: {
+  selection: ActiveSupportSelection
+  unit: SupportUnit
+  mode: ReaderScreenMode
+  onClose: () => void
+  surface?: "side" | "sheet"
+}) {
+  const technical = mode === "researcher"
+  const realized = realizeAnchoredSupportUnit(unit, supportSelectionContext(selection, mode))
+  const evidencePreview = unit.evidence.find((ref) => ref.text?.trim())?.text
+  const scoreParts = [
+    typeof unit.usefulness_score === "number" ? `use ${unit.usefulness_score.toFixed(2)}` : "",
+    typeof unit.grounding_score === "number" ? `ground ${unit.grounding_score.toFixed(2)}` : "",
+    typeof unit.intrusion_cost === "number" ? `intrude ${unit.intrusion_cost.toFixed(2)}` : "",
+    typeof unit.confidence === "number" ? `conf ${unit.confidence.toFixed(2)}` : "",
+  ].filter(Boolean)
+  const shellClass = surface === "sheet"
+    ? "max-h-[72vh] overflow-y-auto rounded-t-2xl border-t border-zinc-200 bg-white px-5 py-4 shadow-2xl"
+    : "sticky top-5 rounded-2xl border border-sky-200 bg-white px-5 py-4 shadow-lg"
+
+  return (
+    <aside className={shellClass} aria-label="선택한 본문 도움">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="rounded-full bg-sky-100 px-2.5 py-1 text-[11px] font-semibold text-sky-800">
+              {realized.chipLabel}
+            </span>
+            <span className="text-[11px] font-semibold uppercase tracking-wide text-zinc-400">
+              {selection.label}
+            </span>
+          </div>
+          <h3 className="mt-3 text-base font-semibold leading-6 text-zinc-950">
+            {realized.title}
+          </h3>
+        </div>
+        <button
+          type="button"
+          onClick={onClose}
+          className="shrink-0 rounded-full border border-zinc-200 px-2.5 py-1 text-xs font-semibold text-zinc-500 hover:bg-zinc-50"
+        >
+          닫기
+        </button>
+      </div>
+
+      <div className="mt-4 rounded-lg border border-zinc-100 bg-zinc-50 px-3 py-2">
+        <p className="text-[11px] font-semibold text-zinc-400">선택한 본문</p>
+        <p className="mt-1 line-clamp-3 text-sm leading-6 text-zinc-600">
+          {selection.selectedText}
+        </p>
+      </div>
+
+      <p className="mt-4 text-sm leading-6 text-zinc-700">
+        {realized.lead}
+      </p>
+
+      {realized.bridge ? (
+        <div className="mt-4 grid gap-2">
+          <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5">
+            <p className="text-[11px] font-semibold text-amber-900">이전에는</p>
+            <p className="mt-1 text-sm leading-6 text-zinc-800">{realized.bridge.previous}</p>
+          </div>
+          <div className="rounded-lg border border-sky-200 bg-sky-50 px-3 py-2.5">
+            <p className="text-[11px] font-semibold text-sky-900">그래서 지금</p>
+            <p className="mt-1 text-sm leading-6 text-zinc-800">{realized.bridge.current}</p>
+          </div>
+        </div>
+      ) : realized.bullets.length > 0 ? (
+        <dl className="mt-4 grid gap-2">
+          {realized.bullets.slice(0, 4).map((item) => (
+            <div key={`${item.label}:${item.text}`} className="rounded-lg border border-zinc-100 bg-white px-3 py-2">
+              <dt className="text-[11px] font-semibold text-zinc-400">{item.label}</dt>
+              <dd className="mt-1 text-sm leading-6 text-zinc-700">{item.text}</dd>
+            </div>
+          ))}
+        </dl>
+      ) : realized.detail ? (
+        <p className="mt-3 text-sm leading-6 text-zinc-600">{realized.detail}</p>
+      ) : null}
+
+      {!technical && realized.evidenceLabel && (
+        <details className="mt-4 rounded-lg border border-zinc-100 bg-zinc-50 px-3 py-2">
+          <summary className="cursor-pointer text-[11px] font-semibold text-zinc-500">
+            근거 문장 보기
+          </summary>
+          <p className="mt-2 text-xs leading-5 text-zinc-600">{realized.evidenceLabel}</p>
+        </details>
+      )}
+
+      {technical && (
+        <details className="mt-4 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2">
+          <summary className="cursor-pointer text-[11px] font-semibold uppercase tracking-wide text-zinc-500">
+            provenance / debug
+          </summary>
+          <div className="mt-2 space-y-2 text-xs leading-5 text-zinc-500">
+            <p>kind: {unit.kind} · problem: {unit.reader_problem ?? "-"}</p>
+            <p>display: {unit.default_display ?? "-"} · spoiler: {unit.spoiler_risk ?? "none"}</p>
+            {scoreParts.length > 0 && <p>{scoreParts.join(" · ")}</p>}
+            {unit.source_stage_ids.length > 0 && <p>source: {unit.source_stage_ids.join(", ")}</p>}
+            <p>parsed: {realized.debug?.parsedFrom ?? "fallback"}</p>
+            {evidencePreview && <p className="rounded-md bg-white px-2 py-1 text-zinc-600">{evidencePreview}</p>}
+            <p className="rounded-md bg-white px-2 py-1 text-zinc-600">raw title: {unit.title}</p>
+            <p className="rounded-md bg-white px-2 py-1 text-zinc-600">raw body: {unit.body}</p>
+          </div>
+        </details>
+      )}
+    </aside>
+  )
+}
+
 type ReaderFocusContext =
   | {
       mode: "global"
@@ -1145,14 +1682,46 @@ type SupportPipelineStage = {
 
 function getSup7Slot(unit: SupportUnit, support: SceneReaderPacket["support"]): string {
   const plan = support?.display_plan
-  if (plan?.default_visible.some((item) => item.unit_id === unit.unit_id)) return "default visible"
-  if (plan?.expandable.some((item) => item.unit_id === unit.unit_id)) return "expandable"
-  if (plan?.trigger_only.some((item) => item.unit_id === unit.unit_id)) return "trigger only"
-  if (plan?.suppressed.some((item) => item.unit_id === unit.unit_id)) return "suppressed"
+  if (plan?.default_visible?.some((item) => item.unit_id === unit.unit_id)) return "default visible"
+  if (plan?.expandable?.some((item) => item.unit_id === unit.unit_id)) return "expandable"
+  if (plan?.trigger_only?.some((item) => item.unit_id === unit.unit_id)) return "trigger only"
+  if (plan?.suppressed?.some((item) => item.unit_id === unit.unit_id)) return "suppressed"
   if (support?.display_slots.before_text.some((item) => item.unit_id === unit.unit_id)) return "before text"
   if (support?.display_slots.on_demand.some((item) => item.unit_id === unit.unit_id)) return "on demand"
   if (support?.display_slots.beside_visual.some((item) => item.unit_id === unit.unit_id)) return "beside visual"
   return "candidate"
+}
+
+function getDisplaySlotUnits(support: SceneReaderPacket["support"]): SupportUnit[] {
+  if (!support) return []
+  return uniqueSupportUnits([
+    ...support.display_slots.before_text,
+    ...support.display_slots.on_demand,
+    ...support.display_slots.beside_visual,
+  ])
+}
+
+function getSupportCandidateUnits(support: SceneReaderPacket["support"]): SupportUnit[] {
+  const candidateUnits = support?.display_plan?.candidate_units ?? []
+  return candidateUnits.length > 0 ? candidateUnits : getDisplaySlotUnits(support)
+}
+
+function getSup7PlannedUnits(support: SceneReaderPacket["support"]): SupportUnit[] {
+  if (!support) return []
+  const plan = support.display_plan
+  const plannedUnits = plan
+    ? uniqueSupportUnits([
+        ...(plan.default_visible ?? []),
+        ...(plan.expandable ?? []),
+        ...(plan.trigger_only ?? []),
+      ])
+    : []
+
+  if (plannedUnits.length > 0) return plannedUnits
+  return uniqueSupportUnits([
+    ...getDisplaySlotUnits(support),
+    ...(plan?.candidate_units ?? []),
+  ])
 }
 
 function buildSupportPipelineStages(params: {
@@ -1167,22 +1736,10 @@ function buildSupportPipelineStages(params: {
   const allUnits = uniqueSupportUnits([
     ...support.primary_units,
     ...support.overflow_units,
-    ...support.display_slots.before_text,
-    ...support.display_slots.on_demand,
-    ...support.display_slots.beside_visual,
-    ...(support.display_plan?.candidate_units ?? []),
+    ...getDisplaySlotUnits(support),
+    ...getSupportCandidateUnits(support),
   ])
-  const sup7Units = support.display_plan
-    ? uniqueSupportUnits([
-        ...support.display_plan.default_visible,
-        ...support.display_plan.expandable,
-        ...support.display_plan.trigger_only,
-      ])
-    : uniqueSupportUnits([
-        ...support.display_slots.before_text,
-        ...support.display_slots.on_demand,
-        ...support.display_slots.beside_visual,
-      ])
+  const sup7Units = getSup7PlannedUnits(support)
   const governorUnits = uniqueSupportUnits([
     ...params.supportBeforeText,
     ...params.readerExpandableSupport,
@@ -1219,9 +1776,10 @@ function buildSupportPipelineStages(params: {
       items: governorUnits.map((unit) => ({
         unit,
         meta: realizeSupportUnit(unit).categoryLabel,
-        placement: params.supportBeforeText.some((item) => item.unit_id === unit.unit_id)
-          ? "읽기 전 짧은 단서"
-          : (params.inlinePlacementByUnitId.get(unit.unit_id) ?? "헷갈릴 때만 보기"),
+        placement: params.inlinePlacementByUnitId.get(unit.unit_id) ??
+          (params.supportBeforeText.some((item) => item.unit_id === unit.unit_id)
+            ? "읽기 전 짧은 단서"
+            : "헷갈릴 때만 보기"),
       })),
     },
   ]
@@ -1346,12 +1904,7 @@ function ResearcherArtifactPanel({
   governedSupport: ReturnType<typeof governReaderSupport>
   visualPolicy: ReturnType<typeof scoreVisualSupport>
 }) {
-  const candidateCount = packet.support?.display_plan?.candidate_units?.length
-    ?? [
-      ...(packet.support?.display_slots.before_text ?? []),
-      ...(packet.support?.display_slots.beside_visual ?? []),
-      ...(packet.support?.display_slots.on_demand ?? []),
-    ].length
+  const candidateCount = getSupportCandidateUnits(packet.support).length
   const bookBridgeCount = (readerMemoryContext?.incomingEdges.length ?? 0)
     + (readerMemoryContext?.outgoingEdges.length ?? 0)
   const visibleCount = supportBeforeText.length + readerExpandableSupport.length
@@ -1554,7 +2107,7 @@ export default function ReaderScreen({
   const [longPauseActive, setLongPauseActive] = useState(false)
   const [backscrollActive, setBackscrollActive] = useState(false)
   const [supportOpenCount, setSupportOpenCount] = useState(0)
-  const [expandedInlineSupportIds, setExpandedInlineSupportIds] = useState<Set<string>>(() => new Set())
+  const [activeSupportSelection, setActiveSupportSelection] = useState<ActiveSupportSelection | null>(null)
   const imageFrameRef = useRef<HTMLDivElement | null>(null)
   const preloadedImageUrlsRef = useRef<Set<string>>(new Set())
   const loggedSupportEventsRef = useRef<Set<string>>(new Set())
@@ -1582,11 +2135,7 @@ export default function ReaderScreen({
     selectedCharacterIds: resolvedSelectedCharacterIds,
     t,
   })
-  const visualSupportUnits = packet.support?.display_plan?.candidate_units ?? [
-    ...(packet.support?.display_slots.before_text ?? []),
-    ...(packet.support?.display_slots.beside_visual ?? []),
-    ...(packet.support?.display_slots.on_demand ?? []),
-  ]
+  const visualSupportUnits = getSupportCandidateUnits(packet.support)
   const visualPolicy = scoreVisualSupport(packet, visualSupportUnits)
   const governedSupport = governReaderSupport(packet.support, {
     resumeGapMs,
@@ -1600,11 +2149,16 @@ export default function ReaderScreen({
   const supportBeforeText = governedSupport.beforeText
   const supportBesideVisual = governedSupport.besideVisual
   const supportOnDemand = governedSupport.onDemand
+  const readerSelectableSupport = uniqueSupportUnits([...supportBeforeText, ...supportOnDemand, ...supportBesideVisual])
   const readerExpandableSupport = uniqueSupportUnits([...supportOnDemand, ...supportBesideVisual])
-  const inlineSupportPlan = buildInlineSupportPlan(readerExpandableSupport, bodyParagraphs, activeSubsceneId)
+  const inlineSupportPlan = buildInlineSupportPlan(readerSelectableSupport, bodyParagraphs, activeSubsceneId)
   const renderedExpandableSupport = isResearcherMode ? supportOnDemand : inlineSupportPlan.fallbackUnits
   const readerMemoryContext = packet
     ? buildReaderMemoryContext(bookMemory, final1, packet, readerRunId)
+    : null
+  const activeTextSupportAnchorId = activeSupportSelection?.anchorId ?? null
+  const activeSupportUnit = activeSupportSelection?.selectedUnitId
+    ? activeSupportSelection.units.find((unit) => unit.unit_id === activeSupportSelection.selectedUnitId) ?? null
     : null
 
   function logSupportUnits(
@@ -1635,20 +2189,37 @@ export default function ReaderScreen({
     }
   }
 
-  function toggleInlineSupport(unit: SupportUnit) {
-    if (!expandedInlineSupportIds.has(unit.unit_id)) {
-      logSupportUnits("opened", [unit], "inline_support_opened")
+  function toggleTextSupportAnchor(selection: SupportAnchorSelectionInput) {
+    if (activeSupportSelection?.anchorId === selection.anchorId) {
+      setActiveSupportSelection(null)
+      return
     }
 
-    setExpandedInlineSupportIds((prev) => {
-      const next = new Set(prev)
-      if (next.has(unit.unit_id)) {
-        next.delete(unit.unit_id)
-      } else {
-        next.add(unit.unit_id)
-      }
-      return next
+    const initialUnit = selection.units.length === 1 ? selection.units[0] : null
+    if (initialUnit) {
+      logSupportUnits("opened", [initialUnit], `text_anchor_opened:${initialUnit.kind}`)
+    }
+
+    setActiveSupportSelection({
+      ...selection,
+      units: uniqueSupportUnits(selection.units),
+      selectedUnitId: initialUnit?.unit_id ?? null,
     })
+  }
+
+  function selectTextSupportUnit(unit: SupportUnit) {
+    if (!activeSupportSelection) return
+    if (activeSupportSelection.selectedUnitId !== unit.unit_id) {
+      logSupportUnits("opened", [unit], `text_anchor_opened:${unit.kind}`)
+    }
+    setActiveSupportSelection({
+      ...activeSupportSelection,
+      selectedUnitId: unit.unit_id,
+    })
+  }
+
+  function closeTextSupport() {
+    setActiveSupportSelection(null)
   }
 
   const activeImageKey = packet?.visual.image_path ? `${packet.scene_id}:${packet.visual.image_path}` : ""
@@ -1673,7 +2244,7 @@ export default function ReaderScreen({
   function resetFocusState() {
     setActivePanel(null)
     setSelectedCharacterIds([])
-    setExpandedInlineSupportIds(new Set())
+    setActiveSupportSelection(null)
   }
 
   function selectScene(nextSceneIdx: number, nextSubsceneIdx = 0) {
@@ -1747,6 +2318,17 @@ export default function ReaderScreen({
   }, [packet?.scene_id])
 
   useEffect(() => {
+    if (!activeSupportSelection || typeof window === "undefined") return
+    const handleKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setActiveSupportSelection(null)
+      }
+    }
+    window.addEventListener("keydown", handleKeyDown)
+    return () => window.removeEventListener("keydown", handleKeyDown)
+  }, [activeSupportSelection])
+
+  useEffect(() => {
     if (typeof window === "undefined") return
 
     const sceneIndexesToPreload = [
@@ -1790,27 +2372,6 @@ export default function ReaderScreen({
     const timer = window.setTimeout(() => setLongPauseActive(true), 45_000)
     return () => window.clearTimeout(timer)
   }, [sceneIdx, subsceneIdx])
-
-  useEffect(() => {
-    if (isResearcherMode) return
-    if (!packet || supportBeforeText.length === 0) return
-    const sceneKey = `${final1.chapter_id}:${packet.scene_id}`
-    for (const unit of supportBeforeText) {
-      const logKey = `shown:${sceneKey}:${unit.unit_id}:default_visible`
-      if (loggedSupportEventsRef.current.has(logKey)) continue
-      loggedSupportEventsRef.current.add(logKey)
-      postReaderSupportEvent({
-        docId: final1.doc_id,
-        chapterId: final1.chapter_id,
-        sceneId: packet.scene_id,
-        readerRunId,
-        sessionId: readerSessionId,
-        unit,
-        action: "shown",
-        reason: "default_visible",
-      })
-    }
-  }, [final1.chapter_id, final1.doc_id, isResearcherMode, packet, readerRunId, readerSessionId, supportBeforeText])
 
   if (!packet) return <div className="p-8 text-zinc-400">{t.reader.noScenes}</div>
 
@@ -1983,16 +2544,12 @@ export default function ReaderScreen({
             </div>
           )}
 
-          {supportBeforeText.length > 0 && (
-            isResearcherMode ? (
-              <div className="grid gap-3 md:grid-cols-2">
-                {supportBeforeText.map((unit) => (
-                  <SupportUnitCard key={unit.unit_id} unit={unit} technical />
-                ))}
-              </div>
-            ) : (
-              <ReaderLeadClueStrip units={supportBeforeText} />
-            )
+          {isResearcherMode && supportBeforeText.length > 0 && (
+            <div className="grid gap-3 md:grid-cols-2">
+              {supportBeforeText.map((unit) => (
+                <SupportUnitCard key={unit.unit_id} unit={unit} technical />
+              ))}
+            </div>
           )}
           {isResearcherMode && (governedSupport.diagnostics.length > 0 || governedSupport.suppressedCount > 0 || governedSupport.hiddenTriggerCount > 0) && (
             <div className="flex flex-wrap gap-2 rounded-xl border border-zinc-200 bg-zinc-50 px-4 py-3 text-[11px] font-semibold text-zinc-500">
@@ -2024,26 +2581,18 @@ export default function ReaderScreen({
               : "border-2 border-zinc-300 ring-4 ring-zinc-50"
           }`}>
             {bodyParagraphs.map((paragraph, index) => (
-              <div key={index} className="relative">
-                <p>
-                  {paragraph}
-                  {!isResearcherMode && (inlineSupportPlan.groups.get(index) ?? []).map((unit) => (
-                    <InlineSupportChip
-                      key={unit.unit_id}
-                      unit={unit}
-                      active={expandedInlineSupportIds.has(unit.unit_id)}
-                      onToggle={() => toggleInlineSupport(unit)}
-                    />
-                  ))}
-                </p>
-                {!isResearcherMode && (
-                  <InlineSupportDetails
-                    units={(inlineSupportPlan.groups.get(index) ?? []).filter((unit) => (
-                      expandedInlineSupportIds.has(unit.unit_id)
-                    ))}
-                  />
-                )}
-              </div>
+              <ReaderTextParagraph
+                key={index}
+                paragraph={paragraph}
+                index={index}
+                anchors={inlineSupportPlan.groups.get(index) ?? []}
+                activeAnchorId={activeTextSupportAnchorId}
+                selectedUnitId={activeSupportSelection?.selectedUnitId ?? null}
+                onSelect={toggleTextSupportAnchor}
+                onPickUnit={selectTextSupportUnit}
+                onCloseSelection={closeTextSupport}
+                variant={isResearcherMode ? "researcher" : "reader"}
+              />
             ))}
           </div>
 
@@ -2115,6 +2664,17 @@ export default function ReaderScreen({
         </div>
 
         <div className="flex min-w-0 flex-col gap-5 xl:self-start">
+          {activeSupportSelection && activeSupportUnit && (
+            <div className="hidden xl:block">
+              <AnchoredSupportSurface
+                selection={activeSupportSelection}
+                unit={activeSupportUnit}
+                mode={mode}
+                onClose={closeTextSupport}
+              />
+            </div>
+          )}
+
           {isResearcherMode && (
             <CrossChapterMemoryPanel
               bookMemory={bookMemory}
@@ -2249,6 +2809,26 @@ export default function ReaderScreen({
           )}
         </div>
       </div>
+
+      {activeSupportSelection && activeSupportUnit && (
+        <div className="xl:hidden">
+          <button
+            type="button"
+            aria-label="도움 닫기"
+            onClick={closeTextSupport}
+            className="fixed inset-0 z-40 bg-zinc-950/20"
+          />
+          <div className="fixed inset-x-0 bottom-0 z-50">
+            <AnchoredSupportSurface
+              selection={activeSupportSelection}
+              unit={activeSupportUnit}
+              mode={mode}
+              onClose={closeTextSupport}
+              surface="sheet"
+            />
+          </div>
+        </div>
+      )}
     </div>
   )
 }
