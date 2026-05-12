@@ -181,24 +181,35 @@ function bullet(label: string, text: string | undefined, maxLength = 92): Anchor
   return { label, text: compactReaderText(text, maxLength) }
 }
 
+function ensureBullets(
+  items: Array<AnchoredSupportBullet | null>,
+  fallbackLabel: string,
+  fallbackText: string | undefined,
+): AnchoredSupportBullet[] {
+  const bullets = items.filter((item): item is AnchoredSupportBullet => Boolean(item))
+  if (bullets.length > 0) return bullets
+  const fallback = bullet(fallbackLabel, fallbackText, 120)
+  return fallback ? [fallback] : []
+}
+
 function compactSelectedText(context: AnchoredSupportContext): string {
   const maxLength = context.granularity === "paragraph" ? 120 : 70
   return compactReaderText(context.selectedText || context.paragraphText, maxLength)
 }
 
-function selectedLead(context: AnchoredSupportContext, fallback: string): string {
+function selectedLead(context: AnchoredSupportContext, supportMessage: string): string {
   const selectedText = compactSelectedText(context)
-  if (!selectedText) return fallback
+  if (!selectedText) return supportMessage
   if (context.granularity === "word") {
-    return `선택한 표현 "${selectedText}"을 이해하는 데 필요한 단서입니다.`
+    return `선택한 표현 "${selectedText}"은 ${supportMessage}`
   }
   if (context.granularity === "phrase") {
-    return `선택한 구절 "${selectedText}"과 바로 연결되는 단서입니다.`
+    return `선택한 구절 "${selectedText}"은 ${supportMessage}`
   }
   if (context.granularity === "sentence") {
-    return "선택한 문장을 읽을 때 놓치기 쉬운 연결만 짧게 정리합니다."
+    return `선택한 문장에서는 ${supportMessage}`
   }
-  return fallback
+  return `이 문단에서는 ${supportMessage}`
 }
 
 export function splitSupportBridgeBody(body: string): { previous: string; current: string } | null {
@@ -291,7 +302,7 @@ export function realizeAnchoredSupportUnit(
       chipLabel: base.chipLabel,
       categoryLabel: base.categoryLabel,
       title: "이 일이 이어지는 이유",
-      lead: selectedLead(context, "이전 장면의 사건이 현재 행동이나 상황으로 이어지는 부분입니다."),
+      lead: selectedLead(context, "앞선 사건과 지금 행동의 연결을 확인하는 단서입니다."),
       bullets: [],
       detail: "앞에서 생긴 일과 지금 문장의 연결만 확인하면 됩니다.",
       bridge: {
@@ -333,12 +344,12 @@ export function realizeAnchoredSupportUnit(
         chipLabel: "지금",
         categoryLabel: "현재 상황",
         title: "지금 이 부분에서 확인할 상황",
-        lead: selectedLead(context, "지금 장면의 장소, 인물, 목표를 짧게 정렬합니다."),
-        bullets: [
+        lead: selectedLead(context, "현재 장소, 인물, 목표를 정렬하는 단서입니다."),
+        bullets: ensureBullets([
           bullet("장소", place),
           bullet("인물", cast),
           bullet("목표", goals),
-        ].filter((item): item is AnchoredSupportBullet => Boolean(item)),
+        ], "현재 상황", cleanedDetail),
         detail: cleanedDetail,
         evidenceLabel: evidenceText ? compactReaderText(evidenceText, 120) : undefined,
         debug: commonDebug,
@@ -348,14 +359,14 @@ export function realizeAnchoredSupportUnit(
         chipLabel: "변화",
         categoryLabel: "달라진 점",
         title: "방금 바뀐 점",
-        lead: selectedLead(context, "이 부분은 장면의 상태나 관심이 바뀌는 신호입니다."),
-        bullets: [
+        lead: selectedLead(context, "장면의 상태, 관심, 등장 인물이 바뀌는 신호입니다."),
+        bullets: ensureBullets([
           bullet("장소", place || nearbyPlaces),
           bullet("시간", time),
           bullet("등장", entered),
           bullet("퇴장", exited),
           bullet("행동", actions),
-        ].filter((item): item is AnchoredSupportBullet => Boolean(item)),
+        ], "바뀐 점", cleanedDetail),
         detail: cleanedDetail,
         evidenceLabel: evidenceText ? compactReaderText(evidenceText, 120) : undefined,
         debug: commonDebug,
@@ -365,12 +376,12 @@ export function realizeAnchoredSupportUnit(
         chipLabel: "인물",
         categoryLabel: "인물 단서",
         title: "이 부분에서 중요한 인물",
-        lead: selectedLead(context, "이 문장에서는 누가 행동하고 무엇을 신경 쓰는지만 잡으면 됩니다."),
-        bullets: [
+        lead: selectedLead(context, "누가 행동하고 무엇을 신경 쓰는지 잡아주는 단서입니다."),
+        bullets: ensureBullets([
           bullet("인물", cast),
           bullet("행동", actions),
           bullet("목표", goals),
-        ].filter((item): item is AnchoredSupportBullet => Boolean(item)),
+        ], "인물 단서", cleanedDetail),
         detail: cleanedDetail,
         evidenceLabel: evidenceText ? compactReaderText(evidenceText, 120) : undefined,
         debug: commonDebug,
@@ -380,12 +391,12 @@ export function realizeAnchoredSupportUnit(
         chipLabel: "관계",
         categoryLabel: "관계 변화",
         title: "관계에서 볼 점",
-        lead: selectedLead(context, "이 부분은 인물 사이의 거리, 관심, 반응을 읽는 데 도움이 됩니다."),
-        bullets: [
+        lead: selectedLead(context, "인물 사이의 거리, 관심, 반응을 읽는 단서입니다."),
+        bullets: ensureBullets([
           bullet("관계", relations),
           bullet("인물", cast),
           bullet("신호", actions || cleanedDetail),
-        ].filter((item): item is AnchoredSupportBullet => Boolean(item)),
+        ], "관계 신호", cleanedDetail),
         detail: cleanedDetail,
         evidenceLabel: evidenceText ? compactReaderText(evidenceText, 120) : undefined,
         debug: commonDebug,
@@ -395,12 +406,12 @@ export function realizeAnchoredSupportUnit(
         chipLabel: "장소",
         categoryLabel: "장소 단서",
         title: "지금 어디에서 이어지나요?",
-        lead: selectedLead(context, "이 부분은 장소나 이동 흐름을 놓치지 않도록 잡아주는 단서입니다."),
-        bullets: [
+        lead: selectedLead(context, "장소나 이동 흐름을 놓치지 않도록 잡아주는 단서입니다."),
+        bullets: ensureBullets([
           bullet("현재 장소", place),
           bullet("주변 장소", nearbyPlaces),
           bullet("이동 흐름", actions),
-        ].filter((item): item is AnchoredSupportBullet => Boolean(item)),
+        ], "장소 흐름", cleanedDetail),
         detail: cleanedDetail,
         evidenceLabel: evidenceText ? compactReaderText(evidenceText, 120) : undefined,
         debug: commonDebug,
@@ -410,12 +421,12 @@ export function realizeAnchoredSupportUnit(
         chipLabel: "누구?",
         categoryLabel: "지시어 단서",
         title: "이 표현이 가리키는 대상",
-        lead: selectedLead(context, "짧은 지칭은 현재 장면에 나온 인물과 사물을 기준으로 확인하면 됩니다."),
-        bullets: [
+        lead: selectedLead(context, "짧은 지칭이나 애매한 표현의 대상을 확인하는 단서입니다."),
+        bullets: ensureBullets([
           bullet("표현", compactSelectedText(context), 70),
           bullet("가능한 대상", cast || objects),
           bullet("근거", evidenceText),
-        ].filter((item): item is AnchoredSupportBullet => Boolean(item)),
+        ], "지시어 단서", cleanedDetail),
         detail: cleanedDetail,
         evidenceLabel: evidenceText ? compactReaderText(evidenceText, 120) : undefined,
         debug: commonDebug,
@@ -425,12 +436,12 @@ export function realizeAnchoredSupportUnit(
         chipLabel: "단서",
         categoryLabel: "장면 단서",
         title: "장면을 떠올릴 단서",
-        lead: selectedLead(context, "선택한 부분을 상상할 때 필요한 공간, 사물, 분위기 단서입니다."),
-        bullets: [
+        lead: selectedLead(context, "공간, 사물, 분위기를 떠올리게 하는 시각 단서입니다."),
+        bullets: ensureBullets([
           bullet("공간", place || environment),
           bullet("사물", objects),
           bullet("분위기", environment),
-        ].filter((item): item is AnchoredSupportBullet => Boolean(item)),
+        ], "장면 단서", cleanedDetail),
         detail: cleanedDetail,
         evidenceLabel: evidenceText ? compactReaderText(evidenceText, 120) : undefined,
         debug: commonDebug,
@@ -440,12 +451,12 @@ export function realizeAnchoredSupportUnit(
         chipLabel: "복귀",
         categoryLabel: "다시 읽기",
         title: "다시 읽기 전에 기억할 것",
-        lead: selectedLead(context, "쉬었다가 돌아왔을 때 필요한 직전 흐름만 짧게 복구합니다."),
-        bullets: [
+        lead: selectedLead(context, "쉬었다가 돌아왔을 때 필요한 직전 흐름을 복구하는 단서입니다."),
+        bullets: ensureBullets([
           bullet("직전 흐름", summary || cleanedDetail),
           bullet("인물", cast),
           bullet("장소", place),
-        ].filter((item): item is AnchoredSupportBullet => Boolean(item)),
+        ], "복귀 단서", cleanedDetail),
         detail: cleanedDetail,
         evidenceLabel: evidenceText ? compactReaderText(evidenceText, 120) : undefined,
         debug: commonDebug,
@@ -455,10 +466,10 @@ export function realizeAnchoredSupportUnit(
         chipLabel: base.chipLabel,
         categoryLabel: base.categoryLabel,
         title: base.title,
-        lead: selectedLead(context, "선택한 부분을 이해하는 데 필요한 짧은 단서입니다."),
-        bullets: [
+        lead: selectedLead(context, "읽기 흐름을 보완하는 짧은 단서입니다."),
+        bullets: ensureBullets([
           bullet("단서", base.preview || cleanedDetail),
-        ].filter((item): item is AnchoredSupportBullet => Boolean(item)),
+        ], "단서", cleanedDetail),
         detail: cleanedDetail,
         evidenceLabel: evidenceText ? compactReaderText(evidenceText, 120) : undefined,
         debug: {

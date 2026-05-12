@@ -1055,74 +1055,86 @@ function SupportChoicePopover({
   onClose: () => void
   variant?: "reader" | "researcher"
 }) {
-  if (selection.units.length <= 1) return null
+  if (selection.units.length <= 1 || selectedUnitId) return null
 
   return (
-    <div className={`mt-3 max-w-xl rounded-xl border p-2.5 shadow-lg ${
-      variant === "researcher"
-        ? "border-sky-200 bg-white"
-        : "border-zinc-200 bg-white/95"
-    }`}>
-      <div className="flex items-center justify-between gap-3 px-1 pb-2">
-        <div>
-          <p className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">
-            {selection.label}
-          </p>
-          <p className="mt-0.5 text-xs text-zinc-500">
-            {selection.units.length}개의 도움 중 선택
-          </p>
+    <>
+      <button
+        type="button"
+        aria-label="도움 선택 닫기"
+        onClick={onClose}
+        className="fixed inset-0 z-40 cursor-default bg-transparent"
+      />
+      <div
+        role="dialog"
+        aria-label="도움 종류 선택"
+        className={`absolute left-0 top-full z-50 mt-2 w-[min(24rem,calc(100vw-2rem))] rounded-xl border p-2.5 shadow-xl ${
+          variant === "researcher"
+            ? "border-sky-200 bg-white"
+            : "border-zinc-200 bg-white/95"
+        }`}
+      >
+        <div className="flex items-center justify-between gap-3 px-1 pb-2">
+          <div>
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">
+              {selection.label}
+            </p>
+            <p className="mt-0.5 text-xs text-zinc-500">
+              {selection.units.length}개의 도움 중 선택
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-full border border-zinc-200 px-2.5 py-1 text-xs font-semibold text-zinc-500 hover:bg-zinc-50"
+          >
+            닫기
+          </button>
         </div>
-        <button
-          type="button"
-          onClick={onClose}
-          className="rounded-full border border-zinc-200 px-2.5 py-1 text-xs font-semibold text-zinc-500 hover:bg-zinc-50"
-        >
-          닫기
-        </button>
-      </div>
-      <div className="grid gap-1.5">
-        {selection.units.map((unit) => {
-          const realized = realizeAnchoredSupportUnit(unit, {
-            selectedText: selection.selectedText,
-            paragraphText: selection.paragraphText,
-            granularity: selection.granularity,
-            mode: variant,
-          })
-          const active = selectedUnitId === unit.unit_id
-          return (
-            <button
-              key={unit.unit_id}
-              type="button"
-              onClick={() => onPick(unit)}
-              className={`w-full rounded-lg border px-3 py-2 text-left transition-colors ${
-                active
-                  ? "border-sky-300 bg-sky-50"
-                  : "border-transparent hover:border-zinc-200 hover:bg-zinc-50"
-              }`}
-            >
-              <span className="flex min-w-0 items-start gap-2">
-                <span className="mt-0.5 shrink-0 rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-semibold text-sky-800">
-                  {realized.chipLabel}
-                </span>
-                <span className="min-w-0">
-                  <span className="block text-sm font-semibold leading-5 text-zinc-900">
-                    {realized.title}
+        <div className="grid gap-1.5">
+          {selection.units.map((unit) => {
+            const realized = realizeAnchoredSupportUnit(unit, {
+              selectedText: selection.selectedText,
+              paragraphText: selection.paragraphText,
+              granularity: selection.granularity,
+              mode: variant,
+            })
+            const preview = realized.bullets[0]
+              ? `${realized.bullets[0].label}: ${realized.bullets[0].text}`
+              : realized.bridge
+                ? `${realized.bridge.previous} -> ${realized.bridge.current}`
+                : (realized.detail ?? realized.lead)
+            return (
+              <button
+                key={unit.unit_id}
+                type="button"
+                onClick={() => onPick(unit)}
+                className="w-full rounded-lg border border-transparent px-3 py-2 text-left transition-colors hover:border-zinc-200 hover:bg-zinc-50"
+              >
+                <span className="flex min-w-0 items-start gap-2">
+                  <span className="mt-0.5 shrink-0 rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-semibold text-sky-800">
+                    {realized.chipLabel}
                   </span>
-                  <span className="mt-0.5 line-clamp-1 block text-xs leading-5 text-zinc-500">
-                    {realized.lead}
-                  </span>
-                  {variant === "researcher" && (
-                    <span className="mt-1 block text-[11px] font-medium text-zinc-400">
-                      {unit.kind} · {unit.reader_problem ?? "reader_problem 없음"} · priority {unit.priority.toFixed(2)}
+                  <span className="min-w-0">
+                    <span className="block text-sm font-semibold leading-5 text-zinc-900">
+                      {realized.title}
                     </span>
-                  )}
+                    <span className="mt-0.5 line-clamp-1 block text-xs leading-5 text-zinc-500">
+                      {preview}
+                    </span>
+                    {variant === "researcher" && (
+                      <span className="mt-1 block text-[11px] font-medium text-zinc-400">
+                        {unit.kind} · {unit.reader_problem ?? "reader_problem 없음"} · priority {unit.priority.toFixed(2)}
+                      </span>
+                    )}
+                  </span>
                 </span>
-              </span>
-            </button>
-          )
-        })}
+              </button>
+            )
+          })}
+        </div>
       </div>
-    </div>
+    </>
   )
 }
 
@@ -2191,6 +2203,14 @@ export default function ReaderScreen({
 
   function toggleTextSupportAnchor(selection: SupportAnchorSelectionInput) {
     if (activeSupportSelection?.anchorId === selection.anchorId) {
+      if (activeSupportSelection.selectedUnitId && selection.units.length > 1) {
+        setActiveSupportSelection({
+          ...selection,
+          units: uniqueSupportUnits(selection.units),
+          selectedUnitId: null,
+        })
+        return
+      }
       setActiveSupportSelection(null)
       return
     }
