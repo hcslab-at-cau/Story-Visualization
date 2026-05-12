@@ -31,6 +31,12 @@ export interface RunReadinessReport {
     runMatchesSelected: boolean
     missingReason?: string
   }
+  narrativeGraph: {
+    available: boolean
+    claimCount: number
+    relationCount: number
+    removedFutureClaimCount: number
+  }
   reader: {
     effectiveRunId: string
     final1OnEffectiveRun: boolean
@@ -40,4 +46,3 @@ export interface RunReadinessReport {
   checks: ReadinessCheck[]
   recommendations: string[]
 }
-

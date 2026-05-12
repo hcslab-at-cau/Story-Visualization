@@ -4,6 +4,7 @@ import {
   loadRunResults,
   stageKey,
 } from "@/lib/firestore"
+import { queryNarrativeGraphSnapshot } from "@/lib/narrative-graph"
 import type { RunReadinessReport, ReadinessCheck, ReadinessStatus } from "@/types/readiness"
 import type { NextRequest } from "next/server"
 
@@ -66,6 +67,10 @@ export async function GET(request: NextRequest): Promise<Response> {
       final2OnEffectiveRun: hasStage(readerResults, "FINAL.2"),
       fallbackToSelectedRun,
     }
+    const narrativeGraph = bookMemory
+      ? queryNarrativeGraphSnapshot(bookMemory, { chapterId })
+      : null
+    const narrativeGraphAvailable = Boolean(narrativeGraph && narrativeGraph.claims.length > 0)
 
     const checks: ReadinessCheck[] = [
       check(
@@ -122,6 +127,25 @@ export async function GET(request: NextRequest): Promise<Response> {
           : undefined,
       ),
       check(
+        "nrg0",
+        "NRG.0 reader-safe claims",
+        !bookMemory
+          ? "missing"
+          : narrativeGraphAvailable
+            ? "ready"
+            : "warning",
+        !bookMemory
+          ? "BOOK.0 is unavailable, so NRG.0 cannot be derived."
+          : narrativeGraphAvailable && narrativeGraph
+            ? `${narrativeGraph.claims.length} reader-safe claims and ${narrativeGraph.relations.length} relations are available.`
+            : "BOOK.0 exists, but no reader-safe NRG claims were derived for this chapter.",
+        !bookMemory
+          ? "Build BOOK.0 before running SUP.7/FINAL.1 for NRG-based support."
+          : narrativeGraphAvailable
+            ? undefined
+            : "Check that BOOK.0 includes this chapter and has scene/edge memory.",
+      ),
+      check(
         "sup7-final1",
         "Reader support package",
         reader.final1OnEffectiveRun ? "ready" : "missing",
@@ -153,6 +177,12 @@ export async function GET(request: NextRequest): Promise<Response> {
         runMatchesSelected: Boolean(bookChapterRunId && bookChapterRunId === runId),
         missingReason: bookMemory?.missingChapters.find((item) => item.chapterId === chapterId)?.reason,
       },
+      narrativeGraph: {
+        available: narrativeGraphAvailable,
+        claimCount: narrativeGraph?.claims.length ?? 0,
+        relationCount: narrativeGraph?.relations.length ?? 0,
+        removedFutureClaimCount: narrativeGraph?.safetyFilter.removedFutureClaimCount ?? 0,
+      },
       reader,
       checks,
       recommendations: Array.from(new Set(recommendations)),
@@ -163,4 +193,3 @@ export async function GET(request: NextRequest): Promise<Response> {
     return Response.json({ error: e instanceof Error ? e.message : String(e) }, { status: 500 })
   }
 }
-

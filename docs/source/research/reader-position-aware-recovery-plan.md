@@ -689,19 +689,22 @@ Support Governor가 필요한 순간에만 노출하는 구조를 만든다.
 
 이 구조가 완성되어야 현재 engineering prototype이 하나의 논문 기여로 방어 가능해진다.
 
-## 15. 구현 기록: BOOK.0 기반 SUP.7 보강
+## 15. 구현 기록: NRG 기반 SUP.7 보강
 
-2026-05-08 구현에서 `SUP.7`은 더 이상 chapter-local support package만 저장하지 않는다. `SUP.7` 실행 시 최신 `BOOK.0` cross-chapter memory snapshot을 함께 읽고, 현재 scene 이전까지 spoiler-safe하게 필터링된 incoming edge를 `ReaderSupportPlan`의 후보 support로 주입한다.
+2026-05-08 구현에서 `SUP.7`은 더 이상 chapter-local support package만 저장하지 않는다. 처음에는 최신 `BOOK.0` cross-chapter memory snapshot을 함께 읽고, 현재 scene 이전까지 spoiler-safe하게 필터링된 incoming edge를 `ReaderSupportPlan`의 후보 support로 주입했다.
+
+2026-05-12 이후 구현에서는 이 경로를 한 단계 정리했다. `BOOK.0` edge를 바로 `SupportUnit`으로 바꾸는 대신, 우선 `BOOK.0`에서 파생한 NRG.0 reader-safe claim view를 조회하고, 현재 scene을 대상으로 하는 `causal` / `place` / `relation` claim을 support 후보로 변환한다. 직접 BOOK edge 변환은 NRG 후보가 없을 때만 fallback으로 남긴다.
 
 반영된 방식:
 
-- `cross_chapter_causal_bridge`는 `causal_bridge` support unit으로 변환한다.
-- `cross_chapter_place_shift`, `cross_chapter_same_place`는 `spatial_continuity` support unit으로 변환한다.
-- `cross_chapter_character_thread`, `entity_reappearance`는 `character_focus` support unit으로 변환한다.
-- 이 BOOK.0 기반 support는 기본 노출하지 않고 `expandable` / `reader_request` 대상으로 둔다.
-- 각 unit에는 `reader_problem`, `confidence`, `grounding_score`, `usefulness_score`, `intrusion_cost`, `spoiler_risk`, `claims`, `redundancy_key`를 포함한다.
+- NRG `causal` claim은 `causal_bridge` support unit으로 변환한다.
+- NRG `place` claim은 `spatial_continuity` support unit으로 변환한다.
+- NRG `relation` claim은 `character_focus` support unit으로 변환한다.
+- NRG 기반 support는 기본 노출하지 않고 `expandable` / `reader_request` 대상으로 둔다.
+- 각 unit에는 `reader_problem`, `confidence`, `grounding_score`, `usefulness_score`, `intrusion_cost`, `spoiler_risk`, `claims`, `reader_copy`, `anchor_hint`, `redundancy_key`를 포함한다.
+- `source_stage_ids`는 `NRG.0`, `BOOK.0`을 함께 기록해, support가 reader-safe claim view에서 왔지만 원천은 BOOK.0임을 드러낸다.
 
-이 결정의 이유는 cross-chapter memory를 단순히 Graph 탭에서 확인하는 데이터로 두지 않고, Reader가 실제로 사용할 수 있는 support retrieval 재료로 연결하기 위해서다. 다만 기본 visible support는 여전히 최대 1개로 제한한다. cross-chapter support는 인과/공간/인물 맥락을 복구하는 데 중요하지만, 본문 흐름을 방해할 위험도 있으므로 기본 정책은 on-demand다.
+이 결정의 이유는 cross-chapter memory를 단순히 Graph 탭에서 확인하는 데이터로 두지 않고, Reader가 실제로 사용할 수 있는 support retrieval 재료로 연결하기 위해서다. 동시에 BOOK edge를 그대로 support로 쓰는 구조보다, reader position과 spoiler filter를 거친 claim layer를 거치게 만드는 편이 연구 주장에 더 잘 맞는다. 다만 기본 visible support는 여전히 최대 1개로 제한한다. cross-chapter support는 인과/공간/인물 맥락을 복구하는 데 중요하지만, 본문 흐름을 방해할 위험도 있으므로 기본 정책은 on-demand다.
 
 ## 16. 구현 기록: Reader support interaction logging
 

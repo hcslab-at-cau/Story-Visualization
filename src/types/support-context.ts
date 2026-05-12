@@ -5,7 +5,7 @@ import type {
   BookMemorySceneRef,
   BookMemorySnapshot,
 } from "@/types/book-memory"
-import type { NarrativeGraphClaim } from "@/types/narrative-graph"
+import type { NarrativeGraphClaim, NarrativeGraphRelation } from "@/types/narrative-graph"
 import type { SupportUnitKind } from "@/types/schema"
 
 export type SupportContextKind = SupportUnitKind | "all"
@@ -43,6 +43,7 @@ export interface SupportContextPayload {
   placeChain: BookMemorySceneRef[]
   entityThreads: SupportContextEntityThread[]
   narrativeClaims: NarrativeGraphClaim[]
+  narrativeRelations: NarrativeGraphRelation[]
   nearbyScenes: BookMemorySceneRef[]
   evidenceRefs: BookMemoryEvidenceRef[]
   safetyFilterResult: SupportContextSafetyFilterResult

@@ -57,7 +57,7 @@ Graph edge와 Reader support unit이 단순 label이 아니라 다음 정보를 
 
 ### 4. RET.1 support-context v2
 
-기존 `/api/support-context`를 유지하되, 응답에 `narrativeClaims`를 추가한다. support kind별 filtering은 다음처럼 적용한다.
+기존 `/api/support-context`를 유지하되, 응답에 `narrativeClaims`와 `narrativeRelations`를 추가한다. support kind별 filtering은 다음처럼 적용한다.
 
 - `causal_bridge`: causal claim/edge 중심
 - `spatial_continuity`, `visual_context`: place claim/edge 중심
@@ -65,6 +65,8 @@ Graph edge와 Reader support unit이 단순 label이 아니라 다음 정보를 
 - `snapshot`, `boundary_delta`, `reentry_recap`: 현재 scene state와 incoming edge 중심
 
 모든 retrieval은 reader position 이전에 reveal된 scene만 허용한다.
+
+현재 `SUP.7` 보강은 이 NRG claim view를 우선 사용한다. 현재 scene을 대상으로 하는 `causal`, `place`, `relation` claim을 각각 `causal_bridge`, `spatial_continuity`, `character_focus` support unit으로 변환하고, NRG 후보가 없을 때만 기존 BOOK.0 incoming edge 직접 변환을 fallback으로 사용한다.
 
 ### 5. SUP.V verifier / usefulness scorer
 
@@ -108,4 +110,3 @@ Reader runtime에서 다음 signal을 사용한다.
 - Graph 탭에서 NRG claim inspector가 현재 scene 기준 claim을 보여주는지 확인
 - Reader에서 support card의 evidence/score/provenance가 표시되는지 확인
 - Reader에서 long pause/backscroll signal이 governor 상태에 반영되는지 확인
-
