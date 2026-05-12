@@ -176,6 +176,31 @@ function splitFieldList(value: string | undefined, maxItems = 4): string | undef
   return items.length > 0 ? items.join(", ") : compactReaderText(value, 90)
 }
 
+function splitRawList(value: string | undefined): string[] {
+  if (!value) return []
+  return value
+    .split(/\s*(?:,|;|\||\/|\band\b)\s*/i)
+    .map((item) => item.replace(/[.:]+$/g, "").trim())
+    .filter(Boolean)
+}
+
+function extractReferenceTargets(body: string): string[] {
+  const match = cleanSupportText(body).match(/against:\s*(.+)$/i)
+  return splitRawList(match?.[1])
+}
+
+function resolveReferenceTarget(selectedText: string, targets: string[]): string | undefined {
+  if (targets.length === 0) return undefined
+  const normalized = selectedText.toLowerCase().replace(/[^a-z\s-]/g, "").trim()
+  if (/\b(she|her|hers|alice)\b/.test(normalized)) {
+    return targets.find((target) => /alice/i.test(target)) ?? targets[0]
+  }
+  if (/\b(it|its|rabbit|white rabbit)\b/.test(normalized)) {
+    return targets.find((target) => /rabbit/i.test(target)) ?? targets[1] ?? targets[0]
+  }
+  return targets.join(", ")
+}
+
 function bullet(label: string, text: string | undefined, maxLength = 92): AnchoredSupportBullet | null {
   if (!text?.trim()) return null
   return { label, text: compactReaderText(text, maxLength) }
@@ -330,6 +355,8 @@ export function realizeAnchoredSupportUnit(
   const exited = splitFieldList(getField(fields, ["exited"]))
   const time = getField(fields, ["time"])
   const summary = getField(fields, ["summary"])
+  const referenceTargets = extractReferenceTargets(unit.body)
+  const resolvedReferenceTarget = resolveReferenceTarget(context.selectedText, referenceTargets)
   const cleanedDetail = compactReaderText(summary || base.detail || unit.body, 180)
 
   const commonDebug = {
@@ -423,8 +450,9 @@ export function realizeAnchoredSupportUnit(
         title: "이 표현이 가리키는 대상",
         lead: selectedLead(context, "짧은 지칭이나 애매한 표현의 대상을 확인하는 단서입니다."),
         bullets: ensureBullets([
+          bullet("가리키는 대상", resolvedReferenceTarget),
           bullet("표현", compactSelectedText(context), 70),
-          bullet("가능한 대상", cast || objects),
+          bullet("가능한 대상", referenceTargets.length > 0 ? referenceTargets.join(", ") : cast || objects),
           bullet("근거", evidenceText),
         ], "지시어 단서", cleanedDetail),
         detail: cleanedDetail,

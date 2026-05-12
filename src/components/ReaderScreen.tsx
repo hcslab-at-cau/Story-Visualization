@@ -853,7 +853,62 @@ function textMatchesParagraph(candidate: string | undefined, paragraph: string):
   return compactCandidate.length >= 24 && normalizedParagraph.includes(compactCandidate)
 }
 
-function findSupportTextAnchor(
+function firstMatchingParagraphIndex(candidates: string[], paragraphs: string[]): number | null {
+  for (const candidate of candidates) {
+    for (let paragraphIndex = 0; paragraphIndex < paragraphs.length; paragraphIndex += 1) {
+      if (textMatchesParagraph(candidate, paragraphs[paragraphIndex])) return paragraphIndex
+    }
+  }
+  return null
+}
+
+function splitSupportListText(text: string): string[] {
+  return text
+    .split(/\s*(?:,|;|\||\/|\band\b)\s*/i)
+    .map((item) => item.replace(/[.:]+$/g, "").trim())
+    .filter((item) => item.length >= 3)
+}
+
+function extractBodyField(body: string, labels: string[]): string[] {
+  const matches: string[] = []
+  for (const label of labels) {
+    const pattern = new RegExp(`${label}:\\s*([^.;]+)`, "i")
+    const match = body.match(pattern)
+    if (match?.[1]) matches.push(...splitSupportListText(match[1]))
+  }
+  return matches
+}
+
+function extractCharacterCandidates(body: string): string[] {
+  const activeMatch = body.match(/^(.+?)\s+(?:is|are)\s+active\b/i)
+  if (activeMatch?.[1]) return splitSupportListText(activeMatch[1])
+  return extractBodyField(body, ["Cast", "Active cast"])
+}
+
+function extractReferenceTargets(body: string): string[] {
+  const match = body.match(/against:\s*(.+)$/i)
+  return match?.[1] ? splitSupportListText(match[1]) : extractBodyField(body, ["Cast", "Active cast"])
+}
+
+function extractAnchorCandidatesFromBody(unit: SupportUnit): string[] {
+  switch (unit.kind) {
+    case "character_focus":
+      return extractCharacterCandidates(unit.body)
+    case "spatial_continuity":
+      return extractBodyField(unit.body, ["Current place", "Nearby/mentioned places", "Place"])
+    case "visual_context":
+      return unit.body.length >= 3 && unit.body.length <= 80 ? [unit.body] : extractBodyField(unit.body, ["Environment", "Objects", "Place"])
+    case "boundary_delta":
+      return [
+        ...extractBodyField(unit.body, ["Entered", "Exited", "Current place", "Place"]),
+        ...unit.body.split(/\s*(?:->|→|=>)\s*/).flatMap(splitSupportListText),
+      ]
+    default:
+      return []
+  }
+}
+
+function findReferenceAnchor(
   unit: SupportUnit,
   paragraphs: string[],
   activeSubsceneId: string,
@@ -861,15 +916,92 @@ function findSupportTextAnchor(
   const evidenceTexts = unit.evidence
     .filter((ref) => !ref.subscene_id || ref.subscene_id === activeSubsceneId)
     .map((ref) => ref.text)
-    .filter(Boolean)
+    .filter((text): text is string => Boolean(text))
+  const targetNames = extractReferenceTargets(unit.body)
+  const referenceCandidates = [
+    "she",
+    "her",
+    "hers",
+    "he",
+    "him",
+    "his",
+    "they",
+    "them",
+    "their",
+    "it",
+    "its",
+    ...targetNames,
+  ]
+
+  for (const evidenceText of evidenceTexts) {
+    for (let paragraphIndex = 0; paragraphIndex < paragraphs.length; paragraphIndex += 1) {
+      const paragraph = paragraphs[paragraphIndex]
+      if (!textMatchesParagraph(evidenceText, paragraph)) continue
+
+      for (const candidate of referenceCandidates) {
+        const range = findTextRange(candidate, paragraph)
+        if (!range) continue
+        const anchor = anchorGranularity(paragraph, range)
+        return {
+          anchorId: `${unit.unit_id}:${paragraphIndex}:${anchor.start ?? "paragraph"}:${anchor.end ?? "paragraph"}`,
+          unit,
+          paragraphIndex,
+          start: anchor.start,
+          end: anchor.end,
+          granularity: anchor.granularity,
+        }
+      }
+
+      return {
+        anchorId: `${unit.unit_id}:${paragraphIndex}:paragraph:paragraph`,
+        unit,
+        paragraphIndex,
+        start: null,
+        end: null,
+        granularity: "paragraph",
+      }
+    }
+  }
+
+  return null
+}
+
+function findSupportTextAnchor(
+  unit: SupportUnit,
+  paragraphs: string[],
+  activeSubsceneId: string,
+): SupportTextAnchor | null {
+  if (unit.kind === "reference_repair") {
+    return findReferenceAnchor(unit, paragraphs, activeSubsceneId)
+  }
+
+  const evidenceTexts = unit.evidence
+    .filter((ref) => !ref.subscene_id || ref.subscene_id === activeSubsceneId)
+    .map((ref) => ref.text)
+    .filter((text): text is string => Boolean(text))
 
   const bridgeParts = unit.reader_problem === "causal_gap"
     ? splitCausalBridgeBody(unit.body)
     : null
+  const bodyCandidates = extractAnchorCandidatesFromBody(unit)
   const candidates = [
+    ...bodyCandidates,
     ...evidenceTexts,
     bridgeParts?.current,
   ].filter((candidate): candidate is string => Boolean(candidate))
+
+  if (unit.kind === "snapshot" || unit.kind === "reentry_recap") {
+    const paragraphIndex = firstMatchingParagraphIndex(evidenceTexts, paragraphs)
+    if (paragraphIndex === null) return null
+    return {
+      anchorId: `${unit.unit_id}:${paragraphIndex}:paragraph:paragraph`,
+      unit,
+      paragraphIndex,
+      start: null,
+      end: null,
+      granularity: "paragraph",
+    }
+  }
 
   for (const candidate of candidates) {
     for (let paragraphIndex = 0; paragraphIndex < paragraphs.length; paragraphIndex += 1) {
