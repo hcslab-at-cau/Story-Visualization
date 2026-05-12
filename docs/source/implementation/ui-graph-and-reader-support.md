@@ -72,34 +72,39 @@
 
 ## 4. Reader Support 표시 방식
 
-`ReaderScreen`은 이제 `FINAL.1` 안에 포함된 `support` 필드를 읽는다.
+`ReaderScreen`은 `FINAL.1` 안에 포함된 `support` 필드를 읽는다. 이 `support`는 `SUP.7`의 `ReaderSupportPackageLog`이며, 현재 구현에서는 chapter-local support와 `BOOK.0 -> NRG.0` claim에서 파생된 support가 함께 들어갈 수 있다.
 
-지원물은 세 위치에 배치된다.
+기존처럼 `before_text`, `beside_visual`, `on_demand` slot을 화면에 크게 펼쳐 놓는 방식은 기본 UX에서 내려갔다. 현재 Reader는 본문을 먼저 보여주고, support는 본문 anchor를 누를 때 열리는 방식이다.
 
-| Slot | 위치 | 목적 |
-|---|---|---|
-| `before_text` | 본문 위 | 읽기 전에 필요한 상태/변화/인과 복구 |
-| `beside_visual` | 이미지 및 focus panel 아래 | 인물, 장소, 시각 cue 보조 |
-| `on_demand` | 접이식 섹션 | 항상 보이면 부담되는 추가 정보 |
-
-이 배치는 독자에게 모든 정보를 한 번에 밀어 넣지 않고, 본문 흐름을 방해하지 않는 범위에서 복구 정보를 제공하기 위한 것이다.
-
-### Cross-chapter Memory 배치
-
-`BOOK.0`이 있는 경우 Reader 오른쪽 rail 상단에 `Cross-chapter Memory` 패널을 먼저 배치한다.
-
-이 패널은 현재 scene과 연결된 cross-chapter edge, 반복 entity thread, 주변 scene path를 확인하기 위한 것이다. 이전 구현처럼 이미지 아래에 두거나 오른쪽 rail 전체를 sticky/internal scroll로 묶으면 창 높이가 낮을 때 패널이 잘려 보이거나 발견하기 어렵다.
+### Anchored support
 
 현재 정책:
 
-- 오른쪽 rail 전체에는 `sticky`, 고정 `max-height`, 강제 내부 스크롤을 두지 않는다.
-- `Cross-chapter Memory`는 이미지보다 먼저 보이게 둔다.
-- 패널 내부 edge list만 제한 높이와 내부 스크롤을 갖는다.
-- `Subscene View`와 `Cast / place / visual cues`는 독자 기본 노출 정보가 아니라 접힌 보조 details로 둔다.
+- support가 어울리는 범위를 paragraph, sentence, phrase, word 중에서 고른다.
+- 같은 범위에 여러 support가 겹치면 작은 selector modal/popover에서 support 종류를 고른다.
+- modal은 본문을 밀어내지 않고 위에 겹쳐서 뜬다.
+- 빈 곳을 누르거나 닫기 버튼을 누르면 modal이 닫힌다.
+- modal이 화면 밖으로 길어질 수 있으므로 전체 화면 스크롤이 가능해야 한다.
 
-해석:
+### Reader mode와 Researcher mode
 
-`Subscene View`, `Character View`, `Pair View`는 원래 SUB/FINAL 결과를 확인하고 character overlay 선택에 반응하기 위한 focus panel 성격이 강하다. 연구/디버깅에는 유용하지만 독자에게 항상 열려 있으면 정보량이 과하다. 따라서 삭제하지 않고, 필요할 때 펼치는 보조 정보로 낮춘다.
+Reader mode:
+
+- anchor는 조용하게 보인다.
+- support kind나 score 같은 내부 정보는 기본적으로 숨긴다.
+- card copy는 선택한 본문과 직접 연결되는 짧은 설명을 우선한다.
+
+Researcher mode:
+
+- 같은 본문 화면을 사용하되 anchor를 더 분명하게 보여준다.
+- support kind badge를 보여준다.
+- provenance, source stage, raw body, evidence 같은 debug 정보를 확인할 수 있게 한다.
+
+### Cross-chapter memory
+
+`BOOK.0` raw edge를 Reader에 그대로 노출하는 것이 기본 목표는 아니다. 현재 독자에게 보이는 cross-chapter support는 `BOOK.0`에서 파생한 `NRG.0` claim이 `SUP.7`에서 `SupportUnit`으로 변환된 결과다.
+
+Graph tab의 `BOOK.0` panel은 연구자/개발자가 cross-chapter memory snapshot을 확인하는 inspector 역할을 한다. Reader에서는 같은 정보를 직접 패널로 밀어 넣기보다, 필요한 순간에 anchored support로 작은 단위만 보여주는 방향을 기준으로 한다.
 
 ---
 
@@ -122,8 +127,8 @@ Pipeline view:
 Reader view:
 
 - 본문 우선
-- 필요한 지원만 노출
-- 지원물은 카드와 접이식 섹션으로 분산
+- 필요한 지원만 anchor interaction으로 노출
+- 독자 모드와 연구자 모드의 표시 강도 분리
 
 ---
 
@@ -134,8 +139,9 @@ Reader view:
 - 그래프 edge를 실제 선으로 시각화
 - branch별 실행 버튼 추가
 - stage 실패 시 downstream 영향 표시
-- support evidence를 본문 paragraph에 하이라이트
-- Reader 화면에서 support card 노출 로그 기록
+- support evidence를 본문 paragraph highlight와 더 안정적으로 연결
+- Reader 화면에서 support card 노출/열람 로그를 분석 화면으로 연결
 - 모바일 reader 화면에서 support card 순서 재조정
+- `SupportUnit.reader_copy` fallback 품질 개선
 
 이번 구현은 전체 UI 재설계의 첫 단계이며, stage 구조와 support 노출의 기본 골격을 우선 만든 상태다.

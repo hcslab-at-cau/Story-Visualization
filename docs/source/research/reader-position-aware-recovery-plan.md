@@ -463,7 +463,7 @@ SUP.4  Display Plan
 
 목표:
 
-- 이 문서 기준으로 `reader-support-design`, `support-implementation`, `narrative-relation-graph`, `evaluation-plan`의 표현을 맞춘다.
+- 이 문서 기준으로 `reader-support-design`, `reader-support-pipeline`, `narrative-relation-graph`, `evaluation-plan`의 표현을 맞춘다.
 - 현재 구현은 static MVP이고, 다음 목표는 runtime-aware recovery system이라는 점을 문서에 명확히 남긴다.
 
 ### M1. SupportUnit schema 확장

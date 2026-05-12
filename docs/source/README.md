@@ -1,157 +1,176 @@
 # 문서 인덱스
 
-이 디렉터리는 문서의 역할에 따라 나뉘어 있다.
+이 디렉터리는 문서의 성격에 따라 나뉜다. 이전의 `current/`, `support/`, `review/` 폴더는 구현 문서, 제안 문서, 점검 메모가 섞여 있어서 제거했다. 현재 코드 기준 설명은 `implementation/`과 `pipeline/`을 우선 읽으면 된다.
 
 ## 폴더 구조
 
-## `current/`
+## `implementation/`
 
-현재 앱 표면과 인프라 상태를 설명하는 문서들이다.
+현재 구현된 앱 표면, 저장 구조, graph/support 연결, 인프라를 설명한다.
 
-- `current/ui.md`
-  - 현재 Upload / Pipeline / Reader UI 동작
-  - run 선택과 favorite 처리
-  - 구현된 stage inspection view
+- `implementation/reader-support-pipeline.md`
+  - 현재 reader support의 기준 문서
+  - `SUP.0~SUP.7`, `BOOK.0`, `NRG.0`, `FINAL.1.support`, `ReaderScreen` 연결
+  - `Knowledge Graph`, `BOOK.0`, `NRG.0`의 역할 차이
 
-- `current/ui-graph-and-reader-support.md`
+- `implementation/ui.md`
+  - Upload / Pipeline / Graph / Reader 화면의 현재 동작
+  - run 선택, favorite 처리, stage inspector
+
+- `implementation/ui-graph-and-reader-support.md`
   - 그래프형 stage 선택 UI
-  - Reader 화면의 support card 배치
-  - 향후 UI 개선 작업
+  - Reader의 anchored support 표시 방식
+  - Reader mode와 Researcher mode의 노출 차이
 
-- `current/firebase-admin-setup.md`
+- `implementation/support-graph-book-visualization.md`
+  - Graph tab의 `SUP`, `BOOK.0`, `NRG.0`, `Knowledge Graph` 시각화
+  - 발표/데모에서 각 계층을 설명하기 위한 화면 구조
+
+- `implementation/knowledge-graph-query-layer.md`
+  - Firestore 기반 graph node/edge projection
+  - `ENT.3`, `SUP.0` artifact의 query layer
+  - Graph tab 조회 API와 한계
+
+- `implementation/storage-v2-and-legacy.md`
+  - `documents_v2` 기준 신규 저장 구조
+  - 기존 `documents` 컬렉션 legacy 읽기 전용 접근
+  - artifact payload 중복 저장을 줄이기 위한 `stageRefs` 구조
+
+- `implementation/firebase-admin-setup.md`
   - Firebase permission-denied 원인
   - Admin SDK 환경변수 설정
   - 클라이언트 Firestore 직접 접근 제거 사항
 
-- `current/infra.md`
-  - 인프라와 실행 환경 메모
+- `implementation/epub-ingest-normalization.md`
+  - EPUB chapter normalization 구현
+  - 비본문 필터링, 제목 정규화, visible chapter numbering
+
+- `implementation/ui-language-mode.md`
+  - KO/EN UI language mode
+  - `ui-strings.ts` 기반 copy catalog
+
+- `implementation/infra.md`
+  - LLM client, prompt loader, EPUB parser, Firestore 입출력 계층
 
 ## `pipeline/`
 
-현재 실제로 구현된 파이프라인 단계를 설명하는 문서들이다.
+실제 stage 단위 파이프라인을 설명한다. 내부 stage contract나 실행 순서를 확인할 때 이 폴더를 본다.
 
 - `pipeline/pre-ent.md`
-  - PRE, ENT 단계
+  - `PRE.1`, `PRE.2`, `ENT.1~ENT.3`
 
 - `pipeline/state.md`
-  - STATE 단계
+  - `STATE.1~STATE.3`
 
 - `pipeline/scene.md`
-  - SCENE 단계
+  - `SCENE.1~SCENE.3`
 
 - `pipeline/sub.md`
-  - SUB 단계
+  - `SUB.1~SUB.4`
 
-- `pipeline/visual-current.md`
-  - 현재 구현된 VIS.1 ~ VIS.4 브랜치
-  - 장기 목표 아키텍처가 아니라 현재 구현 문서
+- `pipeline/visual.md`
+  - `VIS.1~VIS.4`
+  - visual branch의 현재 구현과 한계
 
 - `pipeline/final.md`
-  - FINAL.1, FINAL.2 reader packaging 동작
+  - `FINAL.1`, `FINAL.2`, `ReaderScreen`
+  - `SUP.7` support package가 reader package에 포함되는 방식
 
-## `support/`
+## `proposals/`
 
-다음 reader-support 아키텍처를 위한 설계 및 계획 문서들이다.
+아직 완전히 구현 기준 문서가 아닌 설계, 개선안, 다음 단계 계획이다. 구현 완료 여부를 확인하려면 먼저 `implementation/reader-support-pipeline.md`를 읽는다.
 
-- `support/reader-support-design.md`
-  - reader-support 형태와 설계 원칙
+- `proposals/reader-support-design.md`
+  - reader support form과 설계 원칙
 
-- `support/anchored-support-realization-plan.md`
-  - 본문 anchor를 누르면 support kind별 독자용 힌트를 보여주는 UI/content 계획
-  - Reader mode와 Researcher mode의 표시 강도, card copy, debug/provenance 분리
+- `proposals/anchored-support-realization-plan.md`
+  - 본문 anchor를 눌렀을 때 support kind별로 자연스럽게 보여주는 UI/content 계획
+  - 독자 모드와 연구자 모드의 표시 강도, card copy, provenance 분리
 
-- `support/roadmap.md`
-  - support system 실행 로드맵
+- `proposals/memory-schema.md`
+  - document-level support memory schema 제안
 
-- `support/memory-schema.md`
-  - 문서 전역 support memory 제안
+- `proposals/pipeline-stage-granularity-review.md`
+  - micro stage와 macro stage를 어떻게 나눌지에 대한 검토
 
-- `support/pipeline-plan.md`
-  - 제안된 `SUP.*` 브랜치
+- `proposals/reliability-and-ops-plan.md`
+  - grounding, prompt governance, observability, regression 관리
 
-- `support/support-implementation.md`
-  - 이번 브랜치에서 실제 구현된 `SUP.0` ~ `SUP.7`
-  - stage별 입력/출력, API route, FINAL.1 연결
-
-- `support/reliability-and-ops-plan.md`
-  - 검증, 보정, prompt governance, observability
-
-- `support/visual-support-proposal.md`
-  - VIS 재배치, usefulness scoring, continuity, fallback
+- `proposals/visual-support-proposal.md`
+  - VIS 재배치, usefulness scoring, continuity, fallback 제안
 
 ## `research/`
 
-연구 framing, 기여점, 평가 계획을 다루는 문서들이다.
+연구 framing, 문헌 정리, 평가 계획을 다룬다.
+
+- `research/direction-roadmap.md`
+  - API orchestration을 넘는 연구 기여 framing
+  - evidence index에서 graph-derived support로 가는 마일스톤
 
 - `research/narrative-relation-graph.md`
   - Narrative Relation Graph 제안
   - scene state, thread ledger, scene/chapter edge 설계
   - evidence, spoiler, scope, correction-loop 요구사항
 
-- `research/direction-roadmap.md`
-  - API orchestration을 넘는 연구 기여 framing
-  - evidence index에서 graph-derived support로 가는 마일스톤
-  - 기술 기여를 위한 baseline과 평가 계획
+- `research/reader-position-aware-recovery-plan.md`
+  - `SUP.*`, `BOOK.0`, `NRG.0`, Support Governor를 연결하는 통합 계획
+  - 기존 Narrative RAG/KG와의 차별점, schema 변경, retrieval API, verifier/scorer, runtime policy
+
+- `research/narrative-kg-rag-literature-review.md`
+  - Narrative RAG, Narrative KG, GraphRAG, KG-RAG, long narrative benchmark 문헌 정리
+  - NRG, `BOOK.0`, `SUP.*`, Support Governor에 적용할 아이디어
+  - baseline, metric, NRGScore, 구현 우선순위 제안
 
 - `research/evaluation-plan.md`
   - offline evaluation, pilot study, logging, success criteria
 
-- `research/reader-position-aware-recovery-plan.md`
-  - 이번 대화와 2026-05-13 발표자료에서 정리된 통합 계획
-  - `SUP.*`, `BOOK.0`, Narrative Relation Graph, Support Governor를 연결하는 다음 구현 순서
-  - 기존 Narrative RAG/KG와의 차별점, schema 변경, retrieval API, verifier/scorer, runtime policy
+## `archive/`
 
-## `review/`
+특정 날짜의 회의/발표 정리처럼 당시 맥락을 보존하는 문서다. 최신 구현 기준 문서는 아니다.
 
-구현 상태, 문서, 향후 계획 사이의 차이를 점검하는 문서들이다.
-
-- `review/current-implementation-vs-docs.md`
-  - 현재 코드 동작과 현재/제안 문서의 대응 관계
-  - 어떤 문서가 구현 기반이고, 어떤 문서가 proposal-only인지 구분
-
-- `review/implementation-alignment-review.md`
-  - 이전 구현-문서 정합성 점검 메모
+- `archive/meeting-implementation-summary-2026-05-10.md`
+  - 2026-05-10 기준 구현 내용과 다음 미팅 질문
 
 ## 권장 읽기 순서
 
-현재 구현부터 보고 싶다면:
+현재 구현을 빠르게 이해하려면:
 
-1. `current/ui.md`
-2. `pipeline/pre-ent.md`
-3. `pipeline/state.md`
-4. `pipeline/scene.md`
-5. `pipeline/sub.md`
-6. `pipeline/visual-current.md`
-7. `pipeline/final.md`
-8. `review/current-implementation-vs-docs.md`
+1. `implementation/reader-support-pipeline.md`
+2. `pipeline/final.md`
+3. `implementation/ui-graph-and-reader-support.md`
+4. `implementation/support-graph-book-visualization.md`
+5. `implementation/knowledge-graph-query-layer.md`
+6. `implementation/storage-v2-and-legacy.md`
 
-다음 아키텍처를 보고 싶다면:
+stage별 내부 구조를 확인하려면:
 
-1. `support/reader-support-design.md`
-2. `support/anchored-support-realization-plan.md`
-3. `research/narrative-relation-graph.md`
-4. `research/direction-roadmap.md`
-5. `support/roadmap.md`
-6. `support/memory-schema.md`
-7. `support/pipeline-plan.md`
-8. `support/reliability-and-ops-plan.md`
+1. `pipeline/pre-ent.md`
+2. `pipeline/state.md`
+3. `pipeline/scene.md`
+4. `pipeline/sub.md`
+5. `pipeline/visual.md`
+6. `pipeline/final.md`
 
-연구 기여 관점으로 보고 싶다면:
+다음 구현 계획을 잡으려면:
+
+1. `implementation/reader-support-pipeline.md`
+2. `proposals/anchored-support-realization-plan.md`
+3. `proposals/pipeline-stage-granularity-review.md`
+4. `proposals/reliability-and-ops-plan.md`
+5. `proposals/memory-schema.md`
+
+연구 기여 관점으로 읽으려면:
 
 1. `research/direction-roadmap.md`
 2. `research/narrative-relation-graph.md`
 3. `research/reader-position-aware-recovery-plan.md`
-4. `research/evaluation-plan.md`
-5. `review/current-implementation-vs-docs.md`
+4. `research/narrative-kg-rag-literature-review.md`
+5. `research/evaluation-plan.md`
 
-## 추가 문서
+## 정리 기준
 
-- `current/storage-v2-and-legacy.md`
-  - `documents_v2` 기준 신규 저장 구조
-  - 기존 `documents` 컬렉션 legacy 읽기 전용 접근
-  - artifact payload 중복 저장을 줄이기 위한 `stageRefs` 구조
-
-- `current/knowledge-graph-query-layer.md`
-  - Firestore 기반 graph node/edge projection
-  - `ENT.3`, `SUP.0` artifact의 query layer
-  - graph 조회 API와 UI 동작
+- 현재 코드와 직접 맞는 문서는 `implementation/` 또는 `pipeline/`에 둔다.
+- 구현 전 계획이나 다음 단계 제안은 `proposals/`에 둔다.
+- 연구 주장, 문헌, 평가 설계는 `research/`에 둔다.
+- 과거 회의 기록은 `archive/`에 둔다.
+- 중복되거나 이전 구현을 설명하던 문서는 삭제하고, 필요한 내용은 `implementation/reader-support-pipeline.md`로 합쳤다.

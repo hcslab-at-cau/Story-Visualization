@@ -1,4 +1,4 @@
-# UI language mode
+# UI language mode 구현
 
 ## 2026-05-08 update
 

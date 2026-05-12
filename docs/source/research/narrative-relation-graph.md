@@ -46,10 +46,10 @@ Resume Card, Shift Bridge, Situation Snapshot, Timeline, Relation View, Spatial 
 
 기존 문서들도 이미 이 방향을 가리키고 있다.
 
-- `../support/reader-support-design.md`는 support form 종류를 정리했다.
-- `../support/roadmap.md`는 document-level memory가 필요하다고 말한다.
-- `../support/memory-schema.md`는 memory collection을 제안한다.
-- `../support/pipeline-plan.md`는 `SUP.*` branch를 제안한다.
+- `../proposals/reader-support-design.md`는 support form 종류를 정리했다.
+- `../proposals/memory-schema.md`는 document-level memory collection을 제안한다.
+- `../implementation/reader-support-pipeline.md`는 현재 구현된 `SUP.*`, `BOOK.0`, `NRG.0`, Reader 연결을 정리한다.
+- `../proposals/reliability-and-ops-plan.md`는 verifier/scorer, grounding, 운영 품질을 다룬다.
 
 이 문서는 그 방향을 더 날카롭게 만든다.
 
