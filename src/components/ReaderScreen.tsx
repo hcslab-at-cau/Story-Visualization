@@ -1630,16 +1630,24 @@ function AnchoredSupportSurface({
     typeof unit.intrusion_cost === "number" ? `intrude ${unit.intrusion_cost.toFixed(2)}` : "",
     typeof unit.confidence === "number" ? `conf ${unit.confidence.toFixed(2)}` : "",
   ].filter(Boolean)
+  const selectedPreview = compactReaderText(selection.selectedText, 100)
+  const showSelectedPreview = Boolean(selectedPreview) && selection.granularity !== "paragraph"
   const shellClass = surface === "sheet"
-    ? "max-h-[72vh] overflow-y-auto rounded-t-2xl border-t border-zinc-200 bg-white px-5 py-4 shadow-2xl"
-    : "sticky top-5 rounded-2xl border border-sky-200 bg-white px-5 py-4 shadow-lg"
+    ? `max-h-[72vh] overflow-y-auto rounded-t-2xl border-t bg-white px-5 py-4 shadow-2xl ${
+      technical ? "border-sky-200" : "border-zinc-200"
+    }`
+    : `sticky top-5 rounded-2xl border bg-white px-5 py-4 ${
+      technical ? "border-sky-200 shadow-lg" : "border-zinc-200 shadow-sm"
+    }`
 
   return (
     <aside className={shellClass} aria-label="선택한 본문 도움">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="rounded-full bg-sky-100 px-2.5 py-1 text-[11px] font-semibold text-sky-800">
+            <span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${
+              technical ? "bg-sky-100 text-sky-800" : "bg-zinc-100 text-zinc-600"
+            }`}>
               {realized.chipLabel}
             </span>
             <span className="text-[11px] font-semibold uppercase tracking-wide text-zinc-400">
@@ -1659,37 +1667,48 @@ function AnchoredSupportSurface({
         </button>
       </div>
 
-      <div className="mt-4 rounded-lg border border-zinc-100 bg-zinc-50 px-3 py-2">
-        <p className="text-[11px] font-semibold text-zinc-400">선택한 본문</p>
-        <p className="mt-1 line-clamp-3 text-sm leading-6 text-zinc-600">
-          {selection.selectedText}
+      {showSelectedPreview && (
+        <p className="mt-3 inline-flex max-w-full items-center gap-2 rounded-full bg-zinc-50 px-3 py-1 text-xs leading-5 text-zinc-500">
+          <span className="shrink-0 font-semibold text-zinc-400">본문</span>
+          <span className="min-w-0 truncate">{selectedPreview}</span>
         </p>
-      </div>
+      )}
 
       <p className="mt-4 text-sm leading-6 text-zinc-700">
         {realized.lead}
       </p>
 
       {realized.bridge ? (
-        <div className="mt-4 grid gap-2">
-          <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5">
-            <p className="text-[11px] font-semibold text-amber-900">이전에는</p>
+        <div className="mt-4 space-y-3 rounded-lg bg-zinc-50 px-3 py-3">
+          <div className="border-l-2 border-amber-300 pl-3">
+            <p className="text-[11px] font-semibold text-amber-900">앞에서는</p>
             <p className="mt-1 text-sm leading-6 text-zinc-800">{realized.bridge.previous}</p>
           </div>
-          <div className="rounded-lg border border-sky-200 bg-sky-50 px-3 py-2.5">
+          <div className="border-l-2 border-sky-300 pl-3">
             <p className="text-[11px] font-semibold text-sky-900">그래서 지금</p>
             <p className="mt-1 text-sm leading-6 text-zinc-800">{realized.bridge.current}</p>
           </div>
         </div>
       ) : realized.bullets.length > 0 ? (
-        <dl className="mt-4 grid gap-2">
-          {realized.bullets.slice(0, 4).map((item) => (
-            <div key={`${item.label}:${item.text}`} className="rounded-lg border border-zinc-100 bg-white px-3 py-2">
-              <dt className="text-[11px] font-semibold text-zinc-400">{item.label}</dt>
-              <dd className="mt-1 text-sm leading-6 text-zinc-700">{item.text}</dd>
-            </div>
-          ))}
-        </dl>
+        <div className="mt-4">
+          <p className="text-[11px] font-semibold text-zinc-400">함께 보면</p>
+          <ul className="mt-2 grid gap-2">
+            {realized.bullets.slice(0, 4).map((item) => (
+              <li
+                key={`${item.label}:${item.text}`}
+                className={`rounded-lg px-3 py-2 text-sm leading-6 ${
+                  technical
+                    ? "border border-sky-100 bg-sky-50/60 text-zinc-800"
+                    : "bg-zinc-50 text-zinc-700"
+                }`}
+              >
+                <span className="font-semibold text-zinc-900">{item.label}</span>
+                <span className="px-1.5 text-zinc-300">·</span>
+                <span>{item.text}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
       ) : realized.detail ? (
         <p className="mt-3 text-sm leading-6 text-zinc-600">{realized.detail}</p>
       ) : null}
@@ -1697,7 +1716,7 @@ function AnchoredSupportSurface({
       {!technical && realized.evidenceLabel && (
         <details className="mt-4 rounded-lg border border-zinc-100 bg-zinc-50 px-3 py-2">
           <summary className="cursor-pointer text-[11px] font-semibold text-zinc-500">
-            근거 문장 보기
+            본문에서 확인하기
           </summary>
           <p className="mt-2 text-xs leading-5 text-zinc-600">{realized.evidenceLabel}</p>
         </details>
@@ -1714,6 +1733,7 @@ function AnchoredSupportSurface({
             {scoreParts.length > 0 && <p>{scoreParts.join(" · ")}</p>}
             {unit.source_stage_ids.length > 0 && <p>source: {unit.source_stage_ids.join(", ")}</p>}
             <p>parsed: {realized.debug?.parsedFrom ?? "fallback"}</p>
+            <p>selected: {selection.granularity} · {selection.selectedText}</p>
             {evidencePreview && <p className="rounded-md bg-white px-2 py-1 text-zinc-600">{evidencePreview}</p>}
             <p className="rounded-md bg-white px-2 py-1 text-zinc-600">raw title: {unit.title}</p>
             <p className="rounded-md bg-white px-2 py-1 text-zinc-600">raw body: {unit.body}</p>
