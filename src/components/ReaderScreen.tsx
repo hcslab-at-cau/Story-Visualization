@@ -864,6 +864,101 @@ function firstMatchingParagraphIndex(candidates: string[], paragraphs: string[])
   return null
 }
 
+function matchingParagraphIndexes(candidates: string[], paragraphs: string[]): number[] {
+  const indexes = new Set<number>()
+  for (const candidate of candidates) {
+    for (let paragraphIndex = 0; paragraphIndex < paragraphs.length; paragraphIndex += 1) {
+      if (textMatchesParagraph(candidate, paragraphs[paragraphIndex])) indexes.add(paragraphIndex)
+    }
+  }
+  return Array.from(indexes)
+}
+
+function anchorWithGranularityPreference(
+  paragraph: string,
+  range: { start: number; end: number } | null,
+  preferredGranularity?: SupportAnchorGranularity,
+): { start: number | null; end: number | null; granularity: SupportAnchorGranularity } {
+  if (!range || preferredGranularity === "paragraph") {
+    return { start: null, end: null, granularity: "paragraph" }
+  }
+
+  if (preferredGranularity === "sentence") {
+    return { ...expandRangeToSentence(paragraph, range), granularity: "sentence" }
+  }
+
+  const selectedText = paragraph.slice(range.start, range.end).trim()
+  if (preferredGranularity === "word" && selectedText.length <= 36 && !/\s/.test(selectedText)) {
+    return { ...range, granularity: "word" }
+  }
+
+  if (preferredGranularity === "phrase") {
+    return { ...range, granularity: "phrase" }
+  }
+
+  return anchorGranularity(paragraph, range)
+}
+
+function createSupportTextAnchor(
+  unit: SupportUnit,
+  paragraphIndex: number,
+  anchor: { start: number | null; end: number | null; granularity: SupportAnchorGranularity },
+): SupportTextAnchor {
+  return {
+    anchorId: `${unit.unit_id}:${paragraphIndex}:${anchor.start ?? "paragraph"}:${anchor.end ?? "paragraph"}`,
+    unit,
+    paragraphIndex,
+    start: anchor.start,
+    end: anchor.end,
+    granularity: anchor.granularity,
+  }
+}
+
+function findHintedSupportAnchor(
+  unit: SupportUnit,
+  paragraphs: string[],
+  activeSubsceneId: string,
+): SupportTextAnchor | null {
+  const preferredText = unit.anchor_hint?.preferred_text?.trim()
+  const preferredGranularity = unit.anchor_hint?.granularity
+  if (!preferredText && preferredGranularity !== "paragraph") return null
+
+  const evidenceTexts = unit.evidence
+    .filter((ref) => !ref.subscene_id || ref.subscene_id === activeSubsceneId)
+    .map((ref) => ref.text)
+    .filter((text): text is string => Boolean(text))
+  const evidenceIndexes = matchingParagraphIndexes(evidenceTexts, paragraphs)
+  const searchIndexes = evidenceIndexes.length > 0
+    ? evidenceIndexes
+    : paragraphs.map((_, index) => index)
+
+  if (!preferredText) {
+    const paragraphIndex = evidenceIndexes[0]
+    return typeof paragraphIndex === "number"
+      ? createSupportTextAnchor(unit, paragraphIndex, { start: null, end: null, granularity: "paragraph" })
+      : null
+  }
+
+  for (const paragraphIndex of searchIndexes) {
+    const paragraph = paragraphs[paragraphIndex]
+    if (!textMatchesParagraph(preferredText, paragraph)) continue
+
+    if (preferredGranularity === "paragraph") {
+      return createSupportTextAnchor(unit, paragraphIndex, { start: null, end: null, granularity: "paragraph" })
+    }
+
+    const range = findTextRange(preferredText, paragraph)
+    if (!range) continue
+    return createSupportTextAnchor(
+      unit,
+      paragraphIndex,
+      anchorWithGranularityPreference(paragraph, range, preferredGranularity),
+    )
+  }
+
+  return null
+}
+
 function splitSupportListText(text: string): string[] {
   return text
     .split(/\s*(?:,|;|\||\/|\band\b)\s*/i)
@@ -973,6 +1068,9 @@ function findSupportTextAnchor(
   paragraphs: string[],
   activeSubsceneId: string,
 ): SupportTextAnchor | null {
+  const hintedAnchor = findHintedSupportAnchor(unit, paragraphs, activeSubsceneId)
+  if (hintedAnchor) return hintedAnchor
+
   if (unit.kind === "reference_repair") {
     return findReferenceAnchor(unit, paragraphs, activeSubsceneId)
   }

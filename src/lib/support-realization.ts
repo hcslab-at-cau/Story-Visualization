@@ -39,7 +39,7 @@ export interface AnchoredSupportRealization {
   }
   evidenceLabel?: string
   debug?: {
-    parsedFrom: "structured_body" | "bridge_body" | "legacy_body" | "fallback"
+    parsedFrom: "reader_copy" | "structured_body" | "bridge_body" | "legacy_body" | "fallback"
     rawTitle: string
     rawBody: string
   }
@@ -374,6 +374,42 @@ export function realizeSupportUnit(unit: SupportUnit): ReaderSupportRealization 
   }
 }
 
+function realizeReaderCopy(
+  unit: SupportUnit,
+  base: ReaderSupportRealization,
+  evidenceText: string | undefined,
+): AnchoredSupportRealization | null {
+  const copy = unit.reader_copy
+  if (!copy) return null
+
+  const bullets = (copy.points ?? [])
+    .map((point) => bullet(point.label || "단서", point.text, 120))
+    .filter((point): point is AnchoredSupportBullet => Boolean(point))
+
+  if (!copy.title && !copy.lead && bullets.length === 0 && !copy.evidence_label) {
+    return null
+  }
+
+  return {
+    chipLabel: base.chipLabel,
+    categoryLabel: base.categoryLabel,
+    title: copy.title?.trim() || base.title,
+    lead: copy.lead?.trim() ? cleanSentence(copy.lead) : cleanSentence(base.preview || base.detail),
+    bullets,
+    detail: copy.lead?.trim() || base.detail,
+    evidenceLabel: copy.evidence_label?.trim()
+      ? compactReaderText(copy.evidence_label, 120)
+      : evidenceText
+        ? compactReaderText(evidenceText, 120)
+        : undefined,
+    debug: {
+      parsedFrom: "reader_copy",
+      rawTitle: unit.title,
+      rawBody: unit.body,
+    },
+  }
+}
+
 export function realizeAnchoredSupportUnit(
   unit: SupportUnit,
   context: AnchoredSupportContext,
@@ -406,6 +442,9 @@ export function realizeAnchoredSupportUnit(
       },
     }
   }
+
+  const readerCopy = realizeReaderCopy(unit, base, evidenceText)
+  if (readerCopy) return readerCopy
 
   const place = getField(fields, ["place", "current_place"])
   const nearbyPlaces = getField(fields, ["nearby_mentioned_places"])
