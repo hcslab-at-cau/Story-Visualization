@@ -1189,90 +1189,98 @@ function SupportChoicePopover({
   onClose: () => void
   variant?: "reader" | "researcher"
 }) {
+  const popoverRef = useRef<HTMLDivElement | null>(null)
+
+  useEffect(() => {
+    if (selection.units.length <= 1 || selectedUnitId || typeof document === "undefined") return
+
+    function handlePointerDown(event: PointerEvent) {
+      const target = event.target
+      if (target instanceof Node && popoverRef.current?.contains(target)) return
+      onClose()
+    }
+
+    document.addEventListener("pointerdown", handlePointerDown)
+    return () => document.removeEventListener("pointerdown", handlePointerDown)
+  }, [onClose, selectedUnitId, selection.units.length])
+
   if (selection.units.length <= 1 || selectedUnitId) return null
 
   return (
-    <>
-      <button
-        type="button"
-        aria-label="도움 선택 닫기"
-        onClick={onClose}
-        className="fixed inset-0 z-40 cursor-default bg-transparent"
-      />
-      <div
-        role="dialog"
-        aria-label="도움 종류 선택"
-        style={{
-          left: selection.popoverLeft,
-          top: selection.popoverTop,
-        }}
-        className={`fixed z-50 w-[min(24rem,calc(100vw-2rem))] rounded-xl border p-2.5 shadow-xl ${
-          variant === "researcher"
-            ? "border-sky-200 bg-white"
-            : "border-zinc-200 bg-white/95"
-        }`}
-      >
-        <div className="flex items-center justify-between gap-3 px-1 pb-2">
-          <div>
-            <p className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">
-              {selection.label}
-            </p>
-            <p className="mt-0.5 text-xs text-zinc-500">
-              {selection.units.length}개의 도움 중 선택
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-full border border-zinc-200 px-2.5 py-1 text-xs font-semibold text-zinc-500 hover:bg-zinc-50"
-          >
-            닫기
-          </button>
+    <div
+      ref={popoverRef}
+      role="dialog"
+      aria-label="도움 종류 선택"
+      style={{
+        left: selection.popoverLeft,
+        top: selection.popoverTop,
+      }}
+      className={`absolute z-50 w-[min(24rem,calc(100vw-2rem))] rounded-xl border p-2.5 shadow-xl ${
+        variant === "researcher"
+          ? "border-sky-200 bg-white"
+          : "border-zinc-200 bg-white/95"
+      }`}
+    >
+      <div className="flex items-center justify-between gap-3 px-1 pb-2">
+        <div>
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">
+            {selection.label}
+          </p>
+          <p className="mt-0.5 text-xs text-zinc-500">
+            {selection.units.length}개의 도움 중 선택
+          </p>
         </div>
-        <div className="grid gap-1.5">
-          {selection.units.map((unit) => {
-            const realized = realizeAnchoredSupportUnit(unit, {
-              selectedText: selection.selectedText,
-              paragraphText: selection.paragraphText,
-              granularity: selection.granularity,
-              mode: variant,
-            })
-            const preview = realized.bullets[0]
-              ? `${realized.bullets[0].label}: ${realized.bullets[0].text}`
-              : realized.bridge
-                ? `${realized.bridge.previous} -> ${realized.bridge.current}`
-                : (realized.detail ?? realized.lead)
-            return (
-              <button
-                key={unit.unit_id}
-                type="button"
-                onClick={() => onPick(unit)}
-                className="w-full rounded-lg border border-transparent px-3 py-2 text-left transition-colors hover:border-zinc-200 hover:bg-zinc-50"
-              >
-                <span className="flex min-w-0 items-start gap-2">
-                  <span className="mt-0.5 shrink-0 rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-semibold text-sky-800">
-                    {realized.chipLabel}
-                  </span>
-                  <span className="min-w-0">
-                    <span className="block text-sm font-semibold leading-5 text-zinc-900">
-                      {realized.title}
-                    </span>
-                    <span className="mt-0.5 line-clamp-1 block text-xs leading-5 text-zinc-500">
-                      {preview}
-                    </span>
-                    {variant === "researcher" && (
-                      <span className="mt-1 block text-[11px] font-medium text-zinc-400">
-                        {unit.kind} · {unit.reader_problem ?? "reader_problem 없음"} · priority {unit.priority.toFixed(2)}
-                      </span>
-                    )}
-                  </span>
-                </span>
-              </button>
-            )
-          })}
-        </div>
+        <button
+          type="button"
+          onClick={onClose}
+          className="rounded-full border border-zinc-200 px-2.5 py-1 text-xs font-semibold text-zinc-500 hover:bg-zinc-50"
+        >
+          닫기
+        </button>
       </div>
-    </>
+      <div className="grid gap-1.5">
+        {selection.units.map((unit) => {
+          const realized = realizeAnchoredSupportUnit(unit, {
+            selectedText: selection.selectedText,
+            paragraphText: selection.paragraphText,
+            granularity: selection.granularity,
+            mode: variant,
+          })
+          const preview = realized.bullets[0]
+            ? `${realized.bullets[0].label}: ${realized.bullets[0].text}`
+            : realized.bridge
+              ? `${realized.bridge.previous} -> ${realized.bridge.current}`
+              : (realized.detail ?? realized.lead)
+          return (
+            <button
+              key={unit.unit_id}
+              type="button"
+              onClick={() => onPick(unit)}
+              className="w-full rounded-lg border border-transparent px-3 py-2 text-left transition-colors hover:border-zinc-200 hover:bg-zinc-50"
+            >
+              <span className="flex min-w-0 items-start gap-2">
+                <span className="mt-0.5 shrink-0 rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-semibold text-sky-800">
+                  {realized.chipLabel}
+                </span>
+                <span className="min-w-0">
+                  <span className="block text-sm font-semibold leading-5 text-zinc-900">
+                    {realized.title}
+                  </span>
+                  <span className="mt-0.5 line-clamp-1 block text-xs leading-5 text-zinc-500">
+                    {preview}
+                  </span>
+                  {variant === "researcher" && (
+                    <span className="mt-1 block text-[11px] font-medium text-zinc-400">
+                      {unit.kind} · {unit.reader_problem ?? "reader_problem 없음"} · priority {unit.priority.toFixed(2)}
+                    </span>
+                  )}
+                </span>
+              </span>
+            </button>
+          )
+        })}
+      </div>
+    </div>
   )
 }
 
@@ -1300,6 +1308,7 @@ function ReaderTextParagraph({
   variant?: "reader" | "researcher"
 }) {
   const isResearcherVariant = variant === "researcher"
+  const paragraphContainerRef = useRef<HTMLDivElement | null>(null)
   const paragraphUnits = uniqueSupportUnits(
     anchors.filter((anchor) => anchor.granularity === "paragraph").map((anchor) => anchor.unit),
   )
@@ -1316,9 +1325,7 @@ function ReaderTextParagraph({
   const activeGroup = [paragraphGroup, ...rangeGroups].find((group) => group?.anchorId === activeAnchorId) ?? null
   const activePopoverSelection = activeGroup && activeSelection?.anchorId === activeGroup.anchorId
     ? activeSelection
-    : activeGroup
-      ? buildSelection(activeGroup)
-      : null
+    : null
   const paragraphInteractive = Boolean(paragraphGroup)
 
   function popoverPositionFromElement(element?: HTMLElement): { popoverLeft: number; popoverTop: number } {
@@ -1327,12 +1334,18 @@ function ReaderTextParagraph({
     }
 
     const rect = element.getBoundingClientRect()
+    const containerRect = paragraphContainerRef.current?.getBoundingClientRect()
     const margin = 16
     const popoverWidth = Math.min(384, window.innerWidth - margin * 2)
-    const maxLeft = Math.max(margin, window.innerWidth - popoverWidth - margin)
+    const relativeLeft = containerRect ? rect.left - containerRect.left : rect.left
+    const relativeTop = containerRect ? rect.bottom - containerRect.top : rect.bottom
+    const minLeft = containerRect ? margin - containerRect.left : margin
+    const maxLeft = containerRect
+      ? window.innerWidth - popoverWidth - margin - containerRect.left
+      : Math.max(margin, window.innerWidth - popoverWidth - margin)
     return {
-      popoverLeft: Math.min(Math.max(rect.left, margin), maxLeft),
-      popoverTop: rect.bottom + 8,
+      popoverLeft: Math.min(Math.max(relativeLeft, minLeft), Math.max(minLeft, maxLeft)),
+      popoverTop: relativeTop + 8,
     }
   }
 
@@ -1411,7 +1424,7 @@ function ReaderTextParagraph({
       : "rounded-lg transition-colors"
 
   return (
-    <div className="relative">
+    <div ref={paragraphContainerRef} className="relative">
       <p
         role={paragraphInteractive ? "button" : undefined}
         tabIndex={paragraphInteractive ? 0 : undefined}
@@ -1424,9 +1437,9 @@ function ReaderTextParagraph({
           <SupportTypeBadgeRow units={paragraphGroup.units} />
         )}
       </p>
-      {activeGroup ? (
+      {activePopoverSelection ? (
         <SupportChoicePopover
-          selection={activePopoverSelection ?? buildSelection(activeGroup)}
+          selection={activePopoverSelection}
           selectedUnitId={selectedUnitId}
           onPick={onPickUnit}
           onClose={onCloseSelection}
