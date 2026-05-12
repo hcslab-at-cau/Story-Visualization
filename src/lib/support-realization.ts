@@ -222,19 +222,83 @@ function compactSelectedText(context: AnchoredSupportContext): string {
   return compactReaderText(context.selectedText || context.paragraphText, maxLength)
 }
 
-function selectedLead(context: AnchoredSupportContext, supportMessage: string): string {
+function normalizedContains(source: string | undefined, target: string): boolean {
+  if (!source || !target.trim()) return false
+  return source.toLowerCase().includes(target.toLowerCase())
+}
+
+function selectedMatches(context: AnchoredSupportContext, values: Array<string | undefined>): boolean {
   const selectedText = compactSelectedText(context)
-  if (!selectedText) return supportMessage
-  if (context.granularity === "word") {
-    return `선택한 표현 "${selectedText}"은 ${supportMessage}`
+  return values.some((value) => normalizedContains(value, selectedText))
+}
+
+function cleanSentence(text: string): string {
+  const trimmed = compactReaderText(text, 180).replace(/[.;,\s]+$/g, "").trim()
+  if (!trimmed) return ""
+  return /[.!?。！？]$/.test(trimmed) ? trimmed : `${trimmed}.`
+}
+
+function naturalLead(context: AnchoredSupportContext, fallback: string): string {
+  const selectedText = compactSelectedText(context)
+  if (!selectedText || context.granularity === "paragraph") return fallback
+  if (context.granularity === "sentence") return fallback
+  return `${selectedText}: ${fallback}`
+}
+
+function snapshotLead(
+  context: AnchoredSupportContext,
+  params: { place?: string; cast?: string; goals?: string; detail: string },
+): string {
+  const selectedText = compactSelectedText(context)
+  if (selectedText && selectedMatches(context, [params.place])) {
+    return cleanSentence(
+      `${selectedText}은 지금 장면이 향하는 장소입니다${params.goals ? `; 관심은 ${params.goals}` : ""}`,
+    )
   }
-  if (context.granularity === "phrase") {
-    return `선택한 구절 "${selectedText}"은 ${supportMessage}`
+  if (selectedText && selectedMatches(context, [params.cast])) {
+    return cleanSentence(`${selectedText}을 중심으로 이 장면의 움직임을 따라가면 됩니다`)
   }
-  if (context.granularity === "sentence") {
-    return `선택한 문장에서는 ${supportMessage}`
+  if (params.place || params.cast || params.goals) {
+    return cleanSentence([
+      params.place ? `지금 위치는 ${params.place}` : "",
+      params.cast ? `중심 인물은 ${params.cast}` : "",
+      params.goals ? `관심은 ${params.goals}` : "",
+    ].filter(Boolean).join("; "))
   }
-  return `이 문단에서는 ${supportMessage}`
+  return cleanSentence(params.detail)
+}
+
+function boundaryLead(
+  context: AnchoredSupportContext,
+  params: { place?: string; entered?: string; exited?: string; actions?: string; detail: string },
+): string {
+  if (params.entered) return cleanSentence(`${params.entered}이 새로 장면에 들어오면서 흐름이 바뀝니다`)
+  if (params.exited) return cleanSentence(`${params.exited}이 장면에서 빠지면서 초점이 달라집니다`)
+  if (params.place) return cleanSentence(`이 부분부터 장소 흐름이 ${params.place} 쪽으로 움직입니다`)
+  if (params.actions) return cleanSentence(`이 부분은 행동의 방향이 바뀌는 신호입니다: ${params.actions}`)
+  return naturalLead(context, cleanSentence(params.detail))
+}
+
+function characterLead(context: AnchoredSupportContext, cast: string | undefined, actions: string | undefined, goals: string | undefined): string {
+  const selectedText = compactSelectedText(context)
+  if (selectedText && selectedMatches(context, [cast])) {
+    return cleanSentence(`${selectedText}이 이 부분에서 읽기의 중심입니다${actions ? `; 지금 행동은 ${actions}` : ""}`)
+  }
+  if (cast && actions) return cleanSentence(`${cast}의 행동을 따라가면 이 장면이 더 분명해집니다: ${actions}`)
+  if (cast && goals) return cleanSentence(`${cast}이 무엇을 원하는지 보면 이 부분의 방향이 잡힙니다`)
+  if (cast) return cleanSentence(`${cast}이 이 장면에서 중심이 되는 인물입니다`)
+  return "이 부분에서는 누가 행동의 중심인지 확인하면 됩니다."
+}
+
+function spatialLead(context: AnchoredSupportContext, place: string | undefined, nearbyPlaces: string | undefined, actions: string | undefined): string {
+  const selectedText = compactSelectedText(context)
+  if (selectedText && selectedMatches(context, [place, nearbyPlaces])) {
+    return cleanSentence(`${selectedText}은 지금 장면의 위치를 잡아주는 장소입니다`)
+  }
+  if (place && actions) return cleanSentence(`${place}을 기준으로 인물의 이동을 따라가면 됩니다: ${actions}`)
+  if (place) return cleanSentence(`지금 장면은 ${place}을 기준으로 이어집니다`)
+  if (nearbyPlaces) return cleanSentence(`이 부분은 ${nearbyPlaces} 주변의 위치 관계를 잡아주는 단서입니다`)
+  return "이 부분은 장소나 이동 방향을 확인하면 읽기 흐름이 잡힙니다."
 }
 
 export function splitSupportBridgeBody(body: string): { previous: string; current: string } | null {
@@ -327,7 +391,7 @@ export function realizeAnchoredSupportUnit(
       chipLabel: base.chipLabel,
       categoryLabel: base.categoryLabel,
       title: "이 일이 이어지는 이유",
-      lead: selectedLead(context, "앞선 사건과 지금 행동의 연결을 확인하는 단서입니다."),
+      lead: "앞에서 생긴 일이 지금 행동으로 이어지는 지점입니다.",
       bullets: [],
       detail: "앞에서 생긴 일과 지금 문장의 연결만 확인하면 됩니다.",
       bridge: {
@@ -370,12 +434,12 @@ export function realizeAnchoredSupportUnit(
       return {
         chipLabel: "지금",
         categoryLabel: "현재 상황",
-        title: "지금 이 부분에서 확인할 상황",
-        lead: selectedLead(context, "현재 장소, 인물, 목표를 정렬하는 단서입니다."),
+        title: "지금 무슨 상황인가요?",
+        lead: snapshotLead(context, { place, cast, goals, detail: cleanedDetail }),
         bullets: ensureBullets([
-          bullet("장소", place),
-          bullet("인물", cast),
-          bullet("목표", goals),
+          bullet("어디인가요?", place),
+          bullet("누가 있나요?", cast),
+          bullet("무엇을 보려 하나요?", goals),
         ], "현재 상황", cleanedDetail),
         detail: cleanedDetail,
         evidenceLabel: evidenceText ? compactReaderText(evidenceText, 120) : undefined,
@@ -386,13 +450,13 @@ export function realizeAnchoredSupportUnit(
         chipLabel: "변화",
         categoryLabel: "달라진 점",
         title: "방금 바뀐 점",
-        lead: selectedLead(context, "장면의 상태, 관심, 등장 인물이 바뀌는 신호입니다."),
+        lead: boundaryLead(context, { place: place || nearbyPlaces, entered, exited, actions, detail: cleanedDetail }),
         bullets: ensureBullets([
-          bullet("장소", place || nearbyPlaces),
-          bullet("시간", time),
-          bullet("등장", entered),
-          bullet("퇴장", exited),
-          bullet("행동", actions),
+          bullet("장소 흐름", place || nearbyPlaces),
+          bullet("시간 신호", time),
+          bullet("새로 등장", entered),
+          bullet("빠진 인물", exited),
+          bullet("행동 변화", actions),
         ], "바뀐 점", cleanedDetail),
         detail: cleanedDetail,
         evidenceLabel: evidenceText ? compactReaderText(evidenceText, 120) : undefined,
@@ -402,12 +466,12 @@ export function realizeAnchoredSupportUnit(
       return {
         chipLabel: "인물",
         categoryLabel: "인물 단서",
-        title: "이 부분에서 중요한 인물",
-        lead: selectedLead(context, "누가 행동하고 무엇을 신경 쓰는지 잡아주는 단서입니다."),
+        title: "누가 중심인가요?",
+        lead: characterLead(context, cast, actions, goals),
         bullets: ensureBullets([
-          bullet("인물", cast),
-          bullet("행동", actions),
-          bullet("목표", goals),
+          bullet("중심 인물", cast),
+          bullet("지금 행동", actions),
+          bullet("신경 쓰는 것", goals),
         ], "인물 단서", cleanedDetail),
         detail: cleanedDetail,
         evidenceLabel: evidenceText ? compactReaderText(evidenceText, 120) : undefined,
@@ -418,11 +482,13 @@ export function realizeAnchoredSupportUnit(
         chipLabel: "관계",
         categoryLabel: "관계 변화",
         title: "관계에서 볼 점",
-        lead: selectedLead(context, "인물 사이의 거리, 관심, 반응을 읽는 단서입니다."),
+        lead: relations
+          ? cleanSentence(`이 부분은 인물 사이의 반응을 이렇게 읽으면 됩니다: ${relations}`)
+          : "인물들이 서로 어떻게 반응하는지 보면 이 장면의 흐름이 잡힙니다.",
         bullets: ensureBullets([
-          bullet("관계", relations),
-          bullet("인물", cast),
-          bullet("신호", actions || cleanedDetail),
+          bullet("관계 신호", relations),
+          bullet("관련 인물", cast),
+          bullet("본문에서 보이는 반응", actions || cleanedDetail),
         ], "관계 신호", cleanedDetail),
         detail: cleanedDetail,
         evidenceLabel: evidenceText ? compactReaderText(evidenceText, 120) : undefined,
@@ -432,12 +498,12 @@ export function realizeAnchoredSupportUnit(
       return {
         chipLabel: "장소",
         categoryLabel: "장소 단서",
-        title: "지금 어디에서 이어지나요?",
-        lead: selectedLead(context, "장소나 이동 흐름을 놓치지 않도록 잡아주는 단서입니다."),
+        title: "어디로 이어지나요?",
+        lead: spatialLead(context, place, nearbyPlaces, actions),
         bullets: ensureBullets([
-          bullet("현재 장소", place),
-          bullet("주변 장소", nearbyPlaces),
-          bullet("이동 흐름", actions),
+          bullet("지금 위치", place),
+          bullet("함께 언급된 곳", nearbyPlaces),
+          bullet("움직임", actions),
         ], "장소 흐름", cleanedDetail),
         detail: cleanedDetail,
         evidenceLabel: evidenceText ? compactReaderText(evidenceText, 120) : undefined,
@@ -447,13 +513,15 @@ export function realizeAnchoredSupportUnit(
       return {
         chipLabel: "누구?",
         categoryLabel: "지시어 단서",
-        title: "이 표현이 가리키는 대상",
-        lead: selectedLead(context, "짧은 지칭이나 애매한 표현의 대상을 확인하는 단서입니다."),
+        title: "누구를 가리키나요?",
+        lead: resolvedReferenceTarget
+          ? cleanSentence(`여기서는 ${compactSelectedText(context)}을 ${resolvedReferenceTarget}로 읽으면 됩니다`)
+          : "짧은 지칭은 바로 앞뒤에 나온 인물을 기준으로 확인하면 됩니다.",
         bullets: ensureBullets([
           bullet("가리키는 대상", resolvedReferenceTarget),
-          bullet("표현", compactSelectedText(context), 70),
-          bullet("가능한 대상", referenceTargets.length > 0 ? referenceTargets.join(", ") : cast || objects),
-          bullet("근거", evidenceText),
+          bullet("본문 표현", compactSelectedText(context), 70),
+          bullet("후보", referenceTargets.length > 0 ? referenceTargets.join(", ") : cast || objects),
+          bullet("본문 근거", evidenceText),
         ], "지시어 단서", cleanedDetail),
         detail: cleanedDetail,
         evidenceLabel: evidenceText ? compactReaderText(evidenceText, 120) : undefined,
@@ -463,11 +531,13 @@ export function realizeAnchoredSupportUnit(
       return {
         chipLabel: "단서",
         categoryLabel: "장면 단서",
-        title: "장면을 떠올릴 단서",
-        lead: selectedLead(context, "공간, 사물, 분위기를 떠올리게 하는 시각 단서입니다."),
+        title: "장면을 떠올려 보면",
+        lead: environment || objects || place
+          ? cleanSentence(`이 부분은 ${environment || objects || place} 같은 단서를 떠올리면 장면이 선명해집니다`)
+          : cleanSentence(cleanedDetail),
         bullets: ensureBullets([
-          bullet("공간", place || environment),
-          bullet("사물", objects),
+          bullet("공간 느낌", place || environment),
+          bullet("보이는 사물", objects),
           bullet("분위기", environment),
         ], "장면 단서", cleanedDetail),
         detail: cleanedDetail,
@@ -478,8 +548,8 @@ export function realizeAnchoredSupportUnit(
       return {
         chipLabel: "복귀",
         categoryLabel: "다시 읽기",
-        title: "다시 읽기 전에 기억할 것",
-        lead: selectedLead(context, "쉬었다가 돌아왔을 때 필요한 직전 흐름을 복구하는 단서입니다."),
+        title: "다시 이어 읽기",
+        lead: "잠시 쉬었다가 돌아왔다면, 직전 흐름만 짧게 떠올리면 됩니다.",
         bullets: ensureBullets([
           bullet("직전 흐름", summary || cleanedDetail),
           bullet("인물", cast),
@@ -494,7 +564,7 @@ export function realizeAnchoredSupportUnit(
         chipLabel: base.chipLabel,
         categoryLabel: base.categoryLabel,
         title: base.title,
-        lead: selectedLead(context, "읽기 흐름을 보완하는 짧은 단서입니다."),
+        lead: cleanSentence(base.preview || cleanedDetail),
         bullets: ensureBullets([
           bullet("단서", base.preview || cleanedDetail),
         ], "단서", cleanedDetail),
