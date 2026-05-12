@@ -6,7 +6,7 @@
  * and renders the clean reader UI.
  */
 
-import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react"
+import { useEffect, useRef, useState, type KeyboardEvent, type MouseEvent, type ReactNode } from "react"
 import { useUiStrings } from "@/components/LanguageProvider"
 import {
   compactReaderText,
@@ -730,6 +730,8 @@ interface SupportAnchorSelectionInput extends SupportAnchorGroup {
   selectedText: string
   paragraphText: string
   label: string
+  popoverLeft: number
+  popoverTop: number
 }
 
 interface ActiveSupportSelection extends SupportAnchorSelectionInput {
@@ -1200,7 +1202,11 @@ function SupportChoicePopover({
       <div
         role="dialog"
         aria-label="도움 종류 선택"
-        className={`absolute left-0 top-full z-50 mt-2 w-[min(24rem,calc(100vw-2rem))] rounded-xl border p-2.5 shadow-xl ${
+        style={{
+          left: selection.popoverLeft,
+          top: selection.popoverTop,
+        }}
+        className={`fixed z-50 w-[min(24rem,calc(100vw-2rem))] rounded-xl border p-2.5 shadow-xl ${
           variant === "researcher"
             ? "border-sky-200 bg-white"
             : "border-zinc-200 bg-white/95"
@@ -1275,6 +1281,7 @@ function ReaderTextParagraph({
   index,
   anchors,
   activeAnchorId,
+  activeSelection,
   selectedUnitId,
   onSelect,
   onPickUnit,
@@ -1285,6 +1292,7 @@ function ReaderTextParagraph({
   index: number
   anchors: SupportTextAnchor[]
   activeAnchorId: string | null
+  activeSelection: ActiveSupportSelection | null
   selectedUnitId: string | null
   onSelect: (selection: SupportAnchorSelectionInput) => void
   onPickUnit: (unit: SupportUnit) => void
@@ -1306,9 +1314,29 @@ function ReaderTextParagraph({
     : null
   const rangeGroups = segmentRangeAnchors(anchors, paragraphUnits, paragraph, index)
   const activeGroup = [paragraphGroup, ...rangeGroups].find((group) => group?.anchorId === activeAnchorId) ?? null
+  const activePopoverSelection = activeGroup && activeSelection?.anchorId === activeGroup.anchorId
+    ? activeSelection
+    : activeGroup
+      ? buildSelection(activeGroup)
+      : null
   const paragraphInteractive = Boolean(paragraphGroup)
 
-  function buildSelection(group: SupportAnchorGroup): SupportAnchorSelectionInput {
+  function popoverPositionFromElement(element?: HTMLElement): { popoverLeft: number; popoverTop: number } {
+    if (!element || typeof window === "undefined") {
+      return { popoverLeft: 16, popoverTop: 16 }
+    }
+
+    const rect = element.getBoundingClientRect()
+    const margin = 16
+    const popoverWidth = Math.min(384, window.innerWidth - margin * 2)
+    const maxLeft = Math.max(margin, window.innerWidth - popoverWidth - margin)
+    return {
+      popoverLeft: Math.min(Math.max(rect.left, margin), maxLeft),
+      popoverTop: rect.bottom + 8,
+    }
+  }
+
+  function buildSelection(group: SupportAnchorGroup, element?: HTMLElement): SupportAnchorSelectionInput {
     const selectedText = group.start === null || group.end === null
       ? compactSupportText(paragraph, 150)
       : paragraph.slice(group.start, group.end).trim()
@@ -1317,19 +1345,20 @@ function ReaderTextParagraph({
       selectedText,
       paragraphText: paragraph,
       label: anchorGroupLabel(group),
+      ...popoverPositionFromElement(element),
     }
   }
 
-  function handleParagraphSelect() {
+  function handleParagraphSelect(event: MouseEvent<HTMLParagraphElement>) {
     if (!paragraphGroup) return
-    onSelect(buildSelection(paragraphGroup))
+    onSelect(buildSelection(paragraphGroup, event.currentTarget))
   }
 
   function handleParagraphKeyDown(event: KeyboardEvent<HTMLParagraphElement>) {
     if (!paragraphGroup) return
     if (event.key !== "Enter" && event.key !== " ") return
     event.preventDefault()
-    handleParagraphSelect()
+    onSelect(buildSelection(paragraphGroup, event.currentTarget))
   }
 
   let cursor = 0
@@ -1346,7 +1375,7 @@ function ReaderTextParagraph({
         type="button"
         onClick={(event) => {
           event.stopPropagation()
-          onSelect(buildSelection(group))
+          onSelect(buildSelection(group, event.currentTarget))
         }}
         className={`rounded-sm border-b px-0.5 text-left text-inherit [font:inherit] focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-300 ${
           isResearcherVariant
@@ -1397,7 +1426,7 @@ function ReaderTextParagraph({
       </p>
       {activeGroup ? (
         <SupportChoicePopover
-          selection={buildSelection(activeGroup)}
+          selection={activePopoverSelection ?? buildSelection(activeGroup)}
           selectedUnitId={selectedUnitId}
           onPick={onPickUnit}
           onClose={onCloseSelection}
@@ -2739,6 +2768,7 @@ export default function ReaderScreen({
                 index={index}
                 anchors={inlineSupportPlan.groups.get(index) ?? []}
                 activeAnchorId={activeTextSupportAnchorId}
+                activeSelection={activeSupportSelection}
                 selectedUnitId={activeSupportSelection?.selectedUnitId ?? null}
                 onSelect={toggleTextSupportAnchor}
                 onPickUnit={selectTextSupportUnit}
