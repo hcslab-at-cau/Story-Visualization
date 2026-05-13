@@ -482,14 +482,13 @@ SUP.1 - SUP.7은 이 raw memory를 다음 형태로 바꾸는 단계다.
 |---|---|
 | `docs/source/research/reader-position-aware-recovery-plan.md` | reader-position-aware recovery system 전체 연구/구현 계획 |
 | `docs/source/research/narrative-relation-graph.md` | Narrative Relation Graph 설계 |
-| `docs/source/support/cross-chapter-memory-plan.md` | BOOK.0 cross-chapter memory 계획 |
-| `docs/source/support/cross-chapter-reader-experience.md` | Reader에서 cross-chapter memory를 보여주는 방식 |
-| `docs/source/support/support-implementation.md` | SUP.0 - SUP.7 구현 설명 |
-| `docs/source/current/knowledge-graph-query-layer.md` | Firestore graph projection과 query layer |
-| `docs/source/current/epub-ingest-normalization.md` | EPUB chapter normalization 구현 |
-| `docs/source/current/ui-language-mode.md` | KO/EN UI language mode |
-| `docs/source/current/storage-v2-and-legacy.md` | documents_v2와 legacy documents 분리 |
-| `docs/source/current/ui-graph-and-reader-support.md` | graph형 pipeline UI와 Reader support UI |
+| `docs/source/implementation/reader-support-pipeline.md` | SUP.0 - SUP.7, BOOK.0, NRG.0, Reader 연결 구현 설명 |
+| `docs/source/research/narrative-relation-graph.md` | Narrative Relation Graph 설계 |
+| `docs/source/implementation/knowledge-graph-query-layer.md` | Firestore graph projection과 query layer |
+| `docs/source/implementation/epub-ingest-normalization.md` | EPUB chapter normalization 구현 |
+| `docs/source/implementation/ui-language-mode.md` | KO/EN UI language mode |
+| `docs/source/implementation/storage-v2-and-legacy.md` | documents_v2와 legacy documents 분리 |
+| `docs/source/implementation/ui-graph-and-reader-support.md` | graph형 pipeline UI와 Reader support UI |
 
 ## 9. 발표용 마무리 문장
 

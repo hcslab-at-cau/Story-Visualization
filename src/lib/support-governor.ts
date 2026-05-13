@@ -7,6 +7,7 @@ export interface GovernedReaderSupport {
   hiddenTriggerCount: number
   suppressedCount: number
   reentryActive: boolean
+  diagnostics: string[]
 }
 
 const DEFAULT_REENTRY_GAP_MS = 10 * 60 * 1000
@@ -34,12 +35,35 @@ function triggerAllowed(unit: SupportUnit, options: { reentryActive: boolean; vi
   return false
 }
 
+function isRecoveryUnit(unit: SupportUnit): boolean {
+  return (
+    unit.reader_problem === "state_recovery" ||
+    unit.reader_problem === "boundary_update" ||
+    unit.kind === "snapshot" ||
+    unit.kind === "boundary_delta"
+  )
+}
+
+function hasDisplayPlanBuckets(plan: ReaderSupportPacket["display_plan"]): boolean {
+  if (!plan) return false
+  return (
+    (plan.default_visible?.length ?? 0) > 0 ||
+    (plan.expandable?.length ?? 0) > 0 ||
+    (plan.trigger_only?.length ?? 0) > 0 ||
+    (plan.suppressed?.length ?? 0) > 0
+  )
+}
+
 export function governReaderSupport(
   support: ReaderSupportPacket | undefined,
   options: {
     resumeGapMs?: number
     reentryGapMs?: number
     visualUseful?: boolean
+    sceneBoundaryActive?: boolean
+    longPauseActive?: boolean
+    backscrollActive?: boolean
+    supportFatigueScore?: number
   } = {},
 ): GovernedReaderSupport {
   if (!support) {
@@ -50,44 +74,69 @@ export function governReaderSupport(
       hiddenTriggerCount: 0,
       suppressedCount: 0,
       reentryActive: false,
+      diagnostics: ["support_missing"],
     }
   }
 
   const reentryActive = (options.resumeGapMs ?? 0) >= (options.reentryGapMs ?? DEFAULT_REENTRY_GAP_MS)
   const visualUseful = options.visualUseful ?? true
-  const plan = support.display_plan
+  const sceneBoundaryActive = options.sceneBoundaryActive ?? true
+  const readerRecoverySignal = Boolean(options.longPauseActive || options.backscrollActive)
+  const supportFatigueScore = Math.max(0, Math.min(1, options.supportFatigueScore ?? 0))
+  const fatigueHigh = supportFatigueScore >= 0.65
+  const diagnostics = [
+    reentryActive ? "session_reentry" : "",
+    readerRecoverySignal ? "recovery_signal" : "",
+    visualUseful ? "visual_useful" : "visual_suppressed",
+    fatigueHigh ? "support_fatigue_high" : "",
+  ].filter(Boolean)
+  const plan = hasDisplayPlanBuckets(support.display_plan) ? support.display_plan : undefined
 
   if (!plan) {
-    const beforeText = support.display_slots.before_text.slice(0, 1)
+    const beforeText = fatigueHigh ? [] : support.display_slots.before_text.slice(0, 1)
     const overflowBeforeText = support.display_slots.before_text.slice(1)
     return {
       beforeText,
       besideVisual: support.display_slots.beside_visual,
-      onDemand: uniqueUnits([...overflowBeforeText, ...support.display_slots.on_demand]),
+      onDemand: uniqueUnits([...support.display_slots.before_text.filter((unit) => !beforeText.includes(unit)), ...overflowBeforeText, ...support.display_slots.on_demand]),
       hiddenTriggerCount: 0,
       suppressedCount: 0,
       reentryActive,
+      diagnostics: support.display_plan ? [...diagnostics, "legacy_display_slots"] : diagnostics,
     }
   }
 
-  const beforeText = plan.default_visible.slice(0, 1)
-  const overflowVisible = plan.default_visible.slice(1)
+  const defaultVisible = plan.default_visible ?? []
+  const planExpandable = plan.expandable ?? []
+  const planTriggerOnly = plan.trigger_only ?? []
+  const planSuppressed = plan.suppressed ?? []
+  let beforeText = sceneBoundaryActive && !fatigueHigh ? defaultVisible.slice(0, 1) : []
+  const overflowVisible = defaultVisible.slice(1)
   const runtimeSuppressed = visualUseful
     ? []
-    : [...plan.expandable, ...plan.trigger_only].filter((unit) => unit.kind === "visual_context")
-  const expandable = plan.expandable.filter((unit) => !runtimeSuppressed.includes(unit))
-  const triggerOnly = plan.trigger_only.filter((unit) => !runtimeSuppressed.includes(unit))
+    : [...planExpandable, ...planTriggerOnly].filter((unit) => unit.kind === "visual_context")
+  const expandable = planExpandable.filter((unit) => !runtimeSuppressed.includes(unit))
+  const triggerOnly = planTriggerOnly.filter((unit) => !runtimeSuppressed.includes(unit))
   const besideVisual = expandable.filter((unit) => isBesideVisualUnit(unit, { visualUseful }))
   const expandableOnDemand = expandable.filter((unit) => !isBesideVisualUnit(unit, { visualUseful }))
   const triggered = triggerOnly.filter((unit) => triggerAllowed(unit, { reentryActive, visualUseful }))
-  const hiddenTriggerCount = Math.max(0, plan.trigger_only.length - triggered.length)
+  if (beforeText.length === 0 && readerRecoverySignal && !fatigueHigh) {
+    const recoveryUnit = uniqueUnits([...expandableOnDemand, ...triggered, ...overflowVisible])
+      .find(isRecoveryUnit)
+    if (recoveryUnit) {
+      beforeText = [recoveryUnit]
+      diagnostics.push("promoted_recovery_unit")
+    }
+  }
+  const hiddenTriggerCount = Math.max(0, planTriggerOnly.length - triggered.length)
 
   return {
     beforeText,
     besideVisual,
-    onDemand: uniqueUnits([...overflowVisible, ...expandableOnDemand, ...triggered]),
+    onDemand: uniqueUnits([...overflowVisible, ...expandableOnDemand, ...triggered].filter((unit) => !beforeText.includes(unit))),
     hiddenTriggerCount,
-    suppressedCount: plan.suppressed.length + runtimeSuppressed.length,
+    suppressedCount: planSuppressed.length + runtimeSuppressed.length,
     reentryActive,
+    diagnostics,
   }
 }

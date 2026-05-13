@@ -8,6 +8,8 @@
 
 이 방식은 Neo4j 같은 graph DB보다 기능은 제한적이지만, 현재 pipeline 구조와 Firebase 저장소를 유지하면서 빠르게 검증할 수 있다.
 
+현재 Reader support의 직접 입력은 이 `Knowledge Graph`가 아니라 `BOOK.0`에서 파생한 `NRG.0` claim view다. `Knowledge Graph`는 Graph tab 탐색, 디버깅, projection 검증에 쓰인다.
+
 ## 저장 위치
 
 새 graph projection은 `documents_v2` 아래에 저장한다.
@@ -125,7 +127,8 @@ body:
 - document 전체 chapter를 가로지르는 global traversal
 - shortest path, centrality, community detection 같은 graph algorithm
 - entity alias merge를 활용한 고정밀 relation graph
-- reader support prompt에 graph query 결과를 자동 retrieval해서 주입
+- reader-position-safe reveal policy
+- `SUP.7` support로 직접 들어갈 claim selection
 
 ## 다음 단계
 
@@ -134,8 +137,10 @@ body:
 1. Document-level graph index
    - chapter를 넘어서는 entity, event, place index를 만든다.
 
-2. Retrieval API
-   - `sceneId`, `entityId`, `supportUnitKind`를 넣으면 필요한 graph context만 반환한다.
+2. NRG diagnostic bridge
+   - `Knowledge Graph` projection과 `BOOK.0`/`NRG.0` claim이 어디에서 갈라지는지 비교할 수 있게 한다.
+   - Reader support로 직접 넣기보다, NRG claim의 누락/오류를 찾는 진단 도구로 우선 사용한다.
 
-3. Support prompt integration
-   - `SUP.2`-`SUP.7`이 전체 artifact를 직접 읽기보다 graph query 결과를 근거로 사용하도록 바꾼다.
+3. Retrieval API
+   - `sceneId`, `entityId`, `supportUnitKind`를 넣으면 필요한 graph context만 반환한다.
+   - 이 결과는 바로 FINAL로 보내지 않고, `SUP`/`NRG` 계층의 evidence 보강에 사용한다.

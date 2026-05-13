@@ -12,6 +12,7 @@ const NON_STORY_CLASSIFICATIONS = new Set([
 ])
 
 const NON_STORY_TITLE_RE = /\b(cover|title\s*page|copyright|contents|table\s+of\s+contents|toc|nav|navigation|colophon|imprint|acknowledg|dedication|pg[-_\s]*header|pg[-_\s]*footer|project\s+gutenberg|footer|header)\b/i
+const KOREAN_NON_STORY_RE = /(목차|차례|라이선스|저작권|판권|이\s*저작물은)/
 
 export function normalizeChapterTitle(value: string | undefined): string | undefined {
   if (!value) return undefined
@@ -65,6 +66,9 @@ export function displayChapterTitle(
   fallbackId: string,
   fallbackIndex?: number,
 ): string {
+  const rawTitle = cleanCandidateTitle(raw?.title)
+  if (rawTitle && /\s+\([0-9]+\)$/.test(rawTitle)) return rawTitle
+
   const source = raw?.source
   const sourceRecord = source as Record<string, unknown> | undefined
   const candidates = [
@@ -109,12 +113,15 @@ export function isLikelyNonStoryChapter(raw: RawChapter | undefined, chapterId?:
     .filter((item): item is string => typeof item === "string")
     .join(" ")
   const titleLooksNonStory = NON_STORY_TITLE_RE.test(titleSignal)
+  const titleLooksKoreanNonStory = KOREAN_NON_STORY_RE.test(titleSignal)
   const text = raw.text.replace(/\s+/g, " ").trim()
   const textLower = text.toLowerCase()
   const hasHeading = raw.paragraphs.slice(0, 3).some((paragraph) => isChapterHeadingCandidate(paragraph.text))
 
   if (/\bpg[-_\s]*(header|footer)\b/i.test(titleSignal)) return true
   if (titleLooksNonStory && text.length < 2500) return true
+  if (titleLooksKoreanNonStory && text.length < 2500) return true
+  if (/^(목차|차례)\b/.test(text) && text.length < 2500) return true
   if (/^(start|end) of (the )?project gutenberg/i.test(textLower)) return true
   if (textLower.includes("end of the project gutenberg")) return true
   if (text.length < 80 && !hasHeading) return true

@@ -6,8 +6,10 @@ import EpubUploader from "@/components/EpubUploader"
 import ExistingDocumentsPicker from "@/components/ExistingDocumentsPicker"
 import KnowledgeGraphExplorer from "@/components/KnowledgeGraphExplorer"
 import { LanguageProvider, LanguageSwitcher, useUiStrings } from "@/components/LanguageProvider"
+import NarrativeGraphInspector from "@/components/NarrativeGraphInspector"
 import PipelineRunner from "@/components/PipelineRunner"
 import ReaderScreen from "@/components/ReaderScreen"
+import RunReadinessPanel from "@/components/RunReadinessPanel"
 import SupportSystemShowcase from "@/components/SupportSystemShowcase"
 import {
   deleteRun,
@@ -25,6 +27,7 @@ import type { OverlayRefinementResult, SceneReaderPackageLog } from "@/types/sch
 import type { ChapterMeta } from "@/types/ui"
 
 type View = "upload" | "pipeline" | "graph" | "reader" | "legacy"
+type ReaderMode = "reader" | "researcher"
 
 function getPreferredRunId(runs: RunMeta[]): string {
   return runs.find((item) => item.favorite)?.runId ?? runs[0]?.runId ?? ""
@@ -530,6 +533,7 @@ function GraphView({
 
       {runId ? (
         <>
+          <RunReadinessPanel docId={docId} chapterId={chapterId} runId={runId} onRunChange={onRunChange} />
           <SupportSystemShowcase docId={docId} chapterId={chapterId} runId={runId} />
           <BookMemoryPanel
             docId={docId}
@@ -537,6 +541,7 @@ function GraphView({
             currentChapterId={chapterId}
             chapters={chapters}
           />
+          <NarrativeGraphInspector docId={docId} chapterId={chapterId} />
           <KnowledgeGraphExplorer docId={docId} chapterId={chapterId} runId={runId} />
         </>
       ) : (
@@ -736,6 +741,7 @@ function ReaderView({
   const [final2, setFinal2] = useState<OverlayRefinementResult | null>(null)
   const [bookMemory, setBookMemory] = useState<BookMemorySnapshot | null>(null)
   const [readerRunId, setReaderRunId] = useState("")
+  const [readerMode, setReaderMode] = useState<ReaderMode>("reader")
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -862,6 +868,9 @@ function ReaderView({
         <div className="rounded-lg border border-dashed border-zinc-300 bg-white px-4 py-3 text-sm text-zinc-500">
           {t.readerPage.noResult}
         </div>
+        {source !== "legacy" && (
+          <RunReadinessPanel docId={docId} chapterId={chapterId} runId={runId} />
+        )}
         {false && null}
         <div className="hidden" aria-hidden="true">
           결과가 없습니다. 실행해주세요.
@@ -872,6 +881,7 @@ function ReaderView({
 
   return (
     <ReaderScreen
+      mode={readerMode}
       final1={final1}
       final2={final2 ?? undefined}
       bookMemory={bookMemory ?? undefined}
@@ -885,6 +895,25 @@ function ReaderView({
             onChapterChange={onChapterChange}
           />
           {extraControls}
+          <div className="flex rounded-xl border border-zinc-200 bg-white p-1 shadow-sm">
+            {([
+              { key: "reader", label: "독자 화면" },
+              { key: "researcher", label: "연구자 화면" },
+            ] as const).map((item) => (
+              <button
+                key={item.key}
+                type="button"
+                onClick={() => setReaderMode(item.key)}
+                className={`rounded-lg px-3 py-1.5 text-sm font-medium transition-colors ${
+                  readerMode === item.key
+                    ? "bg-zinc-900 text-white"
+                    : "text-zinc-500 hover:bg-zinc-50 hover:text-zinc-800"
+                }`}
+              >
+                {item.label}
+              </button>
+            ))}
+          </div>
         </>
       )}
     />

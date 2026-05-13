@@ -315,6 +315,25 @@ export default function KnowledgeGraphExplorer({
                     {edge.evidence.length > 0 && (
                       <p className="mt-2 text-xs text-zinc-400">{t.graphExplorer.evidenceRefs}: {edge.evidence.length}</p>
                     )}
+                    <details className="mt-3 rounded-lg border border-zinc-100 bg-zinc-50 px-3 py-2">
+                      <summary className="cursor-pointer text-[11px] font-semibold uppercase tracking-wide text-zinc-500">
+                        provenance
+                      </summary>
+                      <div className="mt-2 space-y-2 text-xs leading-5 text-zinc-500">
+                        <p>stage: {edge.sourceStageId} · artifact: {edge.sourceArtifactId}</p>
+                        {edge.sceneId && <p>scene: {edge.sceneId}</p>}
+                        {Object.keys(edge.metadata).length > 0 && (
+                          <pre className="max-h-28 overflow-auto rounded-md bg-white p-2 text-[11px] text-zinc-500">
+                            {JSON.stringify(edge.metadata, null, 2)}
+                          </pre>
+                        )}
+                        {edge.evidence.slice(0, 3).map((evidence, index) => (
+                          <pre key={`${edge.edgeId}:evidence:${index}`} className="max-h-24 overflow-auto rounded-md bg-white p-2 text-[11px] text-zinc-500">
+                            {JSON.stringify(evidence, null, 2)}
+                          </pre>
+                        ))}
+                      </div>
+                    </details>
                   </article>
                 )
               })}

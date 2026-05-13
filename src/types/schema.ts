@@ -844,6 +844,26 @@ export type SupportSuppressionReason =
   | "visual_low"
   | "unsupported";
 
+export type SupportAnchorHintGranularity = "paragraph" | "sentence" | "phrase" | "word";
+
+export interface SupportReaderCopyPoint {
+  label?: string;
+  text: string;
+}
+
+export interface SupportReaderCopy {
+  title?: string;
+  lead?: string;
+  points?: SupportReaderCopyPoint[];
+  evidence_label?: string;
+}
+
+export interface SupportAnchorHint {
+  preferred_text?: string;
+  granularity?: SupportAnchorHintGranularity;
+  reason?: string;
+}
+
 export interface ReaderPosition {
   chapter_id: string;
   scene_id?: string;
@@ -1011,6 +1031,8 @@ export interface SupportUnit {
   redundancy_key?: string;
   score_notes?: string[];
   claims?: NarrativeClaim[];
+  reader_copy?: SupportReaderCopy;
+  anchor_hint?: SupportAnchorHint;
 }
 
 export interface SupportSnapshotScene {

@@ -5,6 +5,7 @@
  * Uses: epub2 (EPub), cheerio (BeautifulSoup equivalent)
  */
 
+import { createHash } from "crypto"
 import { EPub } from "epub2"
 import * as cheerio from "cheerio"
 import {
@@ -208,6 +209,49 @@ function splitLongChapter(cand: RawChapterCandidate): RawChapterCandidate[] {
   return result
 }
 
+// Some EPUB generators accidentally duplicate spine entries that point to the
+// same manifest item/href. Keep the first readable copy so uploads do not create
+// duplicate chapters for the same source document.
+function dedupeSourceUnits(units: EpubSourceUnit[]): EpubSourceUnit[] {
+  const seen = new Set<string>()
+  const result: EpubSourceUnit[] = []
+
+  for (const unit of units) {
+    const keys = [
+      unit.manifestId ? `id:${unit.manifestId}` : undefined,
+      unit.href ? `href:${normalizeHrefWithoutFragment(unit.href)}` : undefined,
+    ].filter((value): value is string => Boolean(value))
+
+    if (keys.some((key) => seen.has(key))) continue
+    for (const key of keys) seen.add(key)
+    result.push(unit)
+  }
+
+  return result
+}
+
+const DUPLICATE_CANDIDATE_MIN_CHARS = 400
+
+function candidateContentFingerprint(candidate: RawChapterCandidate): string | undefined {
+  const normalized = candidate.paragraphs.join("\n").replace(/\s+/g, " ").trim()
+  if (normalized.length < DUPLICATE_CANDIDATE_MIN_CHARS) return undefined
+  return createHash("sha256").update(normalized).digest("hex")
+}
+
+function dedupeDuplicateCandidates(candidates: RawChapterCandidate[]): RawChapterCandidate[] {
+  const seen = new Set<string>()
+  const result: RawChapterCandidate[] = []
+
+  for (const candidate of candidates) {
+    const fingerprint = candidateContentFingerprint(candidate)
+    if (fingerprint && seen.has(fingerprint)) continue
+    if (fingerprint) seen.add(fingerprint)
+    result.push(candidate)
+  }
+
+  return result
+}
+
 // ---------------------------------------------------------------------------
 // Main public API
 // ---------------------------------------------------------------------------
@@ -292,12 +336,12 @@ async function extractCandidates(epub: EPub): Promise<RawChapterCandidate[]> {
     }
   }
 
-  const candidates = chaptersFromSourceUnits(sourceUnits)
+  const candidates = chaptersFromSourceUnits(dedupeSourceUnits(sourceUnits))
   if (candidates.length > 0) return candidates
 
   // Safety fallback: if a strange EPUB is over-filtered, keep the longest readable units.
   return chaptersFromSourceUnits(
-    [...sourceUnits]
+    dedupeSourceUnits([...sourceUnits])
       .sort((a, b) => b.textLength - a.textLength)
       .slice(0, Math.max(1, Math.min(3, sourceUnits.length)))
       .map((unit) => ({
@@ -432,11 +476,17 @@ function classifySourceUnit(unit: Omit<EpubSourceUnit, "classification">): Sourc
   if (/\b(nav|toc|contents|table[-_\s]*of[-_\s]*contents)\b/.test(signal) && (unit.textLength < 3000 || linkRatio > 0.35)) {
     return { kind: "toc", reason: "navigation or table-of-contents spine item" }
   }
+  if (/(목차|차례)/.test(`${signal} ${unit.bodyText}`) && (unit.textLength < 3000 || linkRatio > 0.2)) {
+    return { kind: "toc", reason: "Korean table-of-contents spine item" }
+  }
   if (linkRatio > 0.55 && unit.textLength < 5000 && !hasChapterHeading) {
     return { kind: "nav", reason: "link-dominant spine item" }
   }
   if (/\b(copyright|all rights reserved|isbn|license|publisher|produced by)\b/.test(`${signal} ${bodyLower}`) && unit.textLength < 2500) {
     return { kind: "copyright", reason: "copyright or publisher metadata text" }
+  }
+  if (/(라이선스|저작권|판권|이\s*저작물은)/.test(`${signal} ${unit.bodyText}`) && unit.textLength < 2500) {
+    return { kind: "copyright", reason: "Korean copyright or license metadata text" }
   }
   if (bodyLower.includes("start of the project gutenberg") || bodyLower.includes("end of the project gutenberg")) {
     return { kind: bodyLower.includes("end of the project gutenberg") ? "back_matter" : "front_matter", reason: "Project Gutenberg boilerplate" }
@@ -491,7 +541,8 @@ function chaptersFromSourceUnits(units: EpubSourceUnit[]): RawChapterCandidate[]
 function normalizeCandidates(
   candidates: RawChapterCandidate[],
 ): RawChapterCandidate[] {
-  const merged = mergeShortChapters(candidates)
+  const unique = dedupeDuplicateCandidates(candidates)
+  const merged = mergeShortChapters(unique)
   const split: RawChapterCandidate[] = []
   for (const c of merged) {
     if (c.textLength > MAX_CHARS) {
@@ -500,5 +551,5 @@ function normalizeCandidates(
       split.push(c)
     }
   }
-  return split
+  return dedupeDuplicateCandidates(split)
 }

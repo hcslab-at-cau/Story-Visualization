@@ -27,6 +27,7 @@ import type {
   ValidatedSubscene,
   ValidatedSubscenes,
 } from "@/types/schema"
+import { verifySupportUnits } from "@/lib/support-verifier"
 
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -144,6 +145,53 @@ function firstEvidence(scene: SupportMemoryScene, sourceStage = "SCENE.3"): Supp
   return scene.evidence.length > 0
     ? scene.evidence.slice(0, 3)
     : [{ scene_id: scene.scene_id, source_stage: sourceStage }]
+}
+
+function evidenceTexts(evidence: SupportEvidenceRef[]): string[] {
+  return evidence.map((ref) => asString(ref.text)).filter(Boolean)
+}
+
+function firstEvidenceText(evidence: SupportEvidenceRef[]): string | undefined {
+  return evidenceTexts(evidence)[0]
+}
+
+function includesText(source: string, target: string): boolean {
+  return source.toLowerCase().includes(target.toLowerCase())
+}
+
+function firstMentionedCandidate(evidence: SupportEvidenceRef[], candidates: string[]): string | undefined {
+  const items = uniqueStrings(candidates).filter((candidate) => candidate.length >= 2)
+  const texts = evidenceTexts(evidence)
+  return items.find((candidate) => texts.some((text) => includesText(text, candidate)))
+}
+
+function anchorGranularityForText(text: string | undefined): SupportUnit["anchor_hint"] {
+  const preferredText = text?.trim()
+  if (!preferredText) return undefined
+  return {
+    preferred_text: preferredText,
+    granularity: preferredText.length <= 36 && !/\s/.test(preferredText) ? "word" : "phrase",
+    reason: "Generated from the support unit's most local reader-facing cue.",
+  }
+}
+
+function supportPoints(points: Array<{ label: string; text?: string }>): NonNullable<SupportUnit["reader_copy"]>["points"] {
+  return points
+    .filter((point): point is { label: string; text: string } => Boolean(point.text?.trim()))
+    .map((point) => ({ label: point.label, text: point.text.trim() }))
+}
+
+function firstPronounInEvidence(evidence: SupportEvidenceRef[]): string | undefined {
+  for (const text of evidenceTexts(evidence)) {
+    const match = text.match(/\b(she|her|hers|he|him|his|they|them|their|it|its)\b/i)
+    if (match?.[1]) return match[1]
+  }
+  return undefined
+}
+
+function usefulCue(cue: string): boolean {
+  const normalized = cue.trim().toLowerCase()
+  return normalized.length >= 4 && normalized !== "no explicit detail" && normalized !== "unknown"
 }
 
 function readerProblemForKind(kind: SupportUnitKind): ReaderProblem {
@@ -268,6 +316,8 @@ function makeUnit(params: {
   defaultDisplay?: SupportDefaultDisplay
   triggerPreconditions?: SupportTriggerCondition[]
   scoreNotes?: string[]
+  readerCopy?: SupportUnit["reader_copy"]
+  anchorHint?: SupportUnit["anchor_hint"]
 }): SupportUnit {
   const priority = boundedScore(params.priority)
   const groundingScore = groundingScoreForEvidence(params.evidence)
@@ -302,6 +352,8 @@ function makeUnit(params: {
       `grounding=${groundingScore.toFixed(2)}`,
       `intrusion=${intrusionCost.toFixed(2)}`,
     ],
+    ...(params.readerCopy ? { reader_copy: params.readerCopy } : {}),
+    ...(params.anchorHint ? { anchor_hint: params.anchorHint } : {}),
   }
 }
 
@@ -334,17 +386,22 @@ function buildReaderSupportPlan(
   candidateUnits: SupportUnit[],
   suppressedUnits: Array<{ unit: SupportUnit; reason: SupportSuppressionReason; note?: string }>,
 ): ReaderSupportPlan {
-  const defaultVisible = candidateUnits.filter((unit) => unit.default_display === "visible")
-  const expandable = candidateUnits.filter((unit) => unit.default_display === "expandable")
-  const triggerOnly = candidateUnits.filter((unit) => unit.default_display === "trigger_only")
+  const verification = verifySupportUnits(candidateUnits)
+  const verifiedUnits = verification.filter((item) => !item.suppressed).map((item) => item.unit)
+  const verifierSuppressed = verification
+    .filter((item) => item.suppressed && item.reason)
+    .map((item) => ({ unit: item.unit, reason: item.reason!, note: item.note }))
+  const defaultVisible = verifiedUnits.filter((unit) => unit.default_display === "visible")
+  const expandable = verifiedUnits.filter((unit) => unit.default_display === "expandable")
+  const triggerOnly = verifiedUnits.filter((unit) => unit.default_display === "trigger_only")
 
   return {
     scene_id: sceneId,
-    candidate_units: candidateUnits,
+    candidate_units: verifiedUnits,
     default_visible: defaultVisible,
     expandable,
     trigger_only: triggerOnly,
-    suppressed: suppressedUnits.map((item) => ({
+    suppressed: [...suppressedUnits, ...verifierSuppressed].map((item) => ({
       unit_id: item.unit.unit_id,
       reason: item.reason,
       note: item.note,
@@ -606,6 +663,10 @@ export function runSupportSnapshots(
     method: "rule",
     parents,
     scenes: sharedLog.scenes.map((scene) => {
+      const place = scene.current_state.place
+      const cast = compactList(scene.current_state.active_cast, "")
+      const goals = compactList(scene.current_state.goals, "")
+      const evidenceLabel = firstEvidenceText(scene.evidence)
       const units: SupportUnit[] = [
         makeUnit({
           sceneId: scene.scene_id,
@@ -626,10 +687,33 @@ export function runSupportSnapshots(
           evidence: scene.evidence,
           sourceStageIds: ["SCENE.3", "STATE.2"],
           displayMode: "side_card",
+          readerCopy: {
+            title: "지금 장면만 짧게 잡기",
+            lead: [
+              place ? `지금은 ${place}에서 장면이 이어집니다.` : "",
+              cast ? `${cast}을 중심으로 보면 됩니다.` : "",
+              goals ? `관심은 ${goals} 쪽에 있습니다.` : "",
+            ].filter(Boolean).join(" "),
+            points: supportPoints([
+              { label: "어디", text: place ? `${place}에서 이어집니다.` : undefined },
+              { label: "누가", text: cast || undefined },
+              { label: "무엇을 보나", text: goals || undefined },
+            ]),
+            evidence_label: evidenceLabel,
+          },
+          anchorHint: {
+            granularity: "paragraph",
+            reason: "A snapshot summarizes the local scene state rather than one word.",
+          },
         }),
       ]
 
       if (scene.boundary_delta.labels.length > 0) {
+        const boundaryTarget =
+          scene.boundary_delta.cast_entered[0] ||
+          scene.boundary_delta.cast_exited[0] ||
+          scene.current_state.place ||
+          scene.boundary_delta.labels[0]
         units.push(makeUnit({
           sceneId: scene.scene_id,
           kind: "boundary_delta",
@@ -650,6 +734,27 @@ export function runSupportSnapshots(
           evidence: scene.evidence,
           sourceStageIds: ["STATE.3", "SCENE.1"],
           displayMode: "inline_chip",
+          readerCopy: {
+            title: "방금 달라진 점",
+            lead: [
+              scene.boundary_delta.cast_entered.length > 0
+                ? `${scene.boundary_delta.cast_entered.join(", ")}이 새로 들어옵니다.`
+                : "",
+              scene.boundary_delta.cast_exited.length > 0
+                ? `${scene.boundary_delta.cast_exited.join(", ")}이 장면에서 빠집니다.`
+                : "",
+              scene.boundary_delta.place_changed && place ? `장소 흐름은 ${place} 쪽으로 바뀝니다.` : "",
+              scene.boundary_delta.time_changed ? "시간 신호도 함께 바뀝니다." : "",
+            ].filter(Boolean).join(" "),
+            points: supportPoints([
+              { label: "새로 들어온 인물", text: compactList(scene.boundary_delta.cast_entered, "") || undefined },
+              { label: "빠진 인물", text: compactList(scene.boundary_delta.cast_exited, "") || undefined },
+              { label: "장소 흐름", text: scene.boundary_delta.place_changed ? place : undefined },
+              { label: "근거", text: scene.boundary_delta.labels.slice(0, 2).join(" ") || undefined },
+            ]),
+            evidence_label: evidenceLabel,
+          },
+          anchorHint: anchorGranularityForText(boundaryTarget),
         }))
       }
 
@@ -677,17 +782,22 @@ export function runSupportCausalBridges(
         (edge) => edge.to_scene_id === scene.scene_id && edge.type === "causal_bridge",
       )
       const fallbackThread = scene.prior_threads.find((thread) => thread.kind === "same_character_thread")
-      const units = causalEdges.map((edge) => makeUnit({
-        sceneId: scene.scene_id,
-        kind: "causal_bridge",
-        label: "Why",
-        title: "Why this scene follows",
-        body: edge.label,
-        priority: 0.9,
-        evidence: edge.evidence,
-        sourceStageIds: ["SUB.3", "SUP.0"],
-        displayMode: "side_card",
-      }))
+      const units = causalEdges.map((edge) => {
+        const bridgeParts = edge.label.split(/\s*(?:->|→|=>)\s*/).filter(Boolean)
+        const currentCue = bridgeParts[bridgeParts.length - 1]
+        return makeUnit({
+          sceneId: scene.scene_id,
+          kind: "causal_bridge",
+          label: "Why",
+          title: "Why this scene follows",
+          body: edge.label,
+          priority: 0.9,
+          evidence: edge.evidence,
+          sourceStageIds: ["SUB.3", "SUP.0"],
+          displayMode: "side_card",
+          anchorHint: anchorGranularityForText(currentCue),
+        })
+      })
 
       if (units.length === 0 && fallbackThread) {
         units.push(makeUnit({
@@ -700,6 +810,7 @@ export function runSupportCausalBridges(
           evidence: scene.evidence,
           sourceStageIds: ["SUP.1"],
           displayMode: "popover",
+          anchorHint: anchorGranularityForText(firstMentionedCandidate(scene.evidence, scene.current_state.active_cast)),
         }))
       }
 
@@ -728,30 +839,58 @@ export function runSupportCharacterRelations(
       const units: SupportUnit[] = []
 
       if (context.current_state.active_cast.length > 0) {
+        const cast = compactList(context.current_state.active_cast)
+        const goals = compactList(context.current_state.goals, "")
+        const characterAnchor = firstMentionedCandidate(context.evidence, context.current_state.active_cast)
+          || context.current_state.active_cast[0]
         units.push(makeUnit({
           sceneId: context.scene_id,
           kind: "character_focus",
           label: "Cast",
           title: "Who matters here",
-          body: `${compactList(context.current_state.active_cast)} are active in this scene.`,
+          body: `${cast} are active in this scene.`,
           priority: 0.78,
           evidence: context.evidence,
           sourceStageIds: ["ENT.3", "SCENE.3"],
           displayMode: "side_card",
+          readerCopy: {
+            title: "누가 중심인가요?",
+            lead: `${cast}을 중심으로 행동을 따라가면 됩니다.`,
+            points: supportPoints([
+              { label: "중심 인물", text: cast },
+              { label: "신경 쓰는 것", text: goals || undefined },
+              { label: "본문에서 보이는 단서", text: firstEvidenceText(context.evidence) },
+            ]),
+            evidence_label: firstEvidenceText(context.evidence),
+          },
+          anchorHint: anchorGranularityForText(characterAnchor),
         }))
       }
 
       if (scene && scene.relations.length > 0) {
+        const relationText = scene.relations.slice(0, 3).join(" / ")
+        const relationAnchor = firstMentionedCandidate(scene.evidence, scene.active_cast) || scene.active_cast[0]
         units.push(makeUnit({
           sceneId: context.scene_id,
           kind: "relation_delta",
           label: "Relation",
           title: "Relationship signal",
-          body: scene.relations.slice(0, 3).join(" / "),
+          body: relationText,
           priority: 0.76,
           evidence: scene.evidence,
           sourceStageIds: ["SCENE.3"],
           displayMode: "popover",
+          readerCopy: {
+            title: "관계에서 볼 점",
+            lead: "이 부분은 인물들이 서로 어떻게 반응하는지 보면 흐름이 잡힙니다.",
+            points: supportPoints([
+              { label: "관계 신호", text: relationText },
+              { label: "관련 인물", text: compactList(scene.active_cast, "") || undefined },
+              { label: "본문 근거", text: firstEvidenceText(scene.evidence) },
+            ]),
+            evidence_label: firstEvidenceText(scene.evidence),
+          },
+          anchorHint: anchorGranularityForText(relationAnchor),
         }))
       }
 
@@ -780,36 +919,71 @@ export function runSupportReentryReference(
       const units: SupportUnit[] = []
 
       if (previousScenes.length > 0) {
+        const recapText = previousScenes
+          .map((item) => `${item.scene_title}: ${item.summary || compactList(item.actions)}`)
+          .join(" ")
         units.push(makeUnit({
           sceneId: context.scene_id,
           kind: "reentry_recap",
           label: "Resume",
           title: "Quick re-entry recap",
-          body: previousScenes
-            .map((item) => `${item.scene_title}: ${item.summary || compactList(item.actions)}`)
-            .join(" "),
+          body: recapText,
           priority: 0.68,
           evidence: previousScenes.flatMap((item) => firstEvidence(item)).slice(0, 4),
           sourceStageIds: ["SUP.0"],
           displayMode: "drawer",
+          readerCopy: {
+            title: "다시 이어 읽기",
+            lead: "잠시 쉬었다가 돌아왔다면, 직전 흐름만 짧게 떠올리면 됩니다.",
+            points: supportPoints([
+              { label: "직전 흐름", text: recapText },
+              { label: "지금 장면", text: context.scene_title },
+            ]),
+            evidence_label: firstEvidenceText(previousScenes.flatMap((item) => firstEvidence(item))),
+          },
+          anchorHint: {
+            granularity: "paragraph",
+            reason: "A re-entry recap belongs to the paragraph where reading resumes.",
+          },
         }))
       }
 
-      if (context.current_state.active_cast.length > 0) {
+      const pronounAnchor = firstPronounInEvidence(context.evidence)
+      if (context.current_state.active_cast.length > 0 && pronounAnchor) {
+        const cast = compactList(context.current_state.active_cast)
         units.push(makeUnit({
           sceneId: context.scene_id,
           kind: "reference_repair",
           label: "Names",
           title: "Reference repair",
-          body: `When this scene uses pronouns or short references, resolve them first against: ${compactList(context.current_state.active_cast)}.`,
+          body: `Expression: ${pronounAnchor}. Candidates: ${cast}.`,
           priority: 0.58,
           evidence: context.evidence,
           sourceStageIds: ["ENT.3", "SCENE.3"],
           displayMode: "popover",
+          readerCopy: {
+            title: "누구를 가리키나요?",
+            lead: `여기서는 ${pronounAnchor}이 누구를 가리키는지 바로 앞뒤 인물을 기준으로 확인하면 됩니다.`,
+            points: supportPoints([
+              { label: "본문 표현", text: pronounAnchor },
+              { label: "후보", text: cast },
+              { label: "본문 근거", text: firstEvidenceText(context.evidence) },
+            ]),
+            evidence_label: firstEvidenceText(context.evidence),
+          },
+          anchorHint: {
+            preferred_text: pronounAnchor,
+            granularity: "word",
+            reason: "Reference repair should attach to the pronoun or short expression itself.",
+          },
         }))
       }
 
       if (scene?.place || scene?.mentioned_places.length) {
+        const placeAnchor = firstMentionedCandidate(scene.evidence, [
+          scene.place || "",
+          ...scene.mentioned_places,
+        ]) || scene.place || scene.mentioned_places[0]
         units.push(makeUnit({
           sceneId: context.scene_id,
           kind: "spatial_continuity",
@@ -820,21 +994,48 @@ export function runSupportReentryReference(
           evidence: scene.evidence,
           sourceStageIds: ["STATE.2", "SCENE.3"],
           displayMode: "side_card",
+          readerCopy: {
+            title: "어디로 이어지나요?",
+            lead: scene.place
+              ? `${scene.place}을 기준으로 인물의 이동과 위치를 따라가면 됩니다.`
+              : "함께 언급된 장소들을 기준으로 위치 흐름을 잡으면 됩니다.",
+            points: supportPoints([
+              { label: "지금 위치", text: scene.place },
+              { label: "함께 언급된 곳", text: compactList(scene.mentioned_places, "") || undefined },
+              { label: "본문 근거", text: firstEvidenceText(scene.evidence) },
+            ]),
+            evidence_label: firstEvidenceText(scene.evidence),
+          },
+          anchorHint: anchorGranularityForText(placeAnchor),
         }))
       }
 
       if (scene?.environment.length) {
-        units.push(makeUnit({
-          sceneId: context.scene_id,
-          kind: "visual_context",
-          label: "Scene cues",
-          title: "Visual context cues",
-          body: compactList(scene.environment),
-          priority: 0.52,
-          evidence: scene.evidence,
-          sourceStageIds: ["SCENE.3", "VIS.1"],
-          displayMode: "popover",
-        }))
+        const visualCues = scene.environment.filter(usefulCue)
+        const visualAnchor = firstMentionedCandidate(scene.evidence, visualCues) || visualCues[0]
+        if (visualAnchor) {
+          units.push(makeUnit({
+            sceneId: context.scene_id,
+            kind: "visual_context",
+            label: "Scene cues",
+            title: "Visual context cues",
+            body: compactList(visualCues),
+            priority: 0.52,
+            evidence: scene.evidence,
+            sourceStageIds: ["SCENE.3", "VIS.1"],
+            displayMode: "popover",
+            readerCopy: {
+              title: "장면을 떠올려 보면",
+              lead: `${visualAnchor} 같은 단서를 떠올리면 이 부분의 장면이 더 선명해집니다.`,
+              points: supportPoints([
+                { label: "장면 단서", text: compactList(visualCues) },
+                { label: "본문 근거", text: firstEvidenceText(scene.evidence) },
+              ]),
+              evidence_label: firstEvidenceText(scene.evidence),
+            },
+            anchorHint: anchorGranularityForText(visualAnchor),
+          }))
+        }
       }
 
       return { scene_id: context.scene_id, units }

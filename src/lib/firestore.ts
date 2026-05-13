@@ -435,12 +435,21 @@ export async function loadRawChapter(
   })
 }
 
+const RAW_CHAPTER_DUPLICATE_MIN_CHARS = 400
+
+function rawChapterDuplicateFingerprint(raw: RawChapter | undefined): string | undefined {
+  const text = raw?.text.replace(/\s+/g, " ").trim()
+  if (!text || text.length < RAW_CHAPTER_DUPLICATE_MIN_CHARS) return undefined
+  return createHash("sha256").update(text).digest("hex")
+}
+
 export async function listChapters(
   docId: string,
   options: FirestoreReadOptions = {},
 ): Promise<ChapterMeta[]> {
   return withAdminErrorContext(async () => {
     const snap = await documentDocRef(docId, options.source).collection("chapters").get()
+    const seenFingerprints = new Set<string>()
 
     return snap.docs
       .map((d) => {
@@ -455,12 +464,19 @@ export async function listChapters(
         }
       })
       .filter((chapter) => !isLikelyNonStoryChapter(chapter.raw, chapter.chapterId))
+      .sort((a, b) => a.index - b.index)
+      .filter((chapter) => {
+        const fingerprint = rawChapterDuplicateFingerprint(chapter.raw)
+        if (!fingerprint) return true
+        if (seenFingerprints.has(fingerprint)) return false
+        seenFingerprints.add(fingerprint)
+        return true
+      })
       .map((chapter) => ({
         chapterId: chapter.chapterId,
         title: chapter.title,
         index: chapter.index,
       }))
-      .sort((a, b) => a.index - b.index)
   })
 }
 

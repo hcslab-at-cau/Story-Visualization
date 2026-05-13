@@ -130,6 +130,39 @@ function parseJsonObjectContent(content: string): Record<string, unknown> {
   )
 }
 
+function previewUnknown(value: unknown): string {
+  try {
+    return JSON.stringify(value).replace(/\s+/g, " ").slice(0, 500)
+  } catch {
+    return String(value).replace(/\s+/g, " ").slice(0, 500)
+  }
+}
+
+function readChatCompletionContent(
+  chat: OpenAI.Chat.Completions.ChatCompletion,
+  model: string,
+): string {
+  const firstChoice = chat.choices?.[0]
+  if (!firstChoice) {
+    throw new Error(
+      `LLM provider returned no chat choices for model "${model}". ` +
+      "This usually means the selected provider/model did not return an OpenAI-compatible chat completion. " +
+      `Try a stable chat model such as "openai/gpt-4o-mini". Response preview: ${previewUnknown(chat)}`,
+    )
+  }
+
+  const content = firstChoice.message?.content
+  if (typeof content !== "string" || content.trim().length === 0) {
+    throw new Error(
+      `LLM provider returned an empty chat message for model "${model}". ` +
+      `Finish reason: ${String(firstChoice.finish_reason ?? "unknown")}. ` +
+      `Choice preview: ${previewUnknown(firstChoice)}`,
+    )
+  }
+
+  return content.trim()
+}
+
 export class LLMClient {
   private client: OpenAI
   private model: string
@@ -227,7 +260,7 @@ ${previousInvalidResponse.slice(0, 4000)}`,
         }
 
         const chat = await this.client.chat.completions.create(params)
-        let content = (chat.choices[0].message.content ?? "").trim()
+        let content = readChatCompletionContent(chat, this.model)
         content = stripMarkdownFence(content)
         trial.raw_response = content
         previousInvalidResponse = content
@@ -264,7 +297,7 @@ ${previousInvalidResponse.slice(0, 4000)}`,
           max_tokens: this.maxTokens,
           messages,
         })
-        let content = (chat.choices[0].message.content ?? "").trim()
+        let content = readChatCompletionContent(chat, this.model)
         content = stripMarkdownFence(content)
         trial.raw_response = content
         return parseJsonObjectContent(content)
