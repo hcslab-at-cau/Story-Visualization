@@ -332,6 +332,7 @@ function HomeShell() {
                 docId={docId}
                 chapterId={selectedChapterId}
                 runId={runId}
+                chapters={chapters}
                 onRunIdChange={setRunId}
               />
             </div>
