@@ -138,7 +138,7 @@ export default function KnowledgeGraphCanvas({
         </div>
       </div>
 
-      <div className="overflow-auto bg-[radial-gradient(circle_at_top_left,#f8fafc,transparent_34%),linear-gradient(#fff,#f8fafc)] p-4">
+      <div className="overflow-auto bg-gradient-to-br from-stone-50 via-white to-sky-50 p-4">
         <svg
           width={layout.width}
           height={layout.height}

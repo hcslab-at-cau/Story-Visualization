@@ -5,7 +5,7 @@ import BookMemoryPanel from "@/components/BookMemoryPanel"
 import EpubUploader from "@/components/EpubUploader"
 import ExistingDocumentsPicker from "@/components/ExistingDocumentsPicker"
 import KnowledgeGraphExplorer from "@/components/KnowledgeGraphExplorer"
-import { LanguageProvider, LanguageSwitcher, useUiStrings } from "@/components/LanguageProvider"
+import { LanguageProvider, LanguageSwitcher, ThemeSwitcher, useUiStrings } from "@/components/LanguageProvider"
 import NarrativeGraphInspector from "@/components/NarrativeGraphInspector"
 import PipelineRunner from "@/components/PipelineRunner"
 import ReaderScreen from "@/components/ReaderScreen"
@@ -190,7 +190,10 @@ function HomeShell() {
           ))}
           </nav>
         </div>
-        <LanguageSwitcher />
+        <div className="ml-auto flex shrink-0 flex-wrap items-center justify-end gap-3">
+          <ThemeSwitcher />
+          <LanguageSwitcher />
+        </div>
       </header>
 
       <main

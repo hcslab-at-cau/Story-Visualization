@@ -103,7 +103,7 @@ export default function BookMemoryMap({ snapshot }: { snapshot: BookMemorySnapsh
         </div>
       </div>
 
-      <div className="overflow-x-auto bg-[linear-gradient(#fff,#fff7ed)] px-4 py-4">
+      <div className="overflow-x-auto bg-gradient-to-br from-stone-50 via-white to-orange-50 px-4 py-4">
         <svg
           width={width}
           height={height}

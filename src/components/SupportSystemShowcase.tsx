@@ -156,8 +156,8 @@ export default function SupportSystemShowcase({
   const bookReady = Boolean(bookMemory)
 
   return (
-    <section className="overflow-hidden rounded-3xl border border-zinc-200 bg-[#f7f3ea] shadow-sm">
-      <div className="border-b border-zinc-200 bg-[radial-gradient(circle_at_top_left,#fff7d6,transparent_28%),linear-gradient(135deg,#fff,#f7f3ea)] px-6 py-5">
+    <section className="overflow-hidden rounded-3xl border border-zinc-200 bg-stone-50 shadow-sm">
+      <div className="border-b border-zinc-200 bg-gradient-to-br from-amber-50 via-white to-stone-50 px-6 py-5">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
             <p className="text-xs font-black uppercase tracking-[0.22em] text-stone-500">{copy.eyebrow}</p>

@@ -116,6 +116,10 @@
   - `SUP.*`, `BOOK.0`, `NRG.0`, Support Governor를 연결하는 통합 계획
   - 기존 Narrative RAG/KG와의 차별점, schema 변경, retrieval API, verifier/scorer, runtime policy
 
+- `research/qa-grounded-reader-support-plan.md`
+  - QA / reading comprehension 문헌에서 반복되는 질문 유형을 reader support taxonomy로 재정의
+  - 현재 rule-based support scoring을 need probability, evidence, intrusion, spoiler risk 기반 policy로 발전시키는 계획
+
 - `research/narrative-kg-rag-literature-review.md`
   - Narrative RAG, Narrative KG, GraphRAG, KG-RAG, long narrative benchmark 문헌 정리
   - NRG, `BOOK.0`, `SUP.*`, Support Governor에 적용할 아이디어
@@ -164,8 +168,9 @@ stage별 내부 구조를 확인하려면:
 1. `research/direction-roadmap.md`
 2. `research/narrative-relation-graph.md`
 3. `research/reader-position-aware-recovery-plan.md`
-4. `research/narrative-kg-rag-literature-review.md`
-5. `research/evaluation-plan.md`
+4. `research/qa-grounded-reader-support-plan.md`
+5. `research/narrative-kg-rag-literature-review.md`
+6. `research/evaluation-plan.md`
 
 ## 정리 기준
 

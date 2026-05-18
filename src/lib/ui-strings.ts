@@ -61,6 +61,15 @@ export const UI_STRINGS = {
       label: "언어",
       selectLabel: "UI 언어 선택",
     },
+    theme: {
+      label: "테마",
+      selectLabel: "화면 테마 선택",
+      options: {
+        system: "기기",
+        light: "라이트",
+        dark: "다크",
+      },
+    },
     app: {
       title: "Story Visualization",
       noDocument: "먼저 EPUB을 업로드하거나 기존 문서를 선택하세요.",
@@ -316,6 +325,15 @@ export const UI_STRINGS = {
     language: {
       label: "Language",
       selectLabel: "Select UI language",
+    },
+    theme: {
+      label: "Theme",
+      selectLabel: "Select color theme",
+      options: {
+        system: "System",
+        light: "Light",
+        dark: "Dark",
+      },
     },
     app: {
       title: "Story Visualization",
