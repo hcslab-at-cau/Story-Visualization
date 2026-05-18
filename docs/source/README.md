@@ -99,6 +99,10 @@
 - `proposals/visual-support-proposal.md`
   - VIS 재배치, usefulness scoring, continuity, fallback 제안
 
+- `proposals/hint-display-image-prompts/`
+  - 힌트 유형별 Reader UI mockup 이미지 생성을 위한 프롬프트 묶음
+  - 공통 visual brief와 각 힌트별 image-generation handoff prompt
+
 ## `research/`
 
 연구 framing, 문헌 정리, 평가 계획을 다룬다.
