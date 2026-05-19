@@ -8,21 +8,21 @@ This should appear after clicking an anchored character name.
 
 ## Image Prompt
 
-Create a high-fidelity UI mockup of a fiction reader. In the left reading column, one character name is subtly underlined or highlighted. A small popover appears near the name with a short "Who?" or "Character" label.
+Create a high-fidelity UI mockup of a fiction reader. In the reading column, one character name is subtly underlined or highlighted. A small popover appears near the name with a short "Who?" label.
 
-On the right side, show a compact character focus panel. The panel should include:
+Keep the answer local to the name. Use a compact popover or margin note rather than a right-side panel. The first visible answer should be one short identity/role line. Under it, include only two tiny optional rows:
 
 - character name as a concise heading
 - role in this beat
 - current intention or constraint
-- one short "previous thread" line, shown as optional context
+- one collapsed "from earlier" row, shown only as optional context
 
-Use restrained indigo or neutral accent color. The panel should feel like a light identity/role reminder, not a full character biography. If a scene image is visible, a small labeled overlay dot may align with the character, but do not make the image dominate.
+Use restrained indigo or neutral accent color. The popover should feel like a light identity/role reminder, not a full character biography. If a scene image is visible, a small labeled overlay dot may align with the character, but do not make the image dominate.
 
 The design should communicate:
 
 - the reader asked about a specific name
-- the support is local to the current scene
+- the support is local to the current sentence and scene
 - it avoids biography overload
 - it helps the reader track active cast
 
@@ -30,7 +30,7 @@ Use placeholder text lines and short labels only.
 
 ## Negative Prompt
 
-No large cast database, no character profile page, no portrait gallery, no genealogy chart, no permanent sidebar full of all characters.
+No right-side biography panel, no large cast database, no character profile page, no portrait gallery, no genealogy chart, no permanent sidebar full of all characters.
 
 ## Success Criteria
 

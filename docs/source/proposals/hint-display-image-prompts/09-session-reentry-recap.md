@@ -8,7 +8,7 @@ This should feel like a gentle resume card, not a summary chapter.
 
 ## Image Prompt
 
-Create a high-fidelity UI mockup of the Story-Visualization reader after a reading session resumes. Show the novel text slightly lower on the page, with a compact re-entry card near the top of the reading column or in a slim side panel.
+Create a high-fidelity UI mockup of the Story-Visualization reader after a reading session resumes. Show the novel text slightly lower on the page, with a compact re-entry card near the top of the reading column. A slim side panel is acceptable only if it looks temporary and secondary.
 
 The card should be titled "Resume" or "Before you continue" and include exactly three compact rows:
 
@@ -16,7 +16,7 @@ The card should be titled "Resume" or "Before you continue" and include exactly 
 - recent turning point
 - unfinished tension
 
-Use a restrained green or neutral accent. Include a small dismiss or continue control. The card should appear as a temporary session aid and should not become a permanent sidebar.
+Use a restrained green or neutral accent. Include a small dismiss and continue control. The card should appear as a temporary session aid and should not become a permanent sidebar.
 
 The design should communicate:
 
@@ -25,11 +25,11 @@ The design should communicate:
 - it is shorter than a chapter summary
 - it disappears after the reader continues
 
-Use placeholder grey lines, not long readable text.
+Use placeholder grey lines, not long readable text. The card should feel like a friendly bookmark left by the reader, not a system-generated report.
 
 ## Negative Prompt
 
-No onboarding modal, no tutorial, no full chapter summary, no notification center, no progress dashboard, no gamified streak UI.
+No onboarding modal, no tutorial, no full chapter summary, no notification center, no progress dashboard, no gamified streak UI, no permanent right-side dashboard.
 
 ## Success Criteria
 

@@ -8,16 +8,16 @@ This should support place, time, order, and narrative scope without becoming a m
 
 ## Image Prompt
 
-Create a high-fidelity UI mockup of a fiction reader. The left reading column shows a scene transition paragraph with a subtle "Place" or "Time" anchor chip at the boundary.
+Create a high-fidelity UI mockup of a fiction reader. The reading column shows a scene transition paragraph with a subtle "Place" or "Time" anchor chip at the boundary.
 
-On the right side, show a compact spacetime continuity panel. The panel should include:
+Show the hint as a thin breadcrumb strip at the scene boundary or as a small margin note. Avoid a large right-side panel. The first visible answer should be a compact "where/when now" line. Include only tiny secondary labels for:
 
 - current place
 - previous place or scene
 - time/order cue
 - optional scope tag such as "memory", "actual", or "flashback"
 
-Use a restrained teal or sky accent. Show a tiny horizontal place chain or breadcrumb, not a full map. The place chain should look lightweight and textual, for example "previous place - current place".
+Use a restrained teal or sky accent. Show a tiny horizontal place chain or breadcrumb, not a full map. The place chain should look lightweight and textual, for example "previous place -> current place".
 
 The design should communicate:
 
@@ -26,11 +26,11 @@ The design should communicate:
 - it handles flashback or memory scope carefully
 - visual grounding is optional, not automatic
 
-Use placeholder lines and minimal icons.
+Use placeholder lines and minimal icons. The hint should look like an orientation marker, not a navigation app.
 
 ## Negative Prompt
 
-No full map, no GPS interface, no fantasy map illustration, no complex timeline, no crowded labels, no giant location card.
+No right-side location dossier, no full map, no GPS interface, no fantasy map illustration, no complex timeline, no crowded labels, no giant location card.
 
 ## Success Criteria
 

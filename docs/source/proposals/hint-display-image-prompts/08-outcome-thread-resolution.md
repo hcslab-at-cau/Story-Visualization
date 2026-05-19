@@ -8,15 +8,17 @@ This should show only already-revealed information and unresolved tension marker
 
 ## Image Prompt
 
-Create a high-fidelity UI mockup of a fiction reader. The left column shows a current scene paragraph. A subtle anchor near the paragraph says "Thread" or "Resolution".
+Create a high-fidelity UI mockup of a fiction reader. The reading column shows a current scene paragraph. A subtle anchor near the paragraph says "Thread" or "Earlier".
 
-On the right side, show a compact thread resolution panel. The panel should include:
+Show the hint as a small side sheet or margin card, opened only after the reader selects the anchor. The first visible answer should be one spoiler-safe line such as "This resolves the earlier question about..." using placeholder text.
+
+Below the first answer, show a compact secondary structure:
 
 - earlier thread
 - now resolved or still open
-- why this matters now
+- a collapsed "why this matters now" row
 
-Use a restrained neutral plus soft amber accent. Include a tiny "spoiler safe" or "revealed so far" visual cue, but do not make it look like a warning. If an unresolved thread is shown, display it as an open question, not as a future prediction.
+Use a restrained neutral plus soft amber accent. Include a tiny "revealed so far" visual cue, but do not make it look like a warning. If an unresolved thread is shown, display it as an open question, not as a future prediction.
 
 The design should communicate:
 
@@ -29,7 +31,7 @@ Use short labels and placeholder lines.
 
 ## Negative Prompt
 
-No spoiler alert banner, no future prediction panel, no dramatic plot board, no full timeline of the novel, no mystery map.
+No spoiler alert banner, no future prediction panel, no dramatic plot board, no full timeline of the novel, no mystery map, no dense right-side report.
 
 ## Success Criteria
 
