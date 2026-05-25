@@ -11,11 +11,13 @@ import PipelineRunner from "@/components/PipelineRunner"
 import ReaderScreen from "@/components/ReaderScreen"
 import RunReadinessPanel from "@/components/RunReadinessPanel"
 import SupportSystemShowcase from "@/components/SupportSystemShowcase"
+import { DEFAULT_STAGE_MODELS } from "@/config/pipeline-models"
 import {
   deleteRun,
   listRuns,
   loadBookMemory,
   loadStageResult,
+  saveRunStageModels,
   setRunFavorite,
   stageKey,
   type DataSource,
@@ -23,8 +25,8 @@ import {
 } from "@/lib/client-data"
 import { createTimestampRunId } from "@/lib/run-id"
 import type { BookMemorySnapshot } from "@/types/book-memory"
-import type { OverlayRefinementResult, SceneReaderPackageLog } from "@/types/schema"
-import type { ChapterMeta } from "@/types/ui"
+import type { OverlayRefinementResult, SceneReaderPackageLog, StageId } from "@/types/schema"
+import { PIPELINE_STAGES, type ChapterMeta, type PipelineStageDef } from "@/types/ui"
 
 type View = "upload" | "pipeline" | "graph" | "reader" | "legacy"
 type ReaderMode = "reader" | "researcher"
@@ -39,6 +41,74 @@ function getErrorMessage(error: unknown): string {
 
 function formatChapterLabel(chapter: ChapterMeta, visibleIndex: number): string {
   return `${visibleIndex + 1}. ${chapter.title}`
+}
+
+const BOOK_STATE_STAGE_IDS: StageId[] = [
+  "PRE.1",
+  "PRE.2",
+  "ENT.1",
+  "ENT.2",
+  "ENT.3",
+  "STATE.1",
+  "STATE.2",
+  "STATE.3",
+]
+const BOOK_STATE_STAGE_ID_SET = new Set<StageId>(BOOK_STATE_STAGE_IDS)
+const BOOK_STATE_STAGES = PIPELINE_STAGES.filter((stage) =>
+  BOOK_STATE_STAGE_ID_SET.has(stage.id),
+)
+
+interface BookStateRunProgress {
+  running: boolean
+  runId: string
+  completed: number
+  total: number
+  chapterIndex: number
+  chapterTotal: number
+  stageId?: StageId
+  message: string
+  error?: string
+}
+
+function createDefaultStageModelMap(): Partial<Record<StageId, string>> {
+  return Object.fromEntries(
+    PIPELINE_STAGES
+      .filter((stage) => stage.usesModel)
+      .map((stage) => [
+        stage.id,
+        DEFAULT_STAGE_MODELS[stage.id] ?? stage.modelPlaceholder ?? "google/gemini-3.5-flash",
+      ]),
+  ) as Partial<Record<StageId, string>>
+}
+
+async function runBookPipelineStage(
+  docId: string,
+  chapterId: string,
+  runId: string,
+  stage: PipelineStageDef,
+  stageModels: Partial<Record<StageId, string>>,
+): Promise<void> {
+  const model = stage.usesModel ? stageModels[stage.id]?.trim() : undefined
+  const res = await fetch(`/api/pipeline/${stage.apiPath}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      docId,
+      chapterId,
+      runId,
+      parents: {},
+      model,
+    }),
+  })
+  const data = (await res.json()) as { error?: string }
+  if (!res.ok) {
+    throw new Error(data.error ?? `${stage.id} failed with HTTP ${res.status}`)
+  }
+}
+
+function progressPercent(completed: number, total: number): number {
+  if (total <= 0) return 0
+  return Math.max(0, Math.min(100, (completed / total) * 100))
 }
 
 export default function Home() {
@@ -60,6 +130,8 @@ function HomeShell() {
   const [deletingRun, setDeletingRun] = useState(false)
   const [togglingFavorite, setTogglingFavorite] = useState(false)
   const [runId, setRunId] = useState("")
+  const [bookStateRun, setBookStateRun] = useState<BookStateRunProgress | null>(null)
+  const [pipelineRefreshNonce, setPipelineRefreshNonce] = useState(0)
 
   useEffect(() => {
     setRunId((current) => current || createTimestampRunId())
@@ -165,6 +237,90 @@ function HomeShell() {
       setAvailableRuns(runs)
     } finally {
       setTogglingFavorite(false)
+    }
+  }
+
+  async function handleRunBookThroughState3() {
+    if (!docId || chapters.length === 0 || bookStateRun?.running) return
+
+    const bookRunId = createTimestampRunId([runId])
+    const confirmed = window.confirm(
+      t.pipeline.runBookThroughState3Confirm
+        .replace("{count}", String(chapters.length))
+        .replace("{runId}", bookRunId),
+    )
+    if (!confirmed) return
+
+    const stageModels = createDefaultStageModelMap()
+    const total = chapters.length * BOOK_STATE_STAGES.length
+    let completed = 0
+    let activeChapterId = selectedChapterId
+
+    setRunId(bookRunId)
+    setBookStateRun({
+      running: true,
+      runId: bookRunId,
+      completed: 0,
+      total,
+      chapterIndex: 0,
+      chapterTotal: chapters.length,
+      message: t.pipeline.bookRunProgress,
+    })
+
+    try {
+      for (let chapterIndex = 0; chapterIndex < chapters.length; chapterIndex++) {
+        const chapter = chapters[chapterIndex]
+        activeChapterId = chapter.chapterId
+        await saveRunStageModels(docId, chapter.chapterId, bookRunId, stageModels)
+
+        for (let stageIndex = 0; stageIndex < BOOK_STATE_STAGES.length; stageIndex++) {
+          const stage = BOOK_STATE_STAGES[stageIndex]
+          setBookStateRun({
+            running: true,
+            runId: bookRunId,
+            completed,
+            total,
+            chapterIndex,
+            chapterTotal: chapters.length,
+            stageId: stage.id,
+            message: `${formatChapterLabel(chapter, chapterIndex)} - ${stage.id}`,
+          })
+
+          await runBookPipelineStage(docId, chapter.chapterId, bookRunId, stage, stageModels)
+          completed += 1
+        }
+      }
+
+      setBookStateRun({
+        running: false,
+        runId: bookRunId,
+        completed,
+        total,
+        chapterIndex: chapters.length - 1,
+        chapterTotal: chapters.length,
+        message: t.pipeline.bookRunComplete,
+      })
+      setAvailableRuns(await listRuns(docId, selectedChapterId))
+    } catch (error) {
+      setSelectedChapterId(activeChapterId)
+      const failedChapterIndex = Math.max(
+        0,
+        chapters.findIndex((chapter) => chapter.chapterId === activeChapterId),
+      )
+      setBookStateRun({
+        running: false,
+        runId: bookRunId,
+        completed,
+        total,
+        chapterIndex: Math.min(failedChapterIndex, chapters.length - 1),
+        chapterTotal: chapters.length,
+        message: t.pipeline.bookRunFailed,
+        error: getErrorMessage(error),
+      })
+      setAvailableRuns(await listRuns(docId, activeChapterId))
+    } finally {
+      setRunId(bookRunId)
+      setPipelineRefreshNonce((value) => value + 1)
     }
   }
 
@@ -325,10 +481,48 @@ function HomeShell() {
                   </div>
                 </div>
               </div>
+
+              <div className="flex flex-wrap items-center gap-3 border-t border-zinc-100 pt-4">
+                <button
+                  type="button"
+                  onClick={() => void handleRunBookThroughState3()}
+                  disabled={!docId || chapters.length === 0 || bookStateRun?.running}
+                  className="rounded-lg border border-blue-200 bg-blue-50 px-4 py-2 text-sm font-medium text-blue-700 transition-colors hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-50"
+                  title={t.pipeline.runBookThroughState3Title}
+                >
+                  {bookStateRun?.running ? t.pipeline.bookRunProgress : t.pipeline.runBookThroughState3}
+                </button>
+                {bookStateRun && (
+                  <div className="min-w-[280px] flex-1 rounded-lg bg-zinc-50 px-3 py-2">
+                    <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-zinc-600">
+                      <span className="font-medium text-zinc-800">{bookStateRun.message}</span>
+                      <span>
+                        {bookStateRun.completed}/{bookStateRun.total} stages
+                      </span>
+                    </div>
+                    <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-white">
+                      <div
+                        className={`h-full rounded-full transition-all ${
+                          bookStateRun.error ? "bg-red-500" : "bg-blue-500"
+                        }`}
+                        style={{ width: `${progressPercent(bookStateRun.completed, bookStateRun.total)}%` }}
+                      />
+                    </div>
+                    <p className="mt-1 text-xs text-zinc-500">
+                      {t.common.chapter} {Math.min(bookStateRun.chapterIndex + 1, bookStateRun.chapterTotal)}/{bookStateRun.chapterTotal}
+                      {bookStateRun.stageId ? ` - ${bookStateRun.stageId}` : ""}
+                    </p>
+                    {bookStateRun.error && (
+                      <p className="mt-1 text-xs text-red-600">{bookStateRun.error}</p>
+                    )}
+                  </div>
+                )}
+              </div>
             </div>
 
             <div className="min-h-[720px] min-w-0 rounded-xl border border-zinc-200 bg-white p-5">
               <PipelineRunner
+                key={`${selectedChapterId}:${runId}:${pipelineRefreshNonce}`}
                 docId={docId}
                 chapterId={selectedChapterId}
                 runId={runId}

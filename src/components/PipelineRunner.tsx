@@ -49,7 +49,7 @@ import type {
   VisualGrounding,
   RenderedImages,
 } from "@/types/schema"
-import { PIPELINE_STAGES, type StageStatus } from "@/types/ui"
+import { PIPELINE_STAGES, type PipelineStageDef, type StageStatus } from "@/types/ui"
 
 interface Props {
   docId: string
@@ -76,6 +76,20 @@ interface RunProgress {
 
 const ACTIVE_PIPELINE_STAGES = PIPELINE_STAGES.filter((stage) => stage.group !== "vis")
 const ACTIVE_STAGE_IDS = new Set<StageId>(ACTIVE_PIPELINE_STAGES.map((stage) => stage.id))
+const THROUGH_STATE_STAGE_IDS: StageId[] = [
+  "PRE.1",
+  "PRE.2",
+  "ENT.1",
+  "ENT.2",
+  "ENT.3",
+  "STATE.1",
+  "STATE.2",
+  "STATE.3",
+]
+const THROUGH_STATE_STAGE_ID_SET = new Set<StageId>(THROUGH_STATE_STAGE_IDS)
+const THROUGH_STATE_PIPELINE_STAGES = ACTIVE_PIPELINE_STAGES.filter((stage) =>
+  THROUGH_STATE_STAGE_ID_SET.has(stage.id),
+)
 const ACTIVE_PIPELINE_STAGE_EDGES = PIPELINE_STAGE_EDGES.filter(
   (edge) => ACTIVE_STAGE_IDS.has(edge.from) && ACTIVE_STAGE_IDS.has(edge.to),
 )
@@ -8823,14 +8837,16 @@ export default function PipelineRunner({ docId, chapterId, runId, onRunIdChange 
     }
   }
 
-  async function runAll() {
+  async function runStageSequence(
+    runnableStages: PipelineStageDef[],
+    startMessage: string,
+  ) {
     setRunning(true)
     try {
       let activeRunId = runId
       let activeResults = results
-      const runnableStages = ACTIVE_PIPELINE_STAGES.filter((stage) => stage.implemented !== false)
       setRunProgress({
-        message: "Starting full pipeline",
+        message: startMessage,
         completed: 0,
         total: runnableStages.length,
       })
@@ -8860,6 +8876,20 @@ export default function PipelineRunner({ docId, chapterId, runId, onRunIdChange 
     }
   }
 
+  async function runAll() {
+    await runStageSequence(
+      ACTIVE_PIPELINE_STAGES.filter((stage) => stage.implemented !== false),
+      "Starting full pipeline",
+    )
+  }
+
+  async function runThroughState3() {
+    await runStageSequence(
+      THROUGH_STATE_PIPELINE_STAGES.filter((stage) => stage.implemented !== false),
+      "Starting pipeline through STATE.3",
+    )
+  }
+
   function getRemainingRunnableStages(currentResults: StageResultMap) {
     return ACTIVE_PIPELINE_STAGES.filter((stage) => (
       stage.implemented !== false && currentResults[stage.id] === undefined
@@ -8867,40 +8897,7 @@ export default function PipelineRunner({ docId, chapterId, runId, onRunIdChange 
   }
 
   async function runRemaining() {
-    setRunning(true)
-    try {
-      let activeRunId = runId
-      let activeResults = results
-      const remainingStages = getRemainingRunnableStages(activeResults)
-      setRunProgress({
-        message: "Starting remaining stages",
-        completed: 0,
-        total: remainingStages.length,
-      })
-
-      for (let index = 0; index < remainingStages.length; index++) {
-        const stage = remainingStages[index]
-        setRunProgress({
-          message: `${stage.id} running`,
-          completed: index,
-          total: remainingStages.length,
-        })
-        const outcome = await runStage(stage.apiPath, stage.id, activeRunId, activeResults, {
-          index: index + 1,
-          total: remainingStages.length,
-        })
-        activeRunId = outcome.runId
-        activeResults = outcome.results
-        if (!outcome.ok) break
-        setRunProgress({
-          message: `${stage.id} completed`,
-          completed: index + 1,
-          total: remainingStages.length,
-        })
-      }
-    } finally {
-      setRunning(false)
-    }
+    await runStageSequence(getRemainingRunnableStages(results), "Starting remaining stages")
   }
 
   async function runSingle(apiPath: string, stageId: StageId) {
@@ -9073,6 +9070,14 @@ export default function PipelineRunner({ docId, chapterId, runId, onRunIdChange 
           className="rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-zinc-700 disabled:opacity-50"
         >
           {t.pipeline.runAll}
+        </button>
+        <button
+          onClick={runThroughState3}
+          disabled={running || loadingResults}
+          className="rounded-lg border border-blue-200 bg-blue-50 px-4 py-2 text-sm font-medium text-blue-700 transition-colors hover:bg-blue-100 disabled:opacity-50"
+          title={t.pipeline.runThroughState3Title}
+        >
+          {t.pipeline.runThroughState3}
         </button>
         <button
           onClick={runRemaining}

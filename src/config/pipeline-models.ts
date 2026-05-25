@@ -1,20 +1,24 @@
 import type { StageId } from "@/types/schema"
 
+export const GEMINI_FLASH_MODEL = "google/gemini-3.5-flash"
+export const PRE2_MODEL = "openai/gpt-4o-mini"
+export const ENT2_MODEL = "google/gemini-3.1-pro-preview"
+
 export const DEFAULT_STAGE_MODELS: Partial<Record<StageId, string>> = {
-  "PRE.2": "openai/gpt-4o-mini",
-  "ENT.1": "google/gemini-3.5-flash",
-  "ENT.2": "google/gemini-3.1-pro-preview",
-  "ENT.3": "anthropic/claude-sonnet-4.6",
-  "STATE.2": "openai/gpt-4.1-mini",
-  "STATE.3": "openai/gpt-4.1-mini",
-  "SCENE.2": "openai/gpt-4o-mini",
-  "SCENE.3": "openai/gpt-4o-mini",
-  "VIS.1": "openai/gpt-4.1-mini",
-  "VIS.2": "openai/gpt-4.1-mini",
-  "VIS.4": "google/gemini-3.1-flash-image-preview",
-  "SUB.1": "openai/gpt-4.1-mini",
-  "SUB.2": "openai/gpt-4.1-mini",
-  "SUB.3": "anthropic/claude-sonnet-4.6",
-  "SUB.4": "openai/gpt-4.1-mini",
-  "FINAL.2": "openai/gpt-4.1-mini",
+  "PRE.2": PRE2_MODEL,
+  "ENT.1": GEMINI_FLASH_MODEL,
+  "ENT.2": ENT2_MODEL,
+  "ENT.3": GEMINI_FLASH_MODEL,
+  "STATE.2": GEMINI_FLASH_MODEL,
+  "STATE.3": GEMINI_FLASH_MODEL,
+  "SCENE.2": GEMINI_FLASH_MODEL,
+  "SCENE.3": GEMINI_FLASH_MODEL,
+  "VIS.1": GEMINI_FLASH_MODEL,
+  "VIS.2": GEMINI_FLASH_MODEL,
+  "VIS.4": GEMINI_FLASH_MODEL,
+  "SUB.1": GEMINI_FLASH_MODEL,
+  "SUB.2": GEMINI_FLASH_MODEL,
+  "SUB.3": GEMINI_FLASH_MODEL,
+  "SUB.4": GEMINI_FLASH_MODEL,
+  "FINAL.2": GEMINI_FLASH_MODEL,
 }
