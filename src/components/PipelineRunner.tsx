@@ -61,6 +61,18 @@ interface Props {
 type StageMap = Record<string, { status: StageStatus; error?: string }>
 type StageResultMap = Partial<Record<StageId, unknown>>
 type StageModelMap = Partial<Record<StageId, string>>
+interface StageProgress {
+  message: string
+  completed?: number
+  total?: number
+  unit?: string
+}
+type StageProgressMap = Partial<Record<StageId, StageProgress>>
+interface RunProgress {
+  message: string
+  completed: number
+  total: number
+}
 
 const ACTIVE_PIPELINE_STAGES = PIPELINE_STAGES.filter((stage) => stage.group !== "vis")
 const ACTIVE_STAGE_IDS = new Set<StageId>(ACTIVE_PIPELINE_STAGES.map((stage) => stage.id))
@@ -253,10 +265,15 @@ function summarizeStage(stageId: StageId, artifact: unknown): string[] {
       const types = mentions
         .map((mention) => String(mention.mention_type ?? "unknown"))
         .filter(Boolean)
+      const stats = data.extraction_stats && typeof data.extraction_stats === "object"
+        ? (data.extraction_stats as Record<string, unknown>)
+        : undefined
       return [
         `mentions: ${mentions.length}`,
         types.length > 0 ? countBy(types) : "types: -",
-      ]
+        typeof stats?.dropped_mentions === "number" ? `dropped: ${stats.dropped_mentions}` : "",
+        typeof stats?.attempted_raw_mentions === "number" ? `raw: ${stats.attempted_raw_mentions}` : "",
+      ].filter(Boolean)
     }
     case "ENT.2": {
       const validated = Array.isArray(data.validated)
@@ -420,6 +437,125 @@ function filterResultsByStages(results: StageResultMap, stageIds: StageId[]): St
   return next
 }
 
+function parseSseBlock(block: string): { event: string; data: unknown } | null {
+  let event = "message"
+  const dataLines: string[] = []
+
+  for (const line of block.split(/\r?\n/)) {
+    if (line.startsWith("event:")) {
+      event = line.slice("event:".length).trim()
+    } else if (line.startsWith("data:")) {
+      dataLines.push(line.slice("data:".length).trimStart())
+    }
+  }
+
+  if (dataLines.length === 0) return null
+
+  const dataText = dataLines.join("\n")
+  try {
+    return { event, data: JSON.parse(dataText) }
+  } catch {
+    return { event, data: dataText }
+  }
+}
+
+function normalizeStreamProgress(value: unknown): StageProgress {
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>
+    return {
+      message: String(record.message ?? ""),
+      completed: typeof record.completed === "number" ? record.completed : undefined,
+      total: typeof record.total === "number" ? record.total : undefined,
+      unit: typeof record.unit === "string" ? record.unit : undefined,
+    }
+  }
+  return { message: String(value ?? "") }
+}
+
+async function runPipelineStageRequest<T>(
+  apiPath: string,
+  body: Record<string, unknown>,
+  onProgress: (progress: StageProgress) => void,
+): Promise<T> {
+  const res = await fetch(`/api/pipeline/${apiPath}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "text/event-stream",
+    },
+    body: JSON.stringify(body),
+  })
+
+  const contentType = res.headers.get("content-type") ?? ""
+  if (!contentType.includes("text/event-stream") || !res.body) {
+    const data = (await res.json()) as T & { error?: string }
+    if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`)
+    return data
+  }
+
+  const reader = res.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ""
+  let result: unknown
+  let streamError: string | null = null
+
+  function processBlock(block: string): void {
+    const parsed = parseSseBlock(block)
+    if (!parsed) return
+
+    if (parsed.event === "progress") {
+      onProgress(normalizeStreamProgress(parsed.data))
+    } else if (parsed.event === "result") {
+      result = parsed.data
+    } else if (parsed.event === "error") {
+      const errorRecord = parsed.data as { error?: unknown }
+      streamError = String(errorRecord?.error ?? "Pipeline stream failed")
+    }
+  }
+
+  while (true) {
+    const { value, done } = await reader.read()
+    buffer += decoder.decode(value, { stream: !done })
+    const blocks = buffer.split(/\r?\n\r?\n/)
+    buffer = blocks.pop() ?? ""
+    for (const block of blocks) {
+      processBlock(block)
+    }
+    if (done) break
+  }
+
+  if (buffer.trim()) {
+    processBlock(buffer)
+  }
+  if (streamError) throw new Error(streamError)
+  if (result === undefined) throw new Error("Pipeline stream finished without a result.")
+
+  return result as T
+}
+
+function formatStageProgress(progress: StageProgress): string {
+  if (
+    typeof progress.completed === "number" &&
+    typeof progress.total === "number" &&
+    progress.total > 0
+  ) {
+    const unit = progress.unit ? ` ${progress.unit}` : ""
+    return `${progress.completed}/${progress.total}${unit} - ${progress.message}`
+  }
+  return progress.message
+}
+
+function progressPercent(progress: Pick<StageProgress, "completed" | "total">): number | null {
+  if (
+    typeof progress.completed !== "number" ||
+    typeof progress.total !== "number" ||
+    progress.total <= 0
+  ) {
+    return null
+  }
+  return Math.max(0, Math.min(100, (progress.completed / progress.total) * 100))
+}
+
 const CONTENT_TYPE_META: Record<ContentType, { label: string; accent: string; pill: string }> = {
   front_matter: {
     label: "Front Matter",
@@ -486,6 +622,8 @@ const UNKNOWN_MENTION_META = {
   rail: "border-l-zinc-300",
 }
 const WORD_CHAR_PATTERN = /[\p{L}\p{N}]/u
+const HANGUL_PATTERN = /\p{Script=Hangul}/u
+const KOREAN_POSTPOSITION_START_PATTERN = /[은는이가을를과와도만에에서에게께한테으로로의보다처럼까지부터마다라며라고랑이나나야여]/u
 
 function normalizeMentionType(value: unknown): MentionType | null {
   const raw = String(value ?? "").trim().toLowerCase()
@@ -504,11 +642,25 @@ function isWordChar(char: string): boolean {
   return WORD_CHAR_PATTERN.test(char)
 }
 
+function isHangul(char: string): boolean {
+  return HANGUL_PATTERN.test(char)
+}
+
+function isLikelyKoreanPostpositionBoundary(spanLastChar: string, after: string): boolean {
+  return isHangul(spanLastChar) &&
+    isHangul(after) &&
+    KOREAN_POSTPOSITION_START_PATTERN.test(after)
+}
+
 function hasStandaloneBoundary(text: string, start: number, spanLength: number): boolean {
   const before = start > 0 ? text[start - 1] : ""
   const afterIndex = start + spanLength
   const after = afterIndex < text.length ? text[afterIndex] : ""
-  return !isWordChar(before) && !isWordChar(after)
+  const spanLastChar = text[start + spanLength - 1] ?? ""
+  const hasLeftBoundary = !isWordChar(before)
+  const hasRightBoundary = !isWordChar(after) ||
+    isLikelyKoreanPostpositionBoundary(spanLastChar, after)
+  return hasLeftBoundary && hasRightBoundary
 }
 
 function findSpanStart(
@@ -840,11 +992,11 @@ function LLMPromptPanel({ trials }: { trials: LLMTrialDebug[] }) {
               <div>
                 <h4 className="text-sm font-semibold text-zinc-900">
                   {t.pipeline.trial} {activeTrial.trial_id}
-                  {activeTrial.template_name ? ` 쨌 ${activeTrial.template_name}` : ""}
+                  {activeTrial.template_name ? ` - ${activeTrial.template_name}` : ""}
                 </h4>
                 <p className="mt-1 text-xs text-zinc-500">
-                  {activeTrial.mode} 쨌 {activeTrial.model}
-                  {activeTrial.has_image ? " 쨌 image" : ""}
+                  {activeTrial.mode} - {activeTrial.model}
+                  {activeTrial.has_image ? " - image" : ""}
                 </p>
               </div>
               <button
@@ -1329,20 +1481,26 @@ function Ent1StageView({
     classifyLog?.units.map((unit, index) => [getContentUnitPidKey(unit, paragraphs[index]?.pid), unit]) ?? [],
   )
   const mentions = artifact.mentions ?? []
+  const stats = artifact.extraction_stats
+  const droppedMentions = artifact.dropped_mentions ?? []
+  const renderMentions = mentions.map((mention, index) => ({
+    ...mention,
+    renderKey: `${mention.pid}:${mention.span}:${mention.mention_type}:${index}`,
+    originalIndex: index,
+  }))
   const filteredMentions = filter === "all"
-    ? mentions
-    : mentions.filter((mention) => normalizeMentionType(mention.mention_type) === filter)
+    ? renderMentions
+    : renderMentions.filter((mention) => normalizeMentionType(mention.mention_type) === filter)
   const counts = {
     cast: mentions.filter((mention) => normalizeMentionType(mention.mention_type) === "cast").length,
     place: mentions.filter((mention) => normalizeMentionType(mention.mention_type) === "place").length,
     time: mentions.filter((mention) => normalizeMentionType(mention.mention_type) === "time").length,
   }
 
-  function jumpToMention(mention: MentionCandidates["mentions"][number], index: number) {
-    const key = `${mention.pid}:${mention.span}:${mention.mention_type}:${index}`
+  function jumpToMention(mention: MentionCandidates["mentions"][number] & { renderKey: string }) {
     const ref = paragraphRefs.current.get(normalizePidKey(mention.pid))
     ref?.scrollIntoView({ behavior: "smooth", block: "center" })
-    setActiveMentionKey(key)
+    setActiveMentionKey(mention.renderKey)
     if (flashTimerRef.current) clearTimeout(flashTimerRef.current)
     flashTimerRef.current = setTimeout(() => setActiveMentionKey(null), 1600)
   }
@@ -1449,11 +1607,7 @@ function Ent1StageView({
             paragraphs.map((paragraph) => {
               const pidKey = normalizePidKey(paragraph.pid)
               const unit = classificationMap.get(pidKey)
-              const paragraphMentions = mentions
-                .map((mention, index) => ({
-                  ...mention,
-                  renderKey: `${mention.pid}:${mention.span}:${mention.mention_type}:${index}`,
-                }))
+              const paragraphMentions = renderMentions
                 .filter((mention) => normalizePidKey(mention.pid) === pidKey)
 
               return (
@@ -1508,12 +1662,71 @@ function Ent1StageView({
             </div>
             <span className="text-xs text-zinc-400">{artifact.model ?? artifact.method}</span>
           </div>
-          <div className="mt-3 grid gap-3 sm:grid-cols-4 xl:grid-cols-1 2xl:grid-cols-4">
+          <div className="mt-3 grid gap-3 sm:grid-cols-3 xl:grid-cols-1 2xl:grid-cols-3">
             <ResultMetaCard label="Total" value={String(mentions.length)} />
             <ResultMetaCard label="Cast" value={String(counts.cast)} />
             <ResultMetaCard label="Place" value={String(counts.place)} />
             <ResultMetaCard label="Time" value={String(counts.time)} />
+            <ResultMetaCard label="Raw Candidates" value={String(stats?.attempted_raw_mentions ?? "-")} />
+            <ResultMetaCard label="Dropped" value={String(stats?.dropped_mentions ?? "-")} />
           </div>
+          {stats?.dropped_by_reason && Object.keys(stats.dropped_by_reason).length > 0 && (
+            <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+              <p className="font-semibold">Dropped raw mentions</p>
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {Object.entries(stats.dropped_by_reason).map(([reason, count]) => (
+                  <span key={reason} className="rounded-full bg-white px-2 py-0.5">
+                    {reason}: {count}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+          <details className="mt-4 rounded-lg border border-zinc-200 bg-zinc-50">
+            <summary className="cursor-pointer px-3 py-2 text-xs font-semibold text-zinc-700">
+              Dropped raw mention details ({droppedMentions.length})
+            </summary>
+            <div className="max-h-80 space-y-2 overflow-y-auto border-t border-zinc-200 p-3">
+              {droppedMentions.length > 0 ? (
+                droppedMentions.map((drop, index) => {
+                  const meta = getMentionMeta(drop.mention_type)
+                  return (
+                    <div
+                      key={`${drop.reason}:${drop.pid ?? "-"}:${drop.span ?? "-"}:${index}`}
+                      className={`rounded-lg border border-zinc-200 border-l-2 bg-white px-3 py-2 ${meta.rail}`}
+                    >
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-800">
+                          {drop.reason}
+                        </span>
+                        {typeof drop.pid === "number" && (
+                          <span className="font-mono text-[11px] text-zinc-500">P{drop.pid}</span>
+                        )}
+                        {drop.mention_type && (
+                          <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${meta.pill}`}>
+                            {meta.label}
+                          </span>
+                        )}
+                      </div>
+                      <p className="mt-1 break-words text-sm font-medium text-zinc-900">
+                        {drop.span ? `"${drop.span}"` : "(no span)"}
+                      </p>
+                      <p className="mt-1 text-xs text-zinc-500">
+                        offset {typeof drop.start_char === "number" ? drop.start_char : "-"}
+                        {" -> "}
+                        {typeof drop.end_char === "number" ? drop.end_char : "-"}
+                        {drop.normalized ? ` | normalized: ${drop.normalized}` : ""}
+                      </p>
+                    </div>
+                  )
+                })
+              ) : (
+                <div className="rounded-lg border border-dashed border-zinc-300 bg-white px-3 py-4 text-sm text-zinc-500">
+                  No dropped mention details are stored for this result. Re-run ENT.1 to capture details.
+                </div>
+              )}
+            </div>
+          </details>
         </div>
 
         <div className="rounded-xl border border-zinc-200 bg-white p-5">
@@ -1546,14 +1759,13 @@ function Ent1StageView({
             <span className="text-xs text-zinc-400">{filteredMentions.length} items</span>
           </div>
           <div className="mt-3 space-y-2 overflow-y-auto pr-1">
-            {filteredMentions.map((mention, index) => {
+            {filteredMentions.map((mention) => {
               const meta = getMentionMeta(mention.mention_type)
-              const itemKey = `${mention.pid}:${mention.span}:${mention.mention_type}:${index}`
               return (
                 <button
-                  key={itemKey}
+                  key={mention.renderKey}
                   type="button"
-                  onClick={() => jumpToMention(mention, index)}
+                  onClick={() => jumpToMention(mention)}
                   className={`flex w-full items-center gap-3 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-left transition-colors hover:bg-white`}
                 >
                   <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-zinc-200 bg-white text-base text-zinc-500">
@@ -8435,9 +8647,23 @@ export default function PipelineRunner({ docId, chapterId, runId, onRunIdChange 
   const [deletingStageId, setDeletingStageId] = useState<StageId | null>(null)
   const [selectedStageId, setSelectedStageId] = useState<StageId>("PRE.1")
   const [stageModels, setStageModels] = useState<StageModelMap>(() => createInitialStageModels())
+  const [stageProgress, setStageProgress] = useState<StageProgressMap>({})
+  const [runProgress, setRunProgress] = useState<RunProgress | null>(null)
 
   function setStage(id: string, status: StageStatus, error?: string) {
     setStages((prev) => ({ ...prev, [id]: { status, error } }))
+  }
+
+  function setProgress(stageId: StageId, progress: StageProgress | null) {
+    setStageProgress((prev) => {
+      const next = { ...prev }
+      if (progress) {
+        next[stageId] = progress
+      } else {
+        delete next[stageId]
+      }
+      return next
+    })
   }
 
   const refreshResults = useCallback(async () => {
@@ -8476,6 +8702,8 @@ export default function PipelineRunner({ docId, chapterId, runId, onRunIdChange 
     setResults({})
     setSelectedStageId("PRE.1")
     setStageModels(createInitialStageModels())
+    setStageProgress({})
+    setRunProgress(null)
   }, [chapterId, docId])
 
   useEffect(() => {
@@ -8534,6 +8762,7 @@ export default function PipelineRunner({ docId, chapterId, runId, onRunIdChange 
     stageId: StageId,
     currentRunId: string,
     currentResults: StageResultMap,
+    runContext?: { index: number; total: number },
   ): Promise<{ ok: boolean; runId: string; results: StageResultMap }> {
     const stage = ACTIVE_PIPELINE_STAGES.find((item) => item.id === stageId)
     if (!stage || stage.implemented === false) {
@@ -8544,6 +8773,14 @@ export default function PipelineRunner({ docId, chapterId, runId, onRunIdChange 
     const { targetRunId, nextResults } = await prepareRunForStage(stageId, currentRunId, currentResults)
 
     setStage(stageId, "running")
+    setProgress(stageId, {
+      message: runContext
+        ? `${stageId}: stage ${runContext.index}/${runContext.total} started`
+        : `${stageId}: started`,
+      completed: 0,
+      total: 1,
+      unit: "stage",
+    })
     if (targetRunId !== currentRunId) {
       onRunIdChange?.(targetRunId)
     }
@@ -8551,19 +8788,17 @@ export default function PipelineRunner({ docId, chapterId, runId, onRunIdChange 
     try {
       const model = stage.usesModel ? stageModels[stageId]?.trim() : undefined
       await saveRunStageModels(docId, chapterId, targetRunId, stageModels)
-      const res = await fetch(`/api/pipeline/${apiPath}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+      const data = await runPipelineStageRequest<Record<string, unknown>>(
+        apiPath,
+        {
           docId,
           chapterId,
           runId: targetRunId,
           parents: {},
           model,
-        }),
-      })
-      const data = (await res.json()) as Record<string, unknown> & { error?: string }
-      if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`)
+        },
+        (progress) => setProgress(stageId, progress),
+      )
 
       const mergedResults = { ...nextResults, [stageId]: data }
       setResults(mergedResults)
@@ -8571,10 +8806,19 @@ export default function PipelineRunner({ docId, chapterId, runId, onRunIdChange 
         ...prev,
         [stageId]: { status: "done" },
       }))
+      setProgress(stageId, {
+        message: `${stageId}: completed`,
+        completed: 1,
+        total: 1,
+        unit: "stage",
+      })
       setSelectedStageId(stageId)
       return { ok: true, runId: targetRunId, results: mergedResults }
     } catch (error) {
       setStage(stageId, "error", String(error))
+      setProgress(stageId, {
+        message: error instanceof Error ? error.message : String(error),
+      })
       return { ok: false, runId: targetRunId, results: nextResults }
     }
   }
@@ -8584,13 +8828,32 @@ export default function PipelineRunner({ docId, chapterId, runId, onRunIdChange 
     try {
       let activeRunId = runId
       let activeResults = results
+      const runnableStages = ACTIVE_PIPELINE_STAGES.filter((stage) => stage.implemented !== false)
+      setRunProgress({
+        message: "Starting full pipeline",
+        completed: 0,
+        total: runnableStages.length,
+      })
 
-      for (const stage of ACTIVE_PIPELINE_STAGES) {
-        if (stage.implemented === false) continue
-        const outcome = await runStage(stage.apiPath, stage.id, activeRunId, activeResults)
+      for (let index = 0; index < runnableStages.length; index++) {
+        const stage = runnableStages[index]
+        setRunProgress({
+          message: `${stage.id} running`,
+          completed: index,
+          total: runnableStages.length,
+        })
+        const outcome = await runStage(stage.apiPath, stage.id, activeRunId, activeResults, {
+          index: index + 1,
+          total: runnableStages.length,
+        })
         activeRunId = outcome.runId
         activeResults = outcome.results
         if (!outcome.ok) break
+        setRunProgress({
+          message: `${stage.id} completed`,
+          completed: index + 1,
+          total: runnableStages.length,
+        })
       }
     } finally {
       setRunning(false)
@@ -8609,12 +8872,31 @@ export default function PipelineRunner({ docId, chapterId, runId, onRunIdChange 
       let activeRunId = runId
       let activeResults = results
       const remainingStages = getRemainingRunnableStages(activeResults)
+      setRunProgress({
+        message: "Starting remaining stages",
+        completed: 0,
+        total: remainingStages.length,
+      })
 
-      for (const stage of remainingStages) {
-        const outcome = await runStage(stage.apiPath, stage.id, activeRunId, activeResults)
+      for (let index = 0; index < remainingStages.length; index++) {
+        const stage = remainingStages[index]
+        setRunProgress({
+          message: `${stage.id} running`,
+          completed: index,
+          total: remainingStages.length,
+        })
+        const outcome = await runStage(stage.apiPath, stage.id, activeRunId, activeResults, {
+          index: index + 1,
+          total: remainingStages.length,
+        })
         activeRunId = outcome.runId
         activeResults = outcome.results
         if (!outcome.ok) break
+        setRunProgress({
+          message: `${stage.id} completed`,
+          completed: index + 1,
+          total: remainingStages.length,
+        })
       }
     } finally {
       setRunning(false)
@@ -8623,8 +8905,21 @@ export default function PipelineRunner({ docId, chapterId, runId, onRunIdChange 
 
   async function runSingle(apiPath: string, stageId: StageId) {
     setRunning(true)
-    await runStage(apiPath, stageId, runId, results)
-    setRunning(false)
+    setRunProgress({
+      message: `${stageId} running`,
+      completed: 0,
+      total: 1,
+    })
+    try {
+      const outcome = await runStage(apiPath, stageId, runId, results, { index: 1, total: 1 })
+      setRunProgress({
+        message: outcome.ok ? `${stageId} completed` : `${stageId} failed`,
+        completed: outcome.ok ? 1 : 0,
+        total: 1,
+      })
+    } finally {
+      setRunning(false)
+    }
   }
 
   async function handleDeleteStage(stageId: StageId) {
@@ -8659,6 +8954,7 @@ export default function PipelineRunner({ docId, chapterId, runId, onRunIdChange 
   const selectedResult = results[selectedStageId]
   const selectedLLMTrials = extractLLMTrials(selectedResult)
   const selectedSummary = selectedResult ? summarizeStage(selectedStageId, selectedResult) : []
+  const selectedProgress = stageProgress[selectedStageId]
   const selectedModel = stageModels[selectedStageId] ?? ""
   const preparedChapter =
     results["PRE.1"] && typeof results["PRE.1"] === "object"
@@ -8797,6 +9093,23 @@ export default function PipelineRunner({ docId, chapterId, runId, onRunIdChange 
         {loadingResults && <span className="text-xs text-zinc-400">{t.pipeline.loadingSavedResults}</span>}
       </div>
 
+      {runProgress && (
+        <div className="rounded-xl border border-blue-100 bg-blue-50 px-4 py-3">
+          <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-blue-800">
+            <span className="font-medium">{runProgress.message}</span>
+            <span>
+              {runProgress.completed}/{runProgress.total} stages
+            </span>
+          </div>
+          <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-white">
+            <div
+              className="h-full rounded-full bg-blue-500 transition-all"
+              style={{ width: `${progressPercent(runProgress) ?? 0}%` }}
+            />
+          </div>
+        </div>
+      )}
+
       <StageGraphNavigator
         stages={stages}
         results={results}
@@ -8815,6 +9128,7 @@ export default function PipelineRunner({ docId, chapterId, runId, onRunIdChange 
             {ACTIVE_PIPELINE_STAGES.map((stage, stageIndex) => {
               const stageState = stages[stage.id] ?? { status: "idle" }
               const summary = results[stage.id] ? summarizeStage(stage.id, results[stage.id]) : []
+              const progress = stageProgress[stage.id]
               const selected = selectedStageId === stage.id
               const previousStage = stageIndex > 0 ? ACTIVE_PIPELINE_STAGES[stageIndex - 1] : undefined
               const showGroupLabel = !previousStage || previousStage.group !== stage.group
@@ -8892,6 +9206,25 @@ export default function PipelineRunner({ docId, chapterId, runId, onRunIdChange 
                             {item}
                           </span>
                         ))}
+                      </div>
+                    )}
+
+                    {progress && (
+                      <div className="mt-2">
+                        <div className="flex items-center justify-between gap-2 text-[11px] text-blue-700">
+                          <span className="truncate">{formatStageProgress(progress)}</span>
+                          {progressPercent(progress) !== null && (
+                            <span>{Math.round(progressPercent(progress) ?? 0)}%</span>
+                          )}
+                        </div>
+                        {progressPercent(progress) !== null && (
+                          <div className="mt-1 h-1 overflow-hidden rounded-full bg-blue-50">
+                            <div
+                              className="h-full rounded-full bg-blue-500 transition-all"
+                              style={{ width: `${progressPercent(progress) ?? 0}%` }}
+                            />
+                          </div>
+                        )}
                       </div>
                     )}
 
@@ -8975,6 +9308,25 @@ export default function PipelineRunner({ docId, chapterId, runId, onRunIdChange 
                   {item}
                 </span>
               ))}
+            </div>
+          )}
+
+          {selectedProgress && (
+            <div className="mt-4 rounded-lg border border-blue-100 bg-blue-50 px-4 py-3">
+              <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-blue-800">
+                <span className="font-medium">{formatStageProgress(selectedProgress)}</span>
+                {progressPercent(selectedProgress) !== null && (
+                  <span>{Math.round(progressPercent(selectedProgress) ?? 0)}%</span>
+                )}
+              </div>
+              {progressPercent(selectedProgress) !== null && (
+                <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-white">
+                  <div
+                    className="h-full rounded-full bg-blue-500 transition-all"
+                    style={{ width: `${progressPercent(selectedProgress) ?? 0}%` }}
+                  />
+                </div>
+              )}
             </div>
           )}
 

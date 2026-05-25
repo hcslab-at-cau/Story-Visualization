@@ -1,4 +1,6 @@
 const WORD_CHAR_PATTERN = /[\p{L}\p{N}]/u
+const HANGUL_PATTERN = /\p{Script=Hangul}/u
+const KOREAN_POSTPOSITION_START_PATTERN = /[은는이가을를과와도만에에서에게께한테으로로의보다처럼까지부터마다라며라고랑이나나야여]/u
 
 export interface MentionLocation {
   start_char: number
@@ -9,6 +11,19 @@ function isWordChar(char: string): boolean {
   return WORD_CHAR_PATTERN.test(char)
 }
 
+function isHangul(char: string): boolean {
+  return HANGUL_PATTERN.test(char)
+}
+
+function isLikelyKoreanPostpositionBoundary(
+  spanLastChar: string,
+  after: string,
+): boolean {
+  return isHangul(spanLastChar) &&
+    isHangul(after) &&
+    KOREAN_POSTPOSITION_START_PATTERN.test(after)
+}
+
 export function hasStandaloneBoundary(
   text: string,
   start: number,
@@ -17,7 +32,11 @@ export function hasStandaloneBoundary(
   const before = start > 0 ? text[start - 1] : ""
   const afterIndex = start + spanLength
   const after = afterIndex < text.length ? text[afterIndex] : ""
-  return !isWordChar(before) && !isWordChar(after)
+  const spanLastChar = text[start + spanLength - 1] ?? ""
+  const hasLeftBoundary = !isWordChar(before)
+  const hasRightBoundary = !isWordChar(after) ||
+    isLikelyKoreanPostpositionBoundary(spanLastChar, after)
+  return hasLeftBoundary && hasRightBoundary
 }
 
 export function findStandaloneOccurrences(

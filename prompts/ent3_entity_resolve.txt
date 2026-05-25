@@ -35,6 +35,8 @@ Each entry provides the mention ID, paragraph ID, and surface span. Use the chap
 - Use only existing entity_id values or "unknown".
 - A pronoun must never be resolved to a place or time entity.
 - Merge only when the text supports coreference clearly enough for downstream structured state tracking.
+- The chapter may be Korean. For Korean text, pay close attention to postpositions, contracted pronouns, honorific/role titles, and omitted subjects.
+- Korean surface forms that differ only by particles usually refer to the same entity when the stem and local context match.
 
 ---
 
@@ -55,6 +57,15 @@ Basic agreement cues:
 - "we / us / our / ours / ourselves" → first-person plural speaker group
 - "I / me / my / mine / myself" → current speaker or point-of-view cast entity when clear
 - "it / its / itself" → non-human singular referent, including animals or anthropomorphized creatures that function as story participants
+
+Korean agreement and pronoun cues:
+- "나 / 난 / 날 / 내가 / 내 / 나의 / 내게" are first-person singular variants. Treat them as the same speaker/narrator when the local narration supports it.
+- "저 / 전 / 절 / 제가 / 제 / 저의 / 제게" are polite first-person singular variants. Treat them as the same speaker when supported.
+- "우리 / 우린 / 우릴 / 우리가 / 우리의" are first-person plural variants.
+- "너 / 넌 / 널 / 네가 / 니가 / 네 / 너의" are second-person variants.
+- "그 / 그는 / 그가 / 그를", "그녀 / 그녀는 / 그녀가 / 그녀를", and "그들 / 그들이 / 그들은 / 그들을" should be resolved to an existing cast entity only when local context clearly identifies the referent.
+- "자기 / 자신 / 본인" are reflexive or self-reference expressions. Resolve them to the locally controlled cast entity only when the sentence clearly supports it.
+- Korean often omits subjects. Do not create a resolution for an omitted subject unless there is an explicit unresolved mention item in the input.
 
 ### 3) Narrative-specific rules
 - In fiction, animals, creatures, and anthropomorphized beings count as cast if they act, speak, perceive, or are treated as story participants.
@@ -99,10 +110,18 @@ Common valid cast merge patterns in fiction:
 - Stable role references: "the Duchess" used consistently for one character
 - Creature references that clearly denote the same acting participant
 
+Korean valid cast merge patterns:
+- Particle variants: "토끼" ↔ "토끼가" ↔ "토끼는" ↔ "토끼를" ↔ "토끼에게"
+- Descriptive modifier + head noun, when the local scene has one salient participant: "흰 토끼" ↔ "토끼", "어린 소녀" ↔ "소녀"
+- Name/title variants: "철수" ↔ "철수는" ↔ "철수를", "김 선생님" ↔ "선생님" when the same person is clearly meant
+- First-person variants in first-person narration: "나" ↔ "난" ↔ "날" ↔ "내가" ↔ "내"
+- Polite first-person variants: "저" ↔ "전" ↔ "절" ↔ "제가" ↔ "제"
+
 For cast merges:
 - Require strong local textual evidence.
 - Same paragraph or adjacent paragraphs are preferred evidence zones.
 - Do not merge on plausibility alone.
+- For Korean particle-only variants of the same noun or name, the particle difference itself is not evidence of a separate entity.
 
 ### 4) Place alias patterns
 Common valid place merge patterns:
@@ -110,6 +129,10 @@ Common valid place merge patterns:
 - Adjective drop/addition: "a very deep well" ↔ "the well"
 - Descriptive variant: "the dark hall" ↔ "the hall"
 - Evaluative modifier: "the loveliest garden" ↔ "the lovely garden" ↔ "the garden"
+
+Korean valid place merge patterns:
+- Particle variants: "굴" ↔ "굴에" ↔ "굴에서" ↔ "굴로", "방" ↔ "방에" ↔ "방으로"
+- Modifier + head noun: "어두운 복도" ↔ "복도", "깊은 우물" ↔ "우물" when scene continuity supports the same place
 
 For place merges:
 - Same head noun plus compatible local scene continuity is often sufficient.

@@ -132,6 +132,22 @@ export interface MentionCandidates extends ArtifactBase {
   method: "llm" | "nlp";
   model?: string;
   source_file?: string;
+  extraction_stats?: {
+    narrative_paragraphs: number;
+    attempted_raw_mentions: number;
+    accepted_mentions: number;
+    dropped_mentions: number;
+    dropped_by_reason: Record<string, number>;
+  };
+  dropped_mentions?: Array<{
+    reason: string;
+    pid?: number;
+    span?: string;
+    mention_type?: MentionType;
+    start_char?: number;
+    end_char?: number;
+    normalized?: string;
+  }>;
   mentions: Mention[];
 }
 

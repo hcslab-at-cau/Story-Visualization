@@ -11,9 +11,33 @@ import { PromptLoader, formatJsonParam } from "./prompt-loader"
 const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
 const OPENAI_COMPAT_PREFIXES = ["openai/", "mistral/", "meta-llama/", "x-ai/"]
+const JSON_MODE_PREFIXES = [...OPENAI_COMPAT_PREFIXES, "google/"]
+const GEMINI_THINKING_PREFIXES = ["google/gemini-", "~google/gemini-"]
+const GEMINI_35_FLASH_MAX_TOKENS = 65536
+const DEFAULT_MAX_TOKENS = 16384
 
-function isOpenAICompat(model: string): boolean {
-  return OPENAI_COMPAT_PREFIXES.some((p) => model.startsWith(p))
+type OpenRouterReasoningEffort = "none" | "minimal" | "low" | "medium" | "high" | "xhigh"
+
+type OpenRouterChatParams = OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming & {
+  reasoning?: {
+    effort?: OpenRouterReasoningEffort
+    exclude?: boolean
+  }
+}
+
+function supportsJsonMode(model: string): boolean {
+  return JSON_MODE_PREFIXES.some((p) => model.startsWith(p))
+}
+
+function shouldMinimizeReasoning(model: string): boolean {
+  return GEMINI_THINKING_PREFIXES.some((p) => model.startsWith(p))
+}
+
+function defaultMaxTokensForModel(model: string): number {
+  if (model === "google/gemini-3.5-flash" || model === "~google/gemini-flash-latest") {
+    return GEMINI_35_FLASH_MAX_TOKENS
+  }
+  return DEFAULT_MAX_TOKENS
 }
 
 /** Remove markdown fences that some models (e.g. Claude) add around JSON. */
@@ -163,6 +187,12 @@ function readChatCompletionContent(
   return content.trim()
 }
 
+function readFinishReason(
+  chat: OpenAI.Chat.Completions.ChatCompletion,
+): string | null {
+  return chat.choices?.[0]?.finish_reason ?? null
+}
+
 export class LLMClient {
   private client: OpenAI
   private model: string
@@ -175,10 +205,10 @@ export class LLMClient {
     model: string,
     apiKey: string,
     apiBase?: string,
-    maxTokens = 16384,
+    maxTokens?: number,
   ) {
     this.model = model
-    this.maxTokens = maxTokens
+    this.maxTokens = maxTokens ?? defaultMaxTokensForModel(model)
     this.client = new OpenAI({
       apiKey,
       baseURL: apiBase ?? OPENROUTER_BASE_URL,
@@ -249,14 +279,17 @@ ${previousInvalidResponse.slice(0, 4000)}`,
         await new Promise((r) => setTimeout(r, 2 ** attempt * 1000))
       }
       try {
-        const params: OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming = {
+        const params: OpenRouterChatParams = {
           model: this.model,
           temperature: 0,
           max_tokens: this.maxTokens,
           messages: buildMessages(previousInvalidResponse),
         }
-        if (isOpenAICompat(this.model)) {
+        if (supportsJsonMode(this.model)) {
           params.response_format = { type: "json_object" }
+        }
+        if (shouldMinimizeReasoning(this.model)) {
+          params.reasoning = { effort: "minimal", exclude: true }
         }
 
         const chat = await this.client.chat.completions.create(params)
@@ -264,6 +297,12 @@ ${previousInvalidResponse.slice(0, 4000)}`,
         content = stripMarkdownFence(content)
         trial.raw_response = content
         previousInvalidResponse = content
+        if (readFinishReason(chat) === "length") {
+          throw new Error(
+            `LLM output was truncated because finish_reason=length for model "${this.model}" ` +
+            `with max_tokens=${this.maxTokens}.`,
+          )
+        }
         return parseJsonObjectContent(content)
       } catch (e) {
         lastError = e

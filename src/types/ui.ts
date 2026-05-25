@@ -43,7 +43,7 @@ export interface PipelineStageDef {
 export const PIPELINE_STAGES: PipelineStageDef[] = [
   { id: "PRE.1", label: "PRE.1 - EPUB to RawChapter JSON", apiPath: "pre1", group: "pre" },
   { id: "PRE.2", label: "PRE.2 - Content Classification", apiPath: "pre2", group: "pre", usesModel: true, defaultModel: DEFAULT_STAGE_MODELS["PRE.2"], modelPlaceholder: "openai/gpt-4o-mini" },
-  { id: "ENT.1", label: "ENT.1 - Mention Extraction", apiPath: "ent1", group: "ent", usesModel: true, defaultModel: DEFAULT_STAGE_MODELS["ENT.1"], modelPlaceholder: "openai/gpt-4o-mini" },
+  { id: "ENT.1", label: "ENT.1 - Mention Extraction", apiPath: "ent1", group: "ent", usesModel: true, defaultModel: DEFAULT_STAGE_MODELS["ENT.1"], modelPlaceholder: "google/gemini-3.5-flash" },
   { id: "ENT.2", label: "ENT.2 - Mention Validation", apiPath: "ent2", group: "ent", usesModel: true, defaultModel: DEFAULT_STAGE_MODELS["ENT.2"], modelPlaceholder: "openai/gpt-4o-mini" },
   { id: "ENT.3", label: "ENT.3 - Entity Resolution", apiPath: "ent3", group: "ent", usesModel: true, defaultModel: DEFAULT_STAGE_MODELS["ENT.3"], modelPlaceholder: "openai/gpt-4o-mini" },
   { id: "STATE.1", label: "STATE.1 - State Tracking", apiPath: "state1", group: "state" },
