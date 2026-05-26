@@ -70,6 +70,11 @@ interface BookStateRunProgress {
   error?: string
 }
 
+interface BookStateRunChapter {
+  chapter: ChapterMeta
+  visibleIndex: number
+}
+
 function createDefaultStageModelMap(): Partial<Record<StageId, string>> {
   return Object.fromEntries(
     PIPELINE_STAGES
@@ -240,19 +245,22 @@ function HomeShell() {
     }
   }
 
-  async function handleRunBookThroughState3() {
-    if (!docId || chapters.length === 0 || bookStateRun?.running) return
+  async function runChapterRangeThroughState3(
+    targetChapters: BookStateRunChapter[],
+    confirmTemplate: string,
+  ) {
+    if (!docId || targetChapters.length === 0 || bookStateRun?.running) return
 
     const bookRunId = createTimestampRunId([runId])
     const confirmed = window.confirm(
-      t.pipeline.runBookThroughState3Confirm
-        .replace("{count}", String(chapters.length))
+      confirmTemplate
+        .replace("{count}", String(targetChapters.length))
         .replace("{runId}", bookRunId),
     )
     if (!confirmed) return
 
     const stageModels = createDefaultStageModelMap()
-    const total = chapters.length * BOOK_STATE_STAGES.length
+    const total = targetChapters.length * BOOK_STATE_STAGES.length
     let completed = 0
     let activeChapterId = selectedChapterId
 
@@ -263,13 +271,13 @@ function HomeShell() {
       completed: 0,
       total,
       chapterIndex: 0,
-      chapterTotal: chapters.length,
+      chapterTotal: targetChapters.length,
       message: t.pipeline.bookRunProgress,
     })
 
     try {
-      for (let chapterIndex = 0; chapterIndex < chapters.length; chapterIndex++) {
-        const chapter = chapters[chapterIndex]
+      for (let chapterIndex = 0; chapterIndex < targetChapters.length; chapterIndex++) {
+        const { chapter, visibleIndex } = targetChapters[chapterIndex]
         activeChapterId = chapter.chapterId
         await saveRunStageModels(docId, chapter.chapterId, bookRunId, stageModels)
 
@@ -281,9 +289,9 @@ function HomeShell() {
             completed,
             total,
             chapterIndex,
-            chapterTotal: chapters.length,
+            chapterTotal: targetChapters.length,
             stageId: stage.id,
-            message: `${formatChapterLabel(chapter, chapterIndex)} - ${stage.id}`,
+            message: `${formatChapterLabel(chapter, visibleIndex)} - ${stage.id}`,
           })
 
           await runBookPipelineStage(docId, chapter.chapterId, bookRunId, stage, stageModels)
@@ -296,8 +304,8 @@ function HomeShell() {
         runId: bookRunId,
         completed,
         total,
-        chapterIndex: chapters.length - 1,
-        chapterTotal: chapters.length,
+        chapterIndex: targetChapters.length - 1,
+        chapterTotal: targetChapters.length,
         message: t.pipeline.bookRunComplete,
       })
       setAvailableRuns(await listRuns(docId, selectedChapterId))
@@ -305,15 +313,15 @@ function HomeShell() {
       setSelectedChapterId(activeChapterId)
       const failedChapterIndex = Math.max(
         0,
-        chapters.findIndex((chapter) => chapter.chapterId === activeChapterId),
+        targetChapters.findIndex((item) => item.chapter.chapterId === activeChapterId),
       )
       setBookStateRun({
         running: false,
         runId: bookRunId,
         completed,
         total,
-        chapterIndex: Math.min(failedChapterIndex, chapters.length - 1),
-        chapterTotal: chapters.length,
+        chapterIndex: Math.min(failedChapterIndex, targetChapters.length - 1),
+        chapterTotal: targetChapters.length,
         message: t.pipeline.bookRunFailed,
         error: getErrorMessage(error),
       })
@@ -322,6 +330,24 @@ function HomeShell() {
       setRunId(bookRunId)
       setPipelineRefreshNonce((value) => value + 1)
     }
+  }
+
+  async function handleRunBookThroughState3() {
+    await runChapterRangeThroughState3(
+      chapters.map((chapter, visibleIndex) => ({ chapter, visibleIndex })),
+      t.pipeline.runBookThroughState3Confirm,
+    )
+  }
+
+  async function handleRunFromCurrentChapterThroughState3() {
+    const startIndex = selectedChapterIndex >= 0 ? selectedChapterIndex : 0
+    await runChapterRangeThroughState3(
+      chapters.slice(startIndex).map((chapter, offset) => ({
+        chapter,
+        visibleIndex: startIndex + offset,
+      })),
+      t.pipeline.runFromCurrentThroughState3Confirm,
+    )
   }
 
   return (
@@ -491,6 +517,15 @@ function HomeShell() {
                   title={t.pipeline.runBookThroughState3Title}
                 >
                   {bookStateRun?.running ? t.pipeline.bookRunProgress : t.pipeline.runBookThroughState3}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void handleRunFromCurrentChapterThroughState3()}
+                  disabled={!docId || selectedChapterIndex < 0 || chapters.length === 0 || bookStateRun?.running}
+                  className="rounded-lg border border-indigo-200 bg-indigo-50 px-4 py-2 text-sm font-medium text-indigo-700 transition-colors hover:bg-indigo-100 disabled:cursor-not-allowed disabled:opacity-50"
+                  title={t.pipeline.runFromCurrentThroughState3Title}
+                >
+                  {t.pipeline.runFromCurrentThroughState3}
                 </button>
                 {bookStateRun && (
                   <div className="min-w-[280px] flex-1 rounded-lg bg-zinc-50 px-3 py-2">
