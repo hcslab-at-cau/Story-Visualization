@@ -72,6 +72,11 @@ function isLikelyTruncatedJsonError(error: unknown): boolean {
   return /Unexpected end of JSON input|finish_reason=length|truncated|unterminated/i.test(message)
 }
 
+function formatErrorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message
+  return String(error)
+}
+
 function countDropReason(
   counts: Map<string, number>,
   reason: string,
@@ -215,7 +220,11 @@ export async function runMentionExtraction(
           attempted: leftMentions.attempted + rightMentions.attempted,
         }
       }
-      throw error
+      const pidRange = batch.map((paragraph) => `P${paragraph.pid}`).join(", ")
+      throw new Error(
+        `ENT.1 ${batchLabel} failed for ${pidRange}: ${formatErrorMessage(error)}`,
+        { cause: error },
+      )
     }
   }
 
