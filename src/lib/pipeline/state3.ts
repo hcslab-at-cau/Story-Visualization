@@ -10,6 +10,7 @@ import type {
   BoundaryCandidate,
   SceneSpan,
   BoundaryReason,
+  BoundaryReasonTag,
   ValidatedFrame,
 } from "@/types/schema"
 import type { LLMClient } from "@/lib/llm-client"
@@ -28,6 +29,7 @@ const SCORE_TIME_SIGNAL = 1.0
 const LABEL_SCENE = 4.0
 const LABEL_WEAK = 3.0
 const MIN_SCENE_LEN = 2
+const BOUNDARY_REASON_TAGS: BoundaryReasonTag[] = ["PLACE", "TIME", "CAST", "OTHER"]
 
 // ---------------------------------------------------------------------------
 // Score a single boundary between two adjacent narrative frames
@@ -134,6 +136,52 @@ function enforceMinSceneLen(
   return pids
 }
 
+function normalizeBoundaryReasonTags(value: unknown): BoundaryReasonTag[] {
+  const rawValues = Array.isArray(value)
+    ? value
+    : typeof value === "string"
+      ? value.split(/[,\s/]+/)
+      : []
+  const found = new Set<BoundaryReasonTag>()
+
+  for (const rawValue of rawValues) {
+    const tag = String(rawValue).trim().toUpperCase()
+    if (BOUNDARY_REASON_TAGS.includes(tag as BoundaryReasonTag)) {
+      found.add(tag as BoundaryReasonTag)
+    }
+  }
+
+  const orderedTags = BOUNDARY_REASON_TAGS.filter((tag) => found.has(tag))
+  return orderedTags.some((tag) => tag !== "OTHER")
+    ? orderedTags.filter((tag) => tag !== "OTHER")
+    : orderedTags
+}
+
+function applyBoundaryReasonTags(
+  boundaries: BoundaryCandidate[],
+  scenes: SceneSpan[],
+  result: Record<string, unknown>,
+): BoundaryCandidate[] {
+  const rawTagMap = result.boundary_reason_tags
+  if (!rawTagMap || typeof rawTagMap !== "object" || Array.isArray(rawTagMap)) return boundaries
+
+  const sceneStartPidById = new Map(scenes.map((scene) => [scene.scene_id, scene.start_pid]))
+  const tagsByPid = new Map<number, BoundaryReasonTag[]>()
+
+  for (const [key, rawTags] of Object.entries(rawTagMap as Record<string, unknown>)) {
+    const boundaryPid = sceneStartPidById.get(key) ?? Number(key)
+    if (typeof boundaryPid !== "number" || !Number.isFinite(boundaryPid)) continue
+
+    const tags = normalizeBoundaryReasonTags(rawTags)
+    if (tags.length > 0) tagsByPid.set(boundaryPid, tags)
+  }
+
+  return boundaries.map((boundary) => {
+    const tags = tagsByPid.get(boundary.boundary_before_pid)
+    return tags ? { ...boundary, llm_reason_tags: tags } : boundary
+  })
+}
+
 // ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
@@ -206,7 +254,7 @@ export async function runBoundaryDetection(
   }
 
   // Post-processing
-  const resolved = resolveCompeting(rawCandidates)
+  let resolved = resolveCompeting(rawCandidates)
   let sceneBoundaryPids = resolved
     .filter((c) => c.label === "scene_boundary")
     .map((c) => c.boundary_before_pid)
@@ -228,16 +276,20 @@ export async function runBoundaryDetection(
     }
   })
 
-  // Optional: LLM scene title generation
+  // Optional: LLM scene title and boundary reason tag generation
   let sceneTitles: Record<string, string> = {}
   if (llmClient && paragraphMap) {
-    onProgress?.("STATE.3: generating scene titles...")
+    onProgress?.("STATE.3: generating scene titles and boundary reason tags...")
     try {
       const frameMap = new Map(validatedLog.frames.map((f) => [f.pid, f]))
-      const scenesContext = scenes.map((s) => {
+      const boundaryByPid = new Map(resolved.map((boundary) => [boundary.boundary_before_pid, boundary]))
+      const scenesContext = scenes.map((s, index) => {
         const pidsInScene = narrativePids.filter((p) => p >= s.start_pid && p <= s.end_pid)
         const startFrame = frameMap.get(pidsInScene[0])
         const endFrame = frameMap.get(pidsInScene[pidsInScene.length - 1])
+        const previousScene = index > 0 ? scenes[index - 1] : undefined
+        const previousEndFrame = previousScene ? frameMap.get(previousScene.end_pid) : undefined
+        const incomingBoundary = previousScene ? boundaryByPid.get(s.start_pid) : undefined
         const textPreview = pidsInScene
           .slice(0, 3)
           .map((p) => paragraphMap.get(p) ?? "")
@@ -250,6 +302,18 @@ export async function runBoundaryDetection(
           start_place: startFrame?.validated_state.current_place ?? null,
           end_place: endFrame?.validated_state.current_place ?? null,
           active_cast: startFrame?.validated_state.active_cast ?? [],
+          end_cast: endFrame?.validated_state.active_cast ?? [],
+          incoming_boundary: incomingBoundary && previousScene ? {
+            boundary_before_pid: incomingBoundary.boundary_before_pid,
+            from_scene_id: previousScene.scene_id,
+            rule_label: incomingBoundary.label,
+            rule_score: incomingBoundary.score,
+            rule_reasons: incomingBoundary.reasons,
+            previous_end_place: previousEndFrame?.validated_state.current_place ?? null,
+            current_start_place: startFrame?.validated_state.current_place ?? null,
+            previous_end_cast: previousEndFrame?.validated_state.active_cast ?? [],
+            current_start_cast: startFrame?.validated_state.active_cast ?? [],
+          } : null,
           text_preview: textPreview,
         }
       })
@@ -258,6 +322,7 @@ export async function runBoundaryDetection(
         scenes_json: formatJsonParam(scenesContext),
       })
       sceneTitles = (titleResult.scene_titles as Record<string, string>) ?? {}
+      resolved = applyBoundaryReasonTags(resolved, scenes, titleResult)
     } catch {
       // Title generation failure is non-fatal
     }

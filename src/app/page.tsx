@@ -58,6 +58,11 @@ const BOOK_STATE_STAGE_ID_SET = new Set<StageId>(BOOK_STATE_STAGE_IDS)
 const BOOK_STATE_STAGES = PIPELINE_STAGES.filter((stage) =>
   BOOK_STATE_STAGE_ID_SET.has(stage.id),
 )
+const BOOK_STATE3_ONLY_STAGE_IDS: StageId[] = ["STATE.3"]
+const BOOK_STATE3_ONLY_STAGE_ID_SET = new Set<StageId>(BOOK_STATE3_ONLY_STAGE_IDS)
+const BOOK_STATE3_ONLY_STAGES = PIPELINE_STAGES.filter((stage) =>
+  BOOK_STATE3_ONLY_STAGE_ID_SET.has(stage.id),
+)
 
 interface BookStateRunProgress {
   running: boolean
@@ -84,6 +89,15 @@ function createDefaultStageModelMap(): Partial<Record<StageId, string>> {
         stage.id,
         DEFAULT_STAGE_MODELS[stage.id] ?? stage.modelPlaceholder ?? "google/gemini-3.5-flash",
       ]),
+  ) as Partial<Record<StageId, string>>
+}
+
+function createStageModelMap(stages: PipelineStageDef[]): Partial<Record<StageId, string>> {
+  const defaultStageModels = createDefaultStageModelMap()
+  return Object.fromEntries(
+    stages
+      .filter((stage) => stage.usesModel)
+      .map((stage) => [stage.id, defaultStageModels[stage.id] ?? ""]),
   ) as Partial<Record<StageId, string>>
 }
 
@@ -332,29 +346,31 @@ function HomeShell() {
     }
   }
 
-  async function runChapterRangeThroughState3(
+  async function runChapterRangeStages(
     targetChapters: BookStateRunChapter[],
+    targetStages: PipelineStageDef[],
+    targetRunId: string,
     confirmTemplate: string,
+    completeMessage: string,
   ) {
-    if (!docId || targetChapters.length === 0 || bookStateRun?.running) return
+    if (!docId || !targetRunId || targetChapters.length === 0 || targetStages.length === 0 || bookStateRun?.running) return
 
-    const bookRunId = createTimestampRunId([runId])
     const confirmed = window.confirm(
       confirmTemplate
         .replace("{count}", String(targetChapters.length))
-        .replace("{runId}", bookRunId),
+        .replace("{runId}", targetRunId),
     )
     if (!confirmed) return
 
-    const stageModels = createDefaultStageModelMap()
-    const total = targetChapters.length * BOOK_STATE_STAGES.length
+    const stageModels = createStageModelMap(targetStages)
+    const total = targetChapters.length * targetStages.length
     let completed = 0
     let activeChapterId = selectedChapterId
 
-    setRunId(bookRunId)
+    setRunId(targetRunId)
     setBookStateRun({
       running: true,
-      runId: bookRunId,
+      runId: targetRunId,
       completed: 0,
       total,
       chapterIndex: 0,
@@ -366,13 +382,13 @@ function HomeShell() {
       for (let chapterIndex = 0; chapterIndex < targetChapters.length; chapterIndex++) {
         const { chapter, visibleIndex } = targetChapters[chapterIndex]
         activeChapterId = chapter.chapterId
-        await saveRunStageModels(docId, chapter.chapterId, bookRunId, stageModels)
+        await saveRunStageModels(docId, chapter.chapterId, targetRunId, stageModels)
 
-        for (let stageIndex = 0; stageIndex < BOOK_STATE_STAGES.length; stageIndex++) {
-          const stage = BOOK_STATE_STAGES[stageIndex]
+        for (let stageIndex = 0; stageIndex < targetStages.length; stageIndex++) {
+          const stage = targetStages[stageIndex]
           setBookStateRun({
             running: true,
-            runId: bookRunId,
+            runId: targetRunId,
             completed,
             total,
             chapterIndex,
@@ -381,19 +397,19 @@ function HomeShell() {
             message: `${formatChapterLabel(chapter, visibleIndex)} - ${stage.id}`,
           })
 
-          await runBookPipelineStage(docId, chapter.chapterId, bookRunId, stage, stageModels)
+          await runBookPipelineStage(docId, chapter.chapterId, targetRunId, stage, stageModels)
           completed += 1
         }
       }
 
       setBookStateRun({
         running: false,
-        runId: bookRunId,
+        runId: targetRunId,
         completed,
         total,
         chapterIndex: targetChapters.length - 1,
         chapterTotal: targetChapters.length,
-        message: t.pipeline.bookRunComplete,
+        message: completeMessage,
       })
       setAvailableRuns(await listRuns(docId, selectedChapterId))
     } catch (error) {
@@ -404,7 +420,7 @@ function HomeShell() {
       )
       setBookStateRun({
         running: false,
-        runId: bookRunId,
+        runId: targetRunId,
         completed,
         total,
         chapterIndex: Math.min(failedChapterIndex, targetChapters.length - 1),
@@ -414,26 +430,48 @@ function HomeShell() {
       })
       setAvailableRuns(await listRuns(docId, activeChapterId))
     } finally {
-      setRunId(bookRunId)
+      setRunId(targetRunId)
       setPipelineRefreshNonce((value) => value + 1)
     }
   }
 
   async function handleRunBookThroughState3() {
-    await runChapterRangeThroughState3(
+    const bookRunId = createTimestampRunId([runId])
+    await runChapterRangeStages(
       chapters.map((chapter, visibleIndex) => ({ chapter, visibleIndex })),
+      BOOK_STATE_STAGES,
+      bookRunId,
       t.pipeline.runBookThroughState3Confirm,
+      t.pipeline.bookRunComplete,
     )
   }
 
   async function handleRunFromCurrentChapterThroughState3() {
     const startIndex = selectedChapterIndex >= 0 ? selectedChapterIndex : 0
-    await runChapterRangeThroughState3(
+    const bookRunId = createTimestampRunId([runId])
+    await runChapterRangeStages(
       chapters.slice(startIndex).map((chapter, offset) => ({
         chapter,
         visibleIndex: startIndex + offset,
       })),
+      BOOK_STATE_STAGES,
+      bookRunId,
       t.pipeline.runFromCurrentThroughState3Confirm,
+      t.pipeline.bookRunComplete,
+    )
+  }
+
+  async function handleRerunBookState3Only() {
+    const startIndex = selectedChapterIndex >= 0 ? selectedChapterIndex : 0
+    await runChapterRangeStages(
+      chapters.slice(startIndex).map((chapter, offset) => ({
+        chapter,
+        visibleIndex: startIndex + offset,
+      })),
+      BOOK_STATE3_ONLY_STAGES,
+      runId,
+      t.pipeline.rerunBookState3OnlyConfirm,
+      t.pipeline.bookState3OnlyComplete,
     )
   }
 
@@ -469,13 +507,13 @@ function HomeShell() {
         className={`min-h-0 flex-1 text-base ${
           view === "reader" || view === "legacy" || view === "graph"
             ? "overflow-y-auto p-0"
-            : view === "pipeline"
+            : view === "pipeline" || view === "upload"
               ? "overflow-y-auto p-6"
               : "overflow-hidden p-6"
         }`}
       >
         {view === "upload" && (
-          <div className="mx-auto mt-10 grid max-w-6xl gap-6 lg:grid-cols-[minmax(0,1.1fr)_minmax(340px,0.9fr)]">
+          <div className="mx-auto mt-10 grid max-w-6xl items-start gap-6 pb-10 lg:grid-cols-[minmax(0,1.1fr)_minmax(340px,0.9fr)]">
             <EpubUploader onUploaded={handleUploaded} />
             <ExistingDocumentsPicker onSelected={handleSelectedExisting} />
           </div>
@@ -613,6 +651,15 @@ function HomeShell() {
                   title={t.pipeline.runFromCurrentThroughState3Title}
                 >
                   {t.pipeline.runFromCurrentThroughState3}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void handleRerunBookState3Only()}
+                  disabled={!docId || !runId || selectedChapterIndex < 0 || chapters.length === 0 || bookStateRun?.running}
+                  className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-2 text-sm font-medium text-amber-700 transition-colors hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-50"
+                  title={t.pipeline.rerunBookState3OnlyTitle}
+                >
+                  {t.pipeline.rerunBookState3Only}
                 </button>
                 <button
                   type="button"

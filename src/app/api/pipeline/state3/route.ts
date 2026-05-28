@@ -1,4 +1,10 @@
-import { loadRawChapter, loadStageResult, saveStageResult, stageKey } from "@/lib/firestore"
+import {
+  loadRawChapter,
+  loadStageResult,
+  loadStageResultFromRunOrUnique,
+  saveStageResult,
+  stageKey,
+} from "@/lib/firestore"
 import { runBoundaryDetection } from "@/lib/pipeline/state3"
 import { attachLLMDebug, createLLMClient, errorResponse, okResponse, type BaseRequestBody } from "@/lib/api-utils"
 import type { RefinedStateFrames, StateFrames } from "@/types/schema"
@@ -17,10 +23,25 @@ export async function POST(request: Request): Promise<Response> {
     const chapter = await loadRawChapter(docId, chapterId)
     if (!chapter) return errorResponse("Chapter not found", 404)
 
-    const validatedLog = await loadStageResult<RefinedStateFrames>(docId, chapterId, runId, stageKey("STATE.2"))
-    if (!validatedLog) return errorResponse("STATE.2 result not found", 400)
+    const validatedResolution = await loadStageResultFromRunOrUnique<RefinedStateFrames>(
+      docId,
+      chapterId,
+      runId,
+      stageKey("STATE.2"),
+    )
+    const validatedLog = validatedResolution.result
+    if (!validatedLog) {
+      const candidates = validatedResolution.candidateRunIds
+      return errorResponse(
+        candidates.length > 1
+          ? `STATE.2 result not found for run ${runId}. Multiple other STATE.2 results exist (${candidates.join(", ")}), so rerun with a matching runId.`
+          : "STATE.2 result not found",
+        400,
+      )
+    }
 
-    const stateLog = await loadStageResult<StateFrames>(docId, chapterId, runId, stageKey("STATE.1"))
+    const stateSourceRunId = validatedResolution.runId ?? runId
+    const stateLog = await loadStageResult<StateFrames>(docId, chapterId, stateSourceRunId, stageKey("STATE.1"))
 
     const llm = generateTitles ? createLLMClient(body) : undefined
     const paragraphMap = new Map(chapter.paragraphs.map((p) => [p.pid, p.text]))

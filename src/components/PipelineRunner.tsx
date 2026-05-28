@@ -4223,6 +4223,10 @@ function State3StageView({
     }
   }
 
+  function formatBoundaryReasonTags(boundary: SceneBoundaries["boundaries"][number]): string {
+    return boundary.llm_reason_tags?.join(" / ") ?? ""
+  }
+
   return (
     <div className="mt-4 grid min-h-0 flex-1 gap-5 overflow-hidden xl:grid-cols-2">
       <section className="flex min-h-0 min-w-0 flex-col rounded-xl border border-zinc-200 bg-zinc-50 p-5">
@@ -4358,6 +4362,11 @@ function State3StageView({
                       <p className="font-medium">
                         {trailingBoundary.label} score={trailingBoundary.score}
                       </p>
+                      {trailingBoundary.llm_reason_tags && trailingBoundary.llm_reason_tags.length > 0 && (
+                        <p className="mt-1 font-semibold text-rose-800">
+                          LLM reason: {formatBoundaryReasonTags(trailingBoundary)}
+                        </p>
+                      )}
                       {trailingBoundary.reasons.map((reason, index) => (
                         <p key={`${scene.scene_id}:boundary:${index}`} className="mt-1">
                           {formatBoundaryReason(reason)}

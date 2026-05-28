@@ -42,7 +42,7 @@ export default function EpubUploader({ onUploaded }: Props) {
 
   return (
     <div
-      className="border-2 border-dashed border-zinc-300 rounded-xl p-12 text-center cursor-pointer hover:border-zinc-500 transition-colors"
+      className="flex min-h-[220px] cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed border-zinc-300 p-8 text-center transition-colors hover:border-zinc-500 sm:p-12"
       onDrop={handleDrop}
       onDragOver={(e) => e.preventDefault()}
       onClick={() => inputRef.current?.click()}
