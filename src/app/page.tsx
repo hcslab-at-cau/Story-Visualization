@@ -447,12 +447,37 @@ function HomeShell() {
   }
 
   async function handleRerunBookState3Only() {
+    if (!docId || !runId || selectedChapterIndex < 0 || !currentRunIsSaved) return
+
     const startIndex = selectedChapterIndex >= 0 ? selectedChapterIndex : 0
+    const targetChapters = chapters.slice(startIndex).map((chapter, offset) => ({
+      chapter,
+      visibleIndex: startIndex + offset,
+    }))
+    const missingRunChapters: string[] = []
+
+    for (const target of targetChapters) {
+      const runs = target.chapter.chapterId === selectedChapterId
+        ? availableRuns
+        : await listRuns(docId, target.chapter.chapterId)
+      if (!runs.some((item) => item.runId === runId)) {
+        missingRunChapters.push(formatChapterLabel(target.chapter, target.visibleIndex))
+      }
+    }
+
+    if (missingRunChapters.length > 0) {
+      const shownChapters = missingRunChapters.slice(0, 5).join(", ")
+      const moreCount = missingRunChapters.length - 5
+      window.alert(
+        t.pipeline.rerunBookState3OnlyMissingRun
+          .replace("{runId}", runId)
+          .replace("{chapters}", `${shownChapters}${moreCount > 0 ? `, ... (+${moreCount})` : ""}`),
+      )
+      return
+    }
+
     await runChapterRangeStages(
-      chapters.slice(startIndex).map((chapter, offset) => ({
-        chapter,
-        visibleIndex: startIndex + offset,
-      })),
+      targetChapters,
       BOOK_STATE3_ONLY_STAGES,
       runId,
       t.pipeline.rerunBookState3OnlyConfirm,
@@ -631,7 +656,7 @@ function HomeShell() {
                 <button
                   type="button"
                   onClick={() => void handleRerunBookState3Only()}
-                  disabled={!docId || !runId || selectedChapterIndex < 0 || chapters.length === 0 || bookStateRun?.running}
+                  disabled={!docId || !runId || !currentRunIsSaved || loadingRuns || selectedChapterIndex < 0 || chapters.length === 0 || bookStateRun?.running}
                   className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-2 text-sm font-medium text-amber-700 transition-colors hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-50"
                   title={t.pipeline.rerunBookState3OnlyTitle}
                 >
