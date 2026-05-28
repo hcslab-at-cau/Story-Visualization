@@ -189,6 +189,104 @@ function readStageRefs(data: DocumentData | undefined): Record<string, string> {
   )
 }
 
+const KNOWN_STAGE_IDS = Array.from(
+  new Set(PIPELINE_STAGE_EDGES.flatMap((edge) => [edge.from, edge.to])),
+) as StageId[]
+
+const REQUIRED_STAGE_DEPENDENCIES: Partial<Record<StageId, StageId[]>> = {
+  "PRE.2": ["PRE.1"],
+  "ENT.1": ["PRE.2"],
+  "ENT.2": ["ENT.1"],
+  "ENT.3": ["ENT.2"],
+  "STATE.1": ["ENT.3"],
+  "STATE.2": ["STATE.1", "ENT.3", "PRE.2"],
+  "STATE.3": ["STATE.2"],
+  "SCENE.1": ["STATE.3", "STATE.2", "STATE.1", "ENT.3"],
+  "SCENE.2": ["SCENE.1"],
+  "SCENE.3": ["SCENE.1", "SCENE.2", "ENT.3", "STATE.2"],
+  "VIS.1": ["SCENE.1"],
+  "VIS.2": ["SCENE.1", "SCENE.3"],
+  "VIS.3": ["VIS.2"],
+  "VIS.4": ["VIS.3"],
+  "SUB.1": ["SCENE.3", "SCENE.1"],
+  "SUB.2": ["SUB.1", "SCENE.1", "SCENE.3"],
+  "SUB.3": ["SUB.1", "SUB.2", "SCENE.1", "SCENE.3"],
+  "SUB.4": ["SUB.3", "SCENE.1", "SCENE.3"],
+  "SUP.0": ["SCENE.1", "STATE.3", "SCENE.3"],
+  "SUP.1": ["SUP.0"],
+  "SUP.2": ["SUP.1"],
+  "SUP.3": ["SUP.1", "SUP.0"],
+  "SUP.4": ["SUP.1", "SUP.0"],
+  "SUP.5": ["SUP.1", "SUP.0"],
+  "SUP.6": ["SUP.2", "SUP.3", "SUP.4", "SUP.5"],
+  "SUP.7": ["SUP.6", "SUP.1"],
+  "FINAL.1": ["SCENE.3", "SUB.3", "SCENE.1", "STATE.3"],
+  "FINAL.2": ["FINAL.1"],
+}
+
+interface StageDependencyIssue {
+  stageId: StageId
+  missingStageId: StageId
+}
+
+function readPresentStageKeys(data: DocumentData | undefined): Set<string> {
+  const keys = new Set(Object.keys(readStageRefs(data)))
+  for (const stageId of KNOWN_STAGE_IDS) {
+    const key = stageKey(stageId)
+    if (data?.[key] !== undefined) {
+      keys.add(key)
+    }
+  }
+  return keys
+}
+
+function findStageDependencyIssue(data: DocumentData | undefined): StageDependencyIssue | null {
+  const presentStageKeys = readPresentStageKeys(data)
+  if (presentStageKeys.size === 0) return null
+
+  for (const stageId of KNOWN_STAGE_IDS) {
+    if (!presentStageKeys.has(stageKey(stageId))) continue
+    for (const dependencyStageId of REQUIRED_STAGE_DEPENDENCIES[stageId] ?? []) {
+      if (!presentStageKeys.has(stageKey(dependencyStageId))) {
+        return {
+          stageId,
+          missingStageId: dependencyStageId,
+        }
+      }
+    }
+  }
+
+  return null
+}
+
+function uniqueStageRefArtifactIds(data: DocumentData | undefined): string[] {
+  return uniqueStrings(Object.values(readStageRefs(data)))
+}
+
+async function findSharedArtifactIdsUnusedByOtherRuns(params: {
+  docId: string
+  chapterId: string
+  runId: string
+  artifactIds: string[]
+}): Promise<string[]> {
+  const candidates = new Set(params.artifactIds)
+  if (candidates.size === 0) return []
+
+  const runsSnap = await chapterDocRef(params.docId, params.chapterId)
+    .collection("runs")
+    .get()
+
+  for (const runDoc of runsSnap.docs) {
+    if (runDoc.id === params.runId) continue
+    for (const artifactId of uniqueStageRefArtifactIds(runDoc.data() as DocumentData)) {
+      candidates.delete(artifactId)
+    }
+    if (candidates.size === 0) break
+  }
+
+  return [...candidates]
+}
+
 function buildParentRefs(stageId: string, stageRefs: Record<string, string>): Record<string, string> {
   return Object.fromEntries(
     PIPELINE_STAGE_EDGES
@@ -945,8 +1043,19 @@ export async function deleteStageResult(
 ): Promise<void> {
   await withAdminErrorContext(async () => {
     const key = stageKey(stageId)
+    const runSnap = await runDocRef(docId, chapterId, runId).get()
+    const referencedArtifactId = readStageRefs(runSnap.data())[key]
+    const sharedArtifactIdsToDelete = await findSharedArtifactIdsUnusedByOtherRuns({
+      docId,
+      chapterId,
+      runId,
+      artifactIds: referencedArtifactId ? [referencedArtifactId] : [],
+    })
     const batch = getAdminDb().batch()
     batch.delete(runArtifactDocRef(docId, chapterId, runId, key))
+    for (const artifactId of sharedArtifactIdsToDelete) {
+      batch.delete(sharedArtifactDocRef(docId, chapterId, artifactId))
+    }
     batch.set(
       runDocRef(docId, chapterId, runId),
       {
@@ -968,33 +1077,143 @@ export async function deleteStageResult(
   })
 }
 
+export interface RunDeletionSummary {
+  runDeleted: number
+  runArtifactsDeleted: number
+  sharedArtifactsDeleted: number
+  graphNodesDeleted: number
+  graphEdgesDeleted: number
+}
+
 export async function deleteRun(
   docId: string,
   chapterId: string,
   runId: string,
-): Promise<void> {
-  await withAdminErrorContext(async () => {
-    const artifactsSnap = await runArtifactsCollection(docId, chapterId, runId).get()
-    const [graphNodesSnap, graphEdgesSnap] = await Promise.all([
+): Promise<RunDeletionSummary> {
+  return withAdminErrorContext(async () => {
+    const [runSnap, artifactsSnap, graphNodesSnap, graphEdgesSnap] = await Promise.all([
+      runDocRef(docId, chapterId, runId).get(),
+      runArtifactsCollection(docId, chapterId, runId).get(),
       graphNodesCollection(docId).where("runId", "==", runId).get(),
       graphEdgesCollection(docId).where("runId", "==", runId).get(),
     ])
+    const sharedArtifactIdsToDelete = await findSharedArtifactIdsUnusedByOtherRuns({
+      docId,
+      chapterId,
+      runId,
+      artifactIds: uniqueStageRefArtifactIds(runSnap.data()),
+    })
     const batch = getAdminDb().batch()
+    let graphNodesDeleted = 0
+    let graphEdgesDeleted = 0
     for (const artifactDoc of artifactsSnap.docs) {
       batch.delete(artifactDoc.ref)
+    }
+    for (const artifactId of sharedArtifactIdsToDelete) {
+      batch.delete(sharedArtifactDocRef(docId, chapterId, artifactId))
     }
     for (const nodeDoc of graphNodesSnap.docs) {
       if ((nodeDoc.data() as DocumentData).chapterId === chapterId) {
         batch.delete(nodeDoc.ref)
+        graphNodesDeleted += 1
       }
     }
     for (const edgeDoc of graphEdgesSnap.docs) {
       if ((edgeDoc.data() as DocumentData).chapterId === chapterId) {
         batch.delete(edgeDoc.ref)
+        graphEdgesDeleted += 1
       }
     }
     batch.delete(runDocRef(docId, chapterId, runId))
     await batch.commit()
+    return {
+      runDeleted: runSnap.exists ? 1 : 0,
+      runArtifactsDeleted: artifactsSnap.size,
+      sharedArtifactsDeleted: sharedArtifactIdsToDelete.length,
+      graphNodesDeleted,
+      graphEdgesDeleted,
+    }
+  })
+}
+
+export interface DocumentStorageCleanupResult {
+  docId: string
+  chaptersScanned: number
+  invalidRunsDeleted: number
+  orphanSharedArtifactsDeleted: number
+  invalidRuns: Array<{
+    chapterId: string
+    runId: string
+    stageId: StageId
+    missingStageId: StageId
+  }>
+}
+
+async function deleteUnreferencedSharedArtifacts(
+  docId: string,
+  chapterId: string,
+): Promise<number> {
+  const [runsSnap, sharedArtifactsSnap] = await Promise.all([
+    chapterDocRef(docId, chapterId).collection("runs").get(),
+    sharedArtifactsCollection(docId, chapterId).get(),
+  ])
+  if (sharedArtifactsSnap.empty) return 0
+
+  const referencedArtifactIds = new Set<string>()
+  for (const runDoc of runsSnap.docs) {
+    for (const artifactId of uniqueStageRefArtifactIds(runDoc.data() as DocumentData)) {
+      referencedArtifactIds.add(artifactId)
+    }
+  }
+
+  const orphanArtifactDocs = sharedArtifactsSnap.docs.filter(
+    (artifactDoc) => !referencedArtifactIds.has(artifactDoc.id),
+  )
+  await commitBatched(orphanArtifactDocs, (batch, artifactDoc) => {
+    batch.delete(artifactDoc.ref)
+  })
+  return orphanArtifactDocs.length
+}
+
+export async function cleanupDocumentStorage(
+  docId: string,
+): Promise<DocumentStorageCleanupResult> {
+  return withAdminErrorContext(async () => {
+    const chaptersSnap = await documentDocRef(docId).collection("chapters").get()
+    const invalidRuns: DocumentStorageCleanupResult["invalidRuns"] = []
+    let orphanSharedArtifactsDeleted = 0
+
+    for (const chapterDoc of chaptersSnap.docs) {
+      const chapterId = chapterDoc.id
+      const runsSnap = await chapterDocRef(docId, chapterId).collection("runs").get()
+
+      for (const runDoc of runsSnap.docs) {
+        const issue = findStageDependencyIssue(runDoc.data() as DocumentData)
+        if (!issue) continue
+
+        invalidRuns.push({
+          chapterId,
+          runId: runDoc.id,
+          stageId: issue.stageId,
+          missingStageId: issue.missingStageId,
+        })
+      }
+
+      for (const invalidRun of invalidRuns.filter((run) => run.chapterId === chapterId)) {
+        const deletion = await deleteRun(docId, chapterId, invalidRun.runId)
+        orphanSharedArtifactsDeleted += deletion.sharedArtifactsDeleted
+      }
+
+      orphanSharedArtifactsDeleted += await deleteUnreferencedSharedArtifacts(docId, chapterId)
+    }
+
+    return {
+      docId,
+      chaptersScanned: chaptersSnap.size,
+      invalidRunsDeleted: invalidRuns.length,
+      orphanSharedArtifactsDeleted,
+      invalidRuns,
+    }
   })
 }
 

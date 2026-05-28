@@ -13,6 +13,7 @@ import RunReadinessPanel from "@/components/RunReadinessPanel"
 import SupportSystemShowcase from "@/components/SupportSystemShowcase"
 import { DEFAULT_STAGE_MODELS } from "@/config/pipeline-models"
 import {
+  cleanupDocumentStorage,
   deleteRun,
   listRuns,
   loadBookMemory,
@@ -116,6 +117,35 @@ function progressPercent(completed: number, total: number): number {
   return Math.max(0, Math.min(100, (completed / total) * 100))
 }
 
+function filenameFromContentDisposition(value: string | null): string | null {
+  if (!value) return null
+  const utfFilename = /filename\*=UTF-8''([^;]+)/i.exec(value)
+  if (utfFilename?.[1]) return decodeURIComponent(utfFilename[1])
+  const quotedFilename = /filename="([^"]+)"/i.exec(value)
+  return quotedFilename?.[1] ?? null
+}
+
+function parseExportError(bodyText: string, fallback: string): string {
+  try {
+    const data = JSON.parse(bodyText) as { error?: string }
+    return data.error ?? fallback
+  } catch {
+    return fallback
+  }
+}
+
+function downloadJsonText(bodyText: string, filename: string) {
+  const blob = new Blob([bodyText], { type: "application/json;charset=utf-8" })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement("a")
+  link.href = url
+  link.download = filename
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  window.setTimeout(() => URL.revokeObjectURL(url), 0)
+}
+
 export default function Home() {
   return (
     <LanguageProvider>
@@ -137,6 +167,8 @@ function HomeShell() {
   const [runId, setRunId] = useState("")
   const [bookStateRun, setBookStateRun] = useState<BookStateRunProgress | null>(null)
   const [pipelineRefreshNonce, setPipelineRefreshNonce] = useState(0)
+  const [exportingState3, setExportingState3] = useState(false)
+  const [cleaningStorage, setCleaningStorage] = useState(false)
 
   useEffect(() => {
     setRunId((current) => current || createTimestampRunId())
@@ -242,6 +274,61 @@ function HomeShell() {
       setAvailableRuns(runs)
     } finally {
       setTogglingFavorite(false)
+    }
+  }
+
+  async function handleExportState3Json() {
+    if (!docId || !selectedChapterId || !runId || exportingState3) return
+
+    setExportingState3(true)
+    try {
+      const query = new URLSearchParams({
+        docId,
+        chapterId: selectedChapterId,
+        runId,
+      })
+      const res = await fetch(`/api/export/state3?${query.toString()}`)
+      const bodyText = await res.text()
+      if (!res.ok) {
+        throw new Error(parseExportError(bodyText, `Export failed with HTTP ${res.status}`))
+      }
+
+      downloadJsonText(
+        bodyText,
+        filenameFromContentDisposition(res.headers.get("Content-Disposition")) ??
+          `${docId}_${selectedChapterId}_state3.json`,
+      )
+    } catch (error) {
+      window.alert(getErrorMessage(error))
+    } finally {
+      setExportingState3(false)
+    }
+  }
+
+  async function handleCleanupStorage() {
+    if (!docId || cleaningStorage) return
+    const confirmed = window.confirm(t.pipeline.cleanupStorageConfirm)
+    if (!confirmed) return
+
+    setCleaningStorage(true)
+    try {
+      const result = await cleanupDocumentStorage(docId)
+      const runs = selectedChapterId ? await listRuns(docId, selectedChapterId) : []
+      setAvailableRuns(runs)
+      if (selectedChapterId && !runs.some((item) => item.runId === runId)) {
+        setRunId(runs[0]?.runId ?? createTimestampRunId([runId]))
+      }
+      setPipelineRefreshNonce((value) => value + 1)
+      window.alert(
+        t.pipeline.cleanupStorageComplete
+          .replace("{chapters}", String(result.chaptersScanned))
+          .replace("{runs}", String(result.invalidRunsDeleted))
+          .replace("{artifacts}", String(result.orphanSharedArtifactsDeleted)),
+      )
+    } catch (error) {
+      window.alert(getErrorMessage(error))
+    } finally {
+      setCleaningStorage(false)
     }
   }
 
@@ -527,6 +614,24 @@ function HomeShell() {
                 >
                   {t.pipeline.runFromCurrentThroughState3}
                 </button>
+                <button
+                  type="button"
+                  onClick={() => void handleExportState3Json()}
+                  disabled={!docId || !selectedChapterId || !runId || exportingState3}
+                  className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm font-medium text-emerald-700 transition-colors hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-50"
+                  title={t.pipeline.exportState3JsonTitle}
+                >
+                  {exportingState3 ? t.pipeline.exportingState3Json : t.pipeline.exportState3Json}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void handleCleanupStorage()}
+                  disabled={!docId || cleaningStorage}
+                  className="rounded-lg border border-rose-200 bg-rose-50 px-4 py-2 text-sm font-medium text-rose-700 transition-colors hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-50"
+                  title={t.pipeline.cleanupStorageTitle}
+                >
+                  {cleaningStorage ? t.pipeline.cleanupStorageRunning : t.pipeline.cleanupStorage}
+                </button>
                 {bookStateRun && (
                   <div className="min-w-[280px] flex-1 rounded-lg bg-zinc-50 px-3 py-2">
                     <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-zinc-600">
@@ -561,7 +666,6 @@ function HomeShell() {
                 docId={docId}
                 chapterId={selectedChapterId}
                 runId={runId}
-                onRunIdChange={setRunId}
               />
             </div>
 

@@ -5,12 +5,10 @@ import { useUiStrings } from "@/components/LanguageProvider"
 import { getDescendantStages, PIPELINE_STAGE_EDGES } from "@/config/pipeline-graph"
 import {
   deleteStageResult,
-  forkRunResults,
   loadRunResults,
   saveRunStageModels,
   stageKey,
 } from "@/lib/client-data"
-import { createTimestampRunId } from "@/lib/run-id"
 import type {
   ConfidenceLevel,
   ContentType,
@@ -55,7 +53,6 @@ interface Props {
   docId: string
   chapterId: string
   runId: string
-  onRunIdChange?: (runId: string) => void
 }
 
 type StageMap = Record<string, { status: StageStatus; error?: string }>
@@ -8652,7 +8649,7 @@ function Final2StageView({
   )
 }
 
-export default function PipelineRunner({ docId, chapterId, runId, onRunIdChange }: Props) {
+export default function PipelineRunner({ docId, chapterId, runId }: Props) {
   const { t } = useUiStrings()
   const [stages, setStages] = useState<StageMap>(() => createInitialStageMap())
   const [results, setResults] = useState<StageResultMap>({})
@@ -8734,29 +8731,31 @@ export default function PipelineRunner({ docId, chapterId, runId, onRunIdChange 
     currentRunId: string,
     currentResults: StageResultMap,
   ): Promise<{ targetRunId: string; nextResults: StageResultMap }> {
-    if (currentResults[stageId] === undefined) {
+    const invalidated = getDescendantStages(stageId)
+    invalidated.add(stageId)
+
+    const knownInvalidatedStages = ACTIVE_PIPELINE_STAGES
+      .map((stage) => stage.id)
+      .filter((id) => invalidated.has(id) && currentResults[id] !== undefined)
+
+    if (knownInvalidatedStages.length === 0) {
       return { targetRunId: currentRunId, nextResults: currentResults }
     }
 
-    const invalidated = getDescendantStages(stageId)
-    invalidated.add(stageId)
+    const stagesToDelete = [...PIPELINE_STAGES]
+      .map((stage) => stage.id)
+      .filter((id) => invalidated.has(id))
+      .reverse()
+
+    for (const id of stagesToDelete) {
+      await deleteStageResult(docId, chapterId, currentRunId, id)
+    }
 
     const preservedStages = ACTIVE_PIPELINE_STAGES
       .map((stage) => stage.id)
       .filter((id) => currentResults[id] !== undefined && !invalidated.has(id))
-
-    const nextRunId = createTimestampRunId([
-      currentRunId,
-      ...ACTIVE_PIPELINE_STAGES.map((stage) => {
-        const artifact = currentResults[stage.id] as { run_id?: string } | undefined
-        return artifact?.run_id ?? ""
-      }),
-    ])
-
-    await forkRunResults(docId, chapterId, currentRunId, nextRunId, preservedStages)
-    await saveRunStageModels(docId, chapterId, nextRunId, stageModels)
-
     const nextResults = filterResultsByStages(currentResults, preservedStages)
+
     setResults(nextResults)
     setStages((prev) => {
       const nextStages = buildStageMapFromResults(nextResults)
@@ -8767,8 +8766,15 @@ export default function PipelineRunner({ docId, chapterId, runId, onRunIdChange 
       }
       return nextStages
     })
+    setStageProgress((prev) => {
+      const next = { ...prev }
+      for (const id of invalidated) {
+        delete next[id]
+      }
+      return next
+    })
 
-    return { targetRunId: nextRunId, nextResults }
+    return { targetRunId: currentRunId, nextResults }
   }
 
   async function runStage(
@@ -8784,8 +8790,6 @@ export default function PipelineRunner({ docId, chapterId, runId, onRunIdChange 
       return { ok: true, runId: currentRunId, results: currentResults }
     }
 
-    const { targetRunId, nextResults } = await prepareRunForStage(stageId, currentRunId, currentResults)
-
     setStage(stageId, "running")
     setProgress(stageId, {
       message: runContext
@@ -8795,11 +8799,12 @@ export default function PipelineRunner({ docId, chapterId, runId, onRunIdChange 
       total: 1,
       unit: "stage",
     })
-    if (targetRunId !== currentRunId) {
-      onRunIdChange?.(targetRunId)
-    }
-
+    let targetRunId = currentRunId
+    let nextResults = currentResults
     try {
+      const prepared = await prepareRunForStage(stageId, currentRunId, currentResults)
+      targetRunId = prepared.targetRunId
+      nextResults = prepared.nextResults
       const model = stage.usesModel ? stageModels[stageId]?.trim() : undefined
       await saveRunStageModels(docId, chapterId, targetRunId, stageModels)
       const data = await runPipelineStageRequest<Record<string, unknown>>(

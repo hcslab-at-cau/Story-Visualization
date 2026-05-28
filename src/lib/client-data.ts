@@ -19,6 +19,19 @@ export interface RunMeta {
   favorite?: boolean
 }
 
+export interface DocumentStorageCleanupResult {
+  docId: string
+  chaptersScanned: number
+  invalidRunsDeleted: number
+  orphanSharedArtifactsDeleted: number
+  invalidRuns: Array<{
+    chapterId: string
+    runId: string
+    stageId: StageId
+    missingStageId: StageId
+  }>
+}
+
 async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, {
     ...init,
@@ -59,6 +72,19 @@ export async function deleteRun(
     method: "DELETE",
     body: JSON.stringify({ docId, chapterId, runId }),
   })
+}
+
+export async function cleanupDocumentStorage(
+  docId: string,
+): Promise<DocumentStorageCleanupResult> {
+  const data = await requestJson<{ ok: true; cleanup: DocumentStorageCleanupResult }>(
+    "/api/storage-cleanup",
+    {
+      method: "POST",
+      body: JSON.stringify({ docId }),
+    },
+  )
+  return data.cleanup
 }
 
 export async function setRunFavorite(
