@@ -446,21 +446,6 @@ function HomeShell() {
     )
   }
 
-  async function handleRunFromCurrentChapterThroughState3() {
-    const startIndex = selectedChapterIndex >= 0 ? selectedChapterIndex : 0
-    const bookRunId = createTimestampRunId([runId])
-    await runChapterRangeStages(
-      chapters.slice(startIndex).map((chapter, offset) => ({
-        chapter,
-        visibleIndex: startIndex + offset,
-      })),
-      BOOK_STATE_STAGES,
-      bookRunId,
-      t.pipeline.runFromCurrentThroughState3Confirm,
-      t.pipeline.bookRunComplete,
-    )
-  }
-
   async function handleRerunBookState3Only() {
     const startIndex = selectedChapterIndex >= 0 ? selectedChapterIndex : 0
     await runChapterRangeStages(
@@ -642,15 +627,6 @@ function HomeShell() {
                   title={t.pipeline.runBookThroughState3Title}
                 >
                   {bookStateRun?.running ? t.pipeline.bookRunProgress : t.pipeline.runBookThroughState3}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => void handleRunFromCurrentChapterThroughState3()}
-                  disabled={!docId || selectedChapterIndex < 0 || chapters.length === 0 || bookStateRun?.running}
-                  className="rounded-lg border border-indigo-200 bg-indigo-50 px-4 py-2 text-sm font-medium text-indigo-700 transition-colors hover:bg-indigo-100 disabled:cursor-not-allowed disabled:opacity-50"
-                  title={t.pipeline.runFromCurrentThroughState3Title}
-                >
-                  {t.pipeline.runFromCurrentThroughState3}
                 </button>
                 <button
                   type="button"
