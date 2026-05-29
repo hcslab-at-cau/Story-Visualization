@@ -31,6 +31,7 @@ import { PIPELINE_STAGES, type ChapterMeta, type PipelineStageDef } from "@/type
 
 type View = "upload" | "pipeline" | "graph" | "reader" | "legacy"
 type ReaderMode = "reader" | "researcher"
+type State3ExportUnit = "sentence" | "paragraph"
 
 function getPreferredRunId(runs: RunMeta[]): string {
   return runs.find((item) => item.favorite)?.runId ?? runs[0]?.runId ?? ""
@@ -167,7 +168,7 @@ function HomeShell() {
   const [runId, setRunId] = useState("")
   const [bookStateRun, setBookStateRun] = useState<BookStateRunProgress | null>(null)
   const [pipelineRefreshNonce, setPipelineRefreshNonce] = useState(0)
-  const [exportingState3, setExportingState3] = useState(false)
+  const [exportingState3Unit, setExportingState3Unit] = useState<State3ExportUnit | null>(null)
   const [cleaningStorage, setCleaningStorage] = useState(false)
 
   useEffect(() => {
@@ -277,15 +278,16 @@ function HomeShell() {
     }
   }
 
-  async function handleExportState3Json() {
-    if (!docId || !selectedChapterId || !runId || exportingState3) return
+  async function handleExportState3Json(unit: State3ExportUnit) {
+    if (!docId || !selectedChapterId || !runId || exportingState3Unit) return
 
-    setExportingState3(true)
+    setExportingState3Unit(unit)
     try {
       const query = new URLSearchParams({
         docId,
         chapterId: selectedChapterId,
         runId,
+        unit,
       })
       const res = await fetch(`/api/export/state3?${query.toString()}`)
       const bodyText = await res.text()
@@ -301,7 +303,7 @@ function HomeShell() {
     } catch (error) {
       window.alert(getErrorMessage(error))
     } finally {
-      setExportingState3(false)
+      setExportingState3Unit(null)
     }
   }
 
@@ -616,12 +618,25 @@ function HomeShell() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => void handleExportState3Json()}
-                  disabled={!docId || !selectedChapterId || !runId || exportingState3}
+                  onClick={() => void handleExportState3Json("sentence")}
+                  disabled={!docId || !selectedChapterId || !runId || exportingState3Unit !== null}
                   className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm font-medium text-emerald-700 transition-colors hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-50"
-                  title={t.pipeline.exportState3JsonTitle}
+                  title={t.pipeline.exportState3SentenceJsonTitle}
                 >
-                  {exportingState3 ? t.pipeline.exportingState3Json : t.pipeline.exportState3Json}
+                  {exportingState3Unit === "sentence"
+                    ? t.pipeline.exportingState3Json
+                    : t.pipeline.exportState3SentenceJson}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void handleExportState3Json("paragraph")}
+                  disabled={!docId || !selectedChapterId || !runId || exportingState3Unit !== null}
+                  className="rounded-lg border border-teal-200 bg-teal-50 px-4 py-2 text-sm font-medium text-teal-700 transition-colors hover:bg-teal-100 disabled:cursor-not-allowed disabled:opacity-50"
+                  title={t.pipeline.exportState3ParagraphJsonTitle}
+                >
+                  {exportingState3Unit === "paragraph"
+                    ? t.pipeline.exportingState3Json
+                    : t.pipeline.exportState3ParagraphJson}
                 </button>
                 <button
                   type="button"

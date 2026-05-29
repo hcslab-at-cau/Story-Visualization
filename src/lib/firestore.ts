@@ -495,6 +495,20 @@ export async function listDocuments(options: FirestoreReadOptions = {}): Promise
   })
 }
 
+export async function loadDocumentMeta(
+  docId: string,
+  options: FirestoreReadOptions = {},
+): Promise<DocumentMeta | null> {
+  return withAdminErrorContext(async () => {
+    const snap = await documentDocRef(docId, options.source).get()
+    if (!snap.exists) return null
+    return {
+      docId: snap.id,
+      ...(snap.data() as Omit<DocumentMeta, "docId">),
+    }
+  })
+}
+
 // ---------------------------------------------------------------------------
 // Chapter-level helpers
 // ---------------------------------------------------------------------------

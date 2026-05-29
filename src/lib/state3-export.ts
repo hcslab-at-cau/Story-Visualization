@@ -9,12 +9,29 @@ export interface State3BoundaryExportSentence {
   text: string
 }
 
-export interface State3BoundaryExport {
+export interface State3BoundaryExportParagraph {
+  id: number
+  pid: number
+  start: number
+  end: number
+  text: string
+}
+
+export interface State3SentenceBoundaryExport {
   doc_id: string
   text: string
   sentences: State3BoundaryExportSentence[]
   labels: State3BoundaryExportLabel[]
 }
+
+export interface State3ParagraphBoundaryExport {
+  doc_id: string
+  text: string
+  paragraphs: State3BoundaryExportParagraph[]
+  labels: State3BoundaryExportLabel[]
+}
+
+export type State3BoundaryExportUnit = "sentence" | "paragraph"
 
 interface SentenceSegment {
   index: number
@@ -121,6 +138,24 @@ export function splitParagraphSentences(text: string): SentenceSegment[] {
   return splitSentencesWithIntl(text) ?? splitSentencesWithFallback(text)
 }
 
+function safeFilenamePart(value: string | undefined, fallback: string): string {
+  const normalized = (value ?? "")
+    .normalize("NFC")
+    .replace(/[<>:"/\\|?*\u0000-\u001F]/g, "_")
+    .replace(/\s+/g, "_")
+    .replace(/_+/g, "_")
+    .replace(/^[._\s]+|[._\s]+$/g, "")
+  return normalized || fallback
+}
+
+function chapterFilenamePart(chapterId: string): string {
+  const numericMatch = chapterId.match(/^(?:ch(?:apter)?[_-]?)?(\d+)$/i)
+  if (numericMatch?.[1]) {
+    return `ch${numericMatch[1].padStart(2, "0")}`
+  }
+  return safeFilenamePart(chapterId, "chapter")
+}
+
 function resolveParagraphStart(
   chapterText: string,
   paragraphText: string,
@@ -145,10 +180,10 @@ function resolveParagraphStart(
   return Math.max(0, Math.min(chapterText.length, searchFrom))
 }
 
-export function buildState3BoundaryExport(
+export function buildState3SentenceBoundaryExport(
   chapter: RawChapter,
   boundaries: SceneBoundaries,
-): State3BoundaryExport {
+): State3SentenceBoundaryExport {
   const sceneStartPids = new Set(boundaries.scenes.map((scene) => scene.start_pid))
   const sentences: State3BoundaryExportSentence[] = []
   const labels: State3BoundaryExportLabel[] = []
@@ -189,6 +224,58 @@ export function buildState3BoundaryExport(
   }
 }
 
-export function state3BoundaryExportFilename(exportDocId: string): string {
-  return `${exportDocId.replace(/[^a-zA-Z0-9._-]+/g, "_")}_state3.json`
+export function buildState3ParagraphBoundaryExport(
+  chapter: RawChapter,
+  boundaries: SceneBoundaries,
+): State3ParagraphBoundaryExport {
+  const sceneStartPids = new Set(boundaries.scenes.map((scene) => scene.start_pid))
+  const paragraphs: State3BoundaryExportParagraph[] = []
+  const labels: State3BoundaryExportLabel[] = []
+  let searchFrom = 0
+
+  for (const paragraph of chapter.paragraphs) {
+    const paragraphStart = resolveParagraphStart(
+      chapter.text,
+      paragraph.text,
+      paragraph.start,
+      paragraph.end,
+      searchFrom,
+    )
+
+    paragraphs.push({
+      id: paragraphs.length,
+      pid: paragraph.pid,
+      start: paragraphStart,
+      end: paragraphStart + paragraph.text.length,
+      text: paragraph.text,
+    })
+    labels.push(sceneStartPids.has(paragraph.pid) ? "BORDER" : "NOBORDER")
+
+    searchFrom = paragraphStart + paragraph.text.length
+  }
+
+  return {
+    doc_id: chapterExportDocId(chapter),
+    text: chapter.text,
+    paragraphs,
+    labels,
+  }
+}
+
+export function buildState3BoundaryExport(
+  chapter: RawChapter,
+  boundaries: SceneBoundaries,
+  unit: State3BoundaryExportUnit,
+): State3SentenceBoundaryExport | State3ParagraphBoundaryExport {
+  return unit === "paragraph"
+    ? buildState3ParagraphBoundaryExport(chapter, boundaries)
+    : buildState3SentenceBoundaryExport(chapter, boundaries)
+}
+
+export function state3BoundaryExportFilename(params: {
+  workTitle?: string
+  chapterId: string
+  unit: State3BoundaryExportUnit
+}): string {
+  return `${safeFilenamePart(params.workTitle, "work")}_${params.unit}_${chapterFilenamePart(params.chapterId)}.json`
 }
