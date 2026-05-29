@@ -2,6 +2,7 @@ import { applicationDefault, cert, getApps, initializeApp, type App } from "fire
 import { getFirestore, type Firestore } from "firebase-admin/firestore"
 import { getStorage } from "firebase-admin/storage"
 import fs from "node:fs"
+import path from "node:path"
 
 interface ServiceAccountLike {
   projectId?: string
@@ -12,7 +13,7 @@ interface ServiceAccountLike {
 function readServiceAccount(): ServiceAccountLike | null {
   const rawPath = process.env.FIREBASE_SERVICE_ACCOUNT_PATH
   if (rawPath) {
-    const parsed = JSON.parse(fs.readFileSync(rawPath, "utf8")) as Record<string, string>
+    const parsed = JSON.parse(fs.readFileSync(resolveServiceAccountPath(rawPath), "utf8")) as Record<string, string>
     return {
       projectId: parsed.project_id ?? parsed.projectId,
       clientEmail: parsed.client_email ?? parsed.clientEmail,
@@ -49,6 +50,25 @@ function readServiceAccount(): ServiceAccountLike | null {
   }
 
   return null
+}
+
+function resolveServiceAccountPath(rawPath: string): string {
+  const serviceAccountPath = rawPath.trim().replace(/^["']|["']$/g, "")
+  if (path.isAbsolute(serviceAccountPath)) return serviceAccountPath
+
+  const normalizedPath = serviceAccountPath.replace(/\\/g, "/").replace(/^\.\//, "")
+  if (!normalizedPath.startsWith("secrets/")) {
+    throw new Error(
+      "Relative FIREBASE_SERVICE_ACCOUNT_PATH must point inside the project secrets directory, for example secrets/service_account.json.",
+    )
+  }
+
+  const secretPathParts = normalizedPath.slice("secrets/".length).split("/")
+  if (secretPathParts.length === 0 || secretPathParts.some((part) => !part || part === "..")) {
+    throw new Error("FIREBASE_SERVICE_ACCOUNT_PATH contains an invalid secrets path.")
+  }
+
+  return path.join(process.cwd(), "secrets", ...secretPathParts)
 }
 
 function normalizePrivateKey(privateKey: string): string {

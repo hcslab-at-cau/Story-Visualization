@@ -677,6 +677,60 @@ export async function loadStageResult<T extends PipelineArtifact>(
   })
 }
 
+export interface StageResultResolution<T extends PipelineArtifact> {
+  result: T | null
+  runId?: string
+  candidateRunIds: string[]
+  usedFallback: boolean
+}
+
+export async function loadStageResultFromRunOrUnique<T extends PipelineArtifact>(
+  docId: string,
+  chapterId: string,
+  preferredRunId: string,
+  stageKeyValue: string,
+  options: FirestoreReadOptions = {},
+): Promise<StageResultResolution<T>> {
+  return withAdminErrorContext(async () => {
+    const preferredResult = await loadStageResult<T>(docId, chapterId, preferredRunId, stageKeyValue, options)
+    if (preferredResult) {
+      return {
+        result: preferredResult,
+        runId: preferredRunId,
+        candidateRunIds: [preferredRunId],
+        usedFallback: false,
+      }
+    }
+
+    const runsSnap = await chapterDocRef(docId, chapterId, options.source).collection("runs").get()
+    const candidatePairs = await Promise.all(
+      runsSnap.docs
+        .map((doc) => doc.id)
+        .filter((runId) => runId !== preferredRunId)
+        .map(async (runId) => ({
+          runId,
+          result: await loadStageResult<T>(docId, chapterId, runId, stageKeyValue, options),
+        })),
+    )
+    const candidates = candidatePairs.filter((item): item is { runId: string; result: T } => item.result !== null)
+
+    if (candidates.length === 1) {
+      return {
+        result: candidates[0].result,
+        runId: candidates[0].runId,
+        candidateRunIds: [candidates[0].runId],
+        usedFallback: true,
+      }
+    }
+
+    return {
+      result: null,
+      candidateRunIds: candidates.map((item) => item.runId),
+      usedFallback: false,
+    }
+  })
+}
+
 export async function loadRunResults(
   docId: string,
   chapterId: string,

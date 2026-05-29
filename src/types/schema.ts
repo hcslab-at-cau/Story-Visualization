@@ -303,6 +303,8 @@ export interface BoundaryReason {
   signals?: string[];
 }
 
+export type BoundaryReasonTag = "PLACE" | "TIME" | "CAST" | "OTHER";
+
 export type BoundaryLabel = "scene_boundary" | "weak_boundary_candidate";
 
 export interface BoundaryCandidate {
@@ -310,6 +312,7 @@ export interface BoundaryCandidate {
   score: number;
   label: BoundaryLabel;
   reasons: BoundaryReason[];
+  llm_reason_tags?: BoundaryReasonTag[];
 }
 
 export interface SceneSpan {
