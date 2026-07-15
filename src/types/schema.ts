@@ -12,6 +12,22 @@
  *   FINAL — Reader Package    (FINAL.1, FINAL.2)
  */
 
+import type { V3EvidenceArtifact } from "@/lib/pipeline/v3-evidence-types"
+import type { V3EvidenceClusteringArtifact } from "@/lib/pipeline/v3-evidence-clustering-types"
+import type { V3EvidenceGateArtifact } from "@/lib/pipeline/v3-evidence-gate-types"
+import type { V3EvidenceRefinementArtifact } from "@/lib/pipeline/v3-evidence-refinement-types"
+import type { V3EventGroupingArtifact } from "@/lib/pipeline/v3-event-types"
+import type { V3MemoryContractArtifact } from "@/lib/pipeline/v3-memory-contract-types"
+import type { V3EventFramesArtifact, V3SceneSituationCardsArtifact } from "@/lib/pipeline/v3-memory-frames-types"
+import type {
+  V3CausalEdgesArtifact,
+  V3GoalGroundingArtifact,
+  V3ProgressiveNarrativeMemoryArtifact,
+  V3RetrievalIndexArtifact,
+} from "@/lib/pipeline/v3-narrative-memory-types"
+import type { V3SceneGroupingArtifact } from "@/lib/pipeline/v3-scene-types"
+import type { V3SemanticIndexArtifact } from "@/lib/pipeline/v3-semantic-index-types"
+
 // ---------------------------------------------------------------------------
 // Shared base: every artifact has these fields
 // ---------------------------------------------------------------------------
@@ -1323,6 +1339,20 @@ export interface OverlayRefinementResult extends ArtifactBase {
 export type PipelineArtifact =
   | PreparedChapter
   | ContentUnits
+  | V3EvidenceArtifact
+  | V3EvidenceRefinementArtifact
+  | V3EvidenceGateArtifact
+  | V3EvidenceClusteringArtifact
+  | V3EventGroupingArtifact
+  | V3SceneGroupingArtifact
+  | V3MemoryContractArtifact
+  | V3SceneSituationCardsArtifact
+  | V3EventFramesArtifact
+  | V3GoalGroundingArtifact
+  | V3CausalEdgesArtifact
+  | V3ProgressiveNarrativeMemoryArtifact
+  | V3RetrievalIndexArtifact
+  | V3SemanticIndexArtifact
   | MentionCandidates
   | FilteredMentions
   | EntityGraph
@@ -1354,6 +1384,23 @@ export type PipelineArtifact =
 export type StageId =
   | "PRE.1"
   | "PRE.2"
+  | "EVID.1A"
+  | "EVID.1B"
+  | "EVID.1C"
+  | "EVID.1D"
+  | "EVID.2"
+  | "EVID.3"
+  | "EVID.4"
+  | "EVENT.1"
+  | "SCENE.0"
+  | "MEM.0"
+  | "MEM.1"
+  | "EVENT.2"
+  | "GOAL.1"
+  | "CAUS.1"
+  | "MEM.2"
+  | "IDX.1"
+  | "IDX.2"
   | "ENT.1"
   | "ENT.2"
   | "ENT.3"
@@ -1389,6 +1436,23 @@ export type StageId =
 export interface RunResults {
   "PRE.1"?: PreparedChapter;
   "PRE.2"?: ContentUnits;
+  "EVID.1A"?: V3EvidenceArtifact;
+  "EVID.1B"?: V3EvidenceArtifact;
+  "EVID.1C"?: V3EvidenceArtifact;
+  "EVID.1D"?: V3EvidenceArtifact;
+  "EVID.2"?: V3EvidenceRefinementArtifact;
+  "EVID.3"?: V3EvidenceGateArtifact;
+  "EVID.4"?: V3EvidenceClusteringArtifact;
+  "EVENT.1"?: V3EventGroupingArtifact;
+  "SCENE.0"?: V3SceneGroupingArtifact;
+  "MEM.0"?: V3MemoryContractArtifact;
+  "MEM.1"?: V3SceneSituationCardsArtifact;
+  "EVENT.2"?: V3EventFramesArtifact;
+  "GOAL.1"?: V3GoalGroundingArtifact;
+  "CAUS.1"?: V3CausalEdgesArtifact;
+  "MEM.2"?: V3ProgressiveNarrativeMemoryArtifact;
+  "IDX.1"?: V3RetrievalIndexArtifact;
+  "IDX.2"?: V3SemanticIndexArtifact;
   "ENT.1"?: MentionCandidates;
   "ENT.2"?: FilteredMentions;
   "ENT.3"?: EntityGraph;

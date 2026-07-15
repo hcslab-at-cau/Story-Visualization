@@ -1,6 +1,14 @@
-import type { RawChapter, SceneBoundaries } from "@/types/schema"
+import type {
+  BoundaryCandidate,
+  BoundaryLabel,
+  BoundaryReasonTag,
+  RawChapter,
+  SceneBoundaries,
+} from "@/types/schema"
 
 export type State3BoundaryExportLabel = "BORDER" | "NOBORDER"
+export type State3BoundaryExportType = BoundaryReasonTag | "START"
+export type State3BoundaryExportRuleLabel = BoundaryLabel | "chapter_start" | null
 
 export interface State3BoundaryExportSentence {
   id: number
@@ -22,6 +30,9 @@ export interface State3SentenceBoundaryExport {
   text: string
   sentences: State3BoundaryExportSentence[]
   labels: State3BoundaryExportLabel[]
+  boundary_types: State3BoundaryExportType[][]
+  boundary_scores: Array<number | null>
+  boundary_rule_labels: State3BoundaryExportRuleLabel[]
 }
 
 export interface State3ParagraphBoundaryExport {
@@ -29,6 +40,9 @@ export interface State3ParagraphBoundaryExport {
   text: string
   paragraphs: State3BoundaryExportParagraph[]
   labels: State3BoundaryExportLabel[]
+  boundary_types: State3BoundaryExportType[][]
+  boundary_scores: Array<number | null>
+  boundary_rule_labels: State3BoundaryExportRuleLabel[]
 }
 
 export type State3BoundaryExportUnit = "sentence" | "paragraph"
@@ -70,6 +84,14 @@ const SENTENCE_CLOSING_CHARS = new Set([
   "\u300d",
   "\u300f",
 ])
+
+const BOUNDARY_REASON_TAG_ORDER: State3BoundaryExportType[] = [
+  "START",
+  "PLACE",
+  "TIME",
+  "CAST",
+  "OTHER",
+]
 
 function chapterExportDocId(chapter: RawChapter): string {
   return [chapter.doc_id, chapter.chapter_id].filter(Boolean).join("_")
@@ -180,13 +202,95 @@ function resolveParagraphStart(
   return Math.max(0, Math.min(chapterText.length, searchFrom))
 }
 
+function buildBoundaryByStartPid(boundaries: SceneBoundaries): Map<number, BoundaryCandidate> {
+  return new Map(
+    boundaries.boundaries.map((boundary) => [boundary.boundary_before_pid, boundary]),
+  )
+}
+
+function uniqueOrderedBoundaryTypes(
+  types: State3BoundaryExportType[],
+): State3BoundaryExportType[] {
+  const found = new Set(types)
+  const ordered = BOUNDARY_REASON_TAG_ORDER.filter((type) => found.has(type))
+  return ordered.length > 0 ? ordered : []
+}
+
+function deriveBoundaryReasonTags(boundary: BoundaryCandidate | undefined): BoundaryReasonTag[] {
+  if (!boundary) return []
+  if (boundary.llm_reason_tags && boundary.llm_reason_tags.length > 0) {
+    return boundary.llm_reason_tags
+  }
+
+  const tags = boundary.reasons.map((reason): BoundaryReasonTag => {
+    switch (reason.type) {
+      case "place_shift":
+      case "place_set_after_previous_place":
+        return "PLACE"
+      case "cast_turnover":
+        return "CAST"
+      case "time_signal":
+        return "TIME"
+      default:
+        return "OTHER"
+    }
+  })
+
+  return uniqueOrderedBoundaryTypes(tags) as BoundaryReasonTag[]
+}
+
+function getBoundaryExportInfo(params: {
+  pid: number
+  sceneStartPids: Set<number>
+  firstSceneStartPid: number | undefined
+  boundaryByStartPid: Map<number, BoundaryCandidate>
+}): {
+  label: State3BoundaryExportLabel
+  types: State3BoundaryExportType[]
+  score: number | null
+  ruleLabel: State3BoundaryExportRuleLabel
+} {
+  const { pid, sceneStartPids, firstSceneStartPid, boundaryByStartPid } = params
+  if (!sceneStartPids.has(pid)) {
+    return {
+      label: "NOBORDER",
+      types: [],
+      score: null,
+      ruleLabel: null,
+    }
+  }
+
+  if (pid === firstSceneStartPid) {
+    return {
+      label: "BORDER",
+      types: ["START"],
+      score: null,
+      ruleLabel: "chapter_start",
+    }
+  }
+
+  const boundary = boundaryByStartPid.get(pid)
+  const reasonTags = deriveBoundaryReasonTags(boundary)
+  return {
+    label: "BORDER",
+    types: uniqueOrderedBoundaryTypes(reasonTags.length > 0 ? reasonTags : ["OTHER"]),
+    score: boundary?.score ?? null,
+    ruleLabel: boundary?.label ?? null,
+  }
+}
+
 export function buildState3SentenceBoundaryExport(
   chapter: RawChapter,
   boundaries: SceneBoundaries,
 ): State3SentenceBoundaryExport {
   const sceneStartPids = new Set(boundaries.scenes.map((scene) => scene.start_pid))
+  const firstSceneStartPid = boundaries.scenes[0]?.start_pid
+  const boundaryByStartPid = buildBoundaryByStartPid(boundaries)
   const sentences: State3BoundaryExportSentence[] = []
   const labels: State3BoundaryExportLabel[] = []
+  const boundaryTypes: State3BoundaryExportType[][] = []
+  const boundaryScores: Array<number | null> = []
+  const boundaryRuleLabels: State3BoundaryExportRuleLabel[] = []
   let searchFrom = 0
 
   for (const paragraph of chapter.paragraphs) {
@@ -198,6 +302,12 @@ export function buildState3SentenceBoundaryExport(
       searchFrom,
     )
     const paragraphSentences = splitParagraphSentences(paragraph.text)
+    const boundaryInfo = getBoundaryExportInfo({
+      pid: paragraph.pid,
+      sceneStartPids,
+      firstSceneStartPid,
+      boundaryByStartPid,
+    })
 
     paragraphSentences.forEach((sentence, sentenceIndex) => {
       sentences.push({
@@ -206,11 +316,11 @@ export function buildState3SentenceBoundaryExport(
         end: paragraphStart + sentence.index + sentence.segment.length,
         text: sentence.segment,
       })
-      labels.push(
-        sentenceIndex === 0 && sceneStartPids.has(paragraph.pid)
-          ? "BORDER"
-          : "NOBORDER",
-      )
+      const isBoundarySentence = sentenceIndex === 0 && boundaryInfo.label === "BORDER"
+      labels.push(isBoundarySentence ? "BORDER" : "NOBORDER")
+      boundaryTypes.push(isBoundarySentence ? boundaryInfo.types : [])
+      boundaryScores.push(isBoundarySentence ? boundaryInfo.score : null)
+      boundaryRuleLabels.push(isBoundarySentence ? boundaryInfo.ruleLabel : null)
     })
 
     searchFrom = paragraphStart + paragraph.text.length
@@ -221,6 +331,9 @@ export function buildState3SentenceBoundaryExport(
     text: chapter.text,
     sentences,
     labels,
+    boundary_types: boundaryTypes,
+    boundary_scores: boundaryScores,
+    boundary_rule_labels: boundaryRuleLabels,
   }
 }
 
@@ -229,8 +342,13 @@ export function buildState3ParagraphBoundaryExport(
   boundaries: SceneBoundaries,
 ): State3ParagraphBoundaryExport {
   const sceneStartPids = new Set(boundaries.scenes.map((scene) => scene.start_pid))
+  const firstSceneStartPid = boundaries.scenes[0]?.start_pid
+  const boundaryByStartPid = buildBoundaryByStartPid(boundaries)
   const paragraphs: State3BoundaryExportParagraph[] = []
   const labels: State3BoundaryExportLabel[] = []
+  const boundaryTypes: State3BoundaryExportType[][] = []
+  const boundaryScores: Array<number | null> = []
+  const boundaryRuleLabels: State3BoundaryExportRuleLabel[] = []
   let searchFrom = 0
 
   for (const paragraph of chapter.paragraphs) {
@@ -249,7 +367,16 @@ export function buildState3ParagraphBoundaryExport(
       end: paragraphStart + paragraph.text.length,
       text: paragraph.text,
     })
-    labels.push(sceneStartPids.has(paragraph.pid) ? "BORDER" : "NOBORDER")
+    const boundaryInfo = getBoundaryExportInfo({
+      pid: paragraph.pid,
+      sceneStartPids,
+      firstSceneStartPid,
+      boundaryByStartPid,
+    })
+    labels.push(boundaryInfo.label)
+    boundaryTypes.push(boundaryInfo.types)
+    boundaryScores.push(boundaryInfo.score)
+    boundaryRuleLabels.push(boundaryInfo.ruleLabel)
 
     searchFrom = paragraphStart + paragraph.text.length
   }
@@ -259,6 +386,9 @@ export function buildState3ParagraphBoundaryExport(
     text: chapter.text,
     paragraphs,
     labels,
+    boundary_types: boundaryTypes,
+    boundary_scores: boundaryScores,
+    boundary_rule_labels: boundaryRuleLabels,
   }
 }
 

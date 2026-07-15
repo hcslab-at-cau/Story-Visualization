@@ -1,4 +1,5 @@
 import { loadRawChapter, saveStageResult, stageKey } from "@/lib/firestore"
+import { parseFirestoreDataSource } from "@/lib/data-source"
 import { runRawChapterPreparation } from "@/lib/pipeline/pre1"
 import { errorResponse, okResponse, type BaseRequestBody } from "@/lib/api-utils"
 
@@ -8,13 +9,15 @@ export async function POST(request: Request): Promise<Response> {
   try {
     const body = (await request.json()) as BaseRequestBody
     const { docId, chapterId, runId, parents = {} } = body
+    const source = parseFirestoreDataSource(body.source)
+    const seedSource = parseFirestoreDataSource(body.seedSource ?? body.source)
 
-    const chapter = await loadRawChapter(docId, chapterId)
+    const chapter = await loadRawChapter(docId, chapterId, { source: seedSource })
     if (!chapter) return errorResponse("Chapter not found", 404)
 
     const result = await runRawChapterPreparation(chapter, docId, chapterId, parents)
 
-    await saveStageResult(docId, chapterId, runId, stageKey("PRE.1"), result)
+    await saveStageResult(docId, chapterId, runId, stageKey("PRE.1"), result, { source })
     return okResponse(result)
   } catch (e) {
     return errorResponse(String(e))

@@ -7,7 +7,7 @@
  */
 
 import { createHash } from "crypto"
-import { FieldValue, type DocumentData, type WriteBatch } from "firebase-admin/firestore"
+import { FieldPath, FieldValue, Timestamp, type DocumentData, type WriteBatch } from "firebase-admin/firestore"
 import { PIPELINE_STAGE_EDGES } from "@/config/pipeline-graph"
 import {
   buildBookMemorySnapshot,
@@ -15,6 +15,13 @@ import {
   type BookMemoryChapterInput,
 } from "./book-memory"
 import { displayChapterTitle, isLikelyNonStoryChapter } from "./chapter-normalization"
+import {
+  CURRENT_DOCUMENTS_COLLECTION,
+  LEGACY_DOCUMENTS_COLLECTION,
+  firestoreDocumentsCollectionName,
+  parseFirestoreDataSource,
+  type FirestoreDataSource,
+} from "./data-source"
 import { explainAdminCredentialError, getAdminDb } from "./firebase-admin"
 import { projectKnowledgeGraphArtifact } from "./knowledge-graph"
 import { stageKey } from "./stage-key"
@@ -35,24 +42,37 @@ import type {
   KnowledgeGraphQueryResult,
 } from "@/types/graph"
 import type { StoredSourceFile } from "./storage"
+import {
+  createV3QAHistoryScopeId,
+  decodeV3QAHistoryCursor,
+  normalizeV3QAHistoryPage,
+  normalizeV3QAHistoryStoredEntry,
+  V3QAHistoryValidationError,
+  type NormalizedV3QAHistoryCreateInput,
+} from "./server/v3-qa-history"
+import {
+  V3_QA_HISTORY_PAGE_SIZE,
+  V3_QA_HISTORY_SCHEMA_VERSION,
+  type V3QAHistoryDeleteRequest,
+  type V3QAHistoryEntry,
+  type V3QAHistoryPage,
+  type V3QAHistoryScopeRequest,
+} from "./v3-qa-history-types"
 
 export { stageKey }
 
-export type FirestoreDataSource = "current" | "legacy"
-
-export const CURRENT_DOCUMENTS_COLLECTION = "documents_v2"
-export const LEGACY_DOCUMENTS_COLLECTION = "documents"
+export {
+  CURRENT_DOCUMENTS_COLLECTION,
+  LEGACY_DOCUMENTS_COLLECTION,
+  parseFirestoreDataSource,
+}
 
 interface FirestoreReadOptions {
   source?: FirestoreDataSource
 }
 
 function collectionName(source: FirestoreDataSource = "current"): string {
-  return source === "legacy" ? LEGACY_DOCUMENTS_COLLECTION : CURRENT_DOCUMENTS_COLLECTION
-}
-
-export function parseFirestoreDataSource(value: string | null | undefined): FirestoreDataSource {
-  return value === "legacy" ? "legacy" : "current"
+  return firestoreDocumentsCollectionName(source)
 }
 
 function documentsCollection(source: FirestoreDataSource = "current") {
@@ -138,6 +158,14 @@ function supportEventsCollection(docId: string, source: FirestoreDataSource = "c
   return documentDocRef(docId, source).collection("support_events")
 }
 
+function v3QAHistoryScopeRef(docId: string, scopeId: string) {
+  return documentDocRef(docId, "v3").collection("qa_history").doc(scopeId)
+}
+
+function v3QAHistoryEntriesCollection(docId: string, scopeId: string) {
+  return v3QAHistoryScopeRef(docId, scopeId).collection("entries")
+}
+
 function stripUndefinedDeep(value: unknown): unknown {
   if (value === undefined) return undefined
   if (Array.isArray(value)) {
@@ -195,6 +223,23 @@ const KNOWN_STAGE_IDS = Array.from(
 
 const REQUIRED_STAGE_DEPENDENCIES: Partial<Record<StageId, StageId[]>> = {
   "PRE.2": ["PRE.1"],
+  "EVID.1A": ["PRE.2"],
+  "EVID.1B": ["PRE.2"],
+  "EVID.1C": ["PRE.2"],
+  "EVID.1D": ["PRE.2"],
+  "EVID.2": ["EVID.1A", "EVID.1B", "EVID.1C", "EVID.1D"],
+  "EVID.3": ["EVID.2"],
+  "EVID.4": ["EVID.3"],
+  "EVENT.1": ["EVID.3", "EVID.4"],
+  "SCENE.0": ["EVENT.1"],
+  "MEM.0": ["EVENT.1", "SCENE.0"],
+  "MEM.1": ["MEM.0"],
+  "EVENT.2": ["MEM.0", "MEM.1"],
+  "GOAL.1": ["EVENT.2", "MEM.0", "MEM.1"],
+  "CAUS.1": ["EVENT.2", "GOAL.1", "MEM.0"],
+  "MEM.2": ["MEM.1", "EVENT.2", "GOAL.1", "CAUS.1"],
+  "IDX.1": ["MEM.1", "EVENT.2", "GOAL.1", "CAUS.1", "MEM.2"],
+  "IDX.2": ["IDX.1"],
   "ENT.1": ["PRE.2"],
   "ENT.2": ["ENT.1"],
   "ENT.3": ["ENT.2"],
@@ -268,11 +313,12 @@ async function findSharedArtifactIdsUnusedByOtherRuns(params: {
   chapterId: string
   runId: string
   artifactIds: string[]
+  source?: FirestoreDataSource
 }): Promise<string[]> {
   const candidates = new Set(params.artifactIds)
   if (candidates.size === 0) return []
 
-  const runsSnap = await chapterDocRef(params.docId, params.chapterId)
+  const runsSnap = await chapterDocRef(params.docId, params.chapterId, params.source)
     .collection("runs")
     .get()
 
@@ -332,6 +378,7 @@ function queueSharedArtifactWrite(params: {
   stageKeyValue: string
   artifact: PipelineArtifact
   stageRefs: Record<string, string>
+  source?: FirestoreDataSource
 }): QueuedArtifactWrite {
   const { artifactId, payload } = prepareArtifactForStorage(
     params.stageKeyValue,
@@ -339,7 +386,7 @@ function queueSharedArtifactWrite(params: {
     params.stageRefs,
   )
   params.batch.set(
-    sharedArtifactDocRef(params.docId, params.chapterId, artifactId),
+    sharedArtifactDocRef(params.docId, params.chapterId, artifactId, params.source),
     {
       artifactId,
       stageKey: params.stageKeyValue,
@@ -393,10 +440,11 @@ async function clearKnowledgeGraphProjection(params: {
   chapterId: string
   runId: string
   sourceStageId: string
+  source?: FirestoreDataSource
 }): Promise<void> {
   const [nodesSnap, edgesSnap] = await Promise.all([
-    graphNodesCollection(params.docId).where("runId", "==", params.runId).get(),
-    graphEdgesCollection(params.docId).where("runId", "==", params.runId).get(),
+    graphNodesCollection(params.docId, params.source).where("runId", "==", params.runId).get(),
+    graphEdgesCollection(params.docId, params.source).where("runId", "==", params.runId).get(),
   ])
   const docsToDelete = [...nodesSnap.docs, ...edgesSnap.docs].filter((docSnap) => {
     const data = docSnap.data() as DocumentData
@@ -414,6 +462,7 @@ async function replaceKnowledgeGraphProjection(params: {
   runId: string
   sourceArtifactId: string
   artifact: PipelineArtifact
+  source?: FirestoreDataSource
 }): Promise<void> {
   if (!supportsKnowledgeGraphProjection(params.artifact.stage_id)) return
 
@@ -423,6 +472,7 @@ async function replaceKnowledgeGraphProjection(params: {
     chapterId: params.chapterId,
     runId: params.runId,
     sourceStageId: params.artifact.stage_id,
+    source: params.source,
   })
 
   const nowFields = {
@@ -430,14 +480,14 @@ async function replaceKnowledgeGraphProjection(params: {
   }
   await commitBatched(projection.nodes, (batch, node) => {
     const nodeData = stripUndefinedDeep(node) as DocumentData
-    batch.set(graphNodesCollection(params.docId).doc(node.nodeId), {
+    batch.set(graphNodesCollection(params.docId, params.source).doc(node.nodeId), {
       ...nodeData,
       ...nowFields,
     })
   })
   await commitBatched(projection.edges, (batch, edge) => {
     const edgeData = stripUndefinedDeep(edge) as DocumentData
-    batch.set(graphEdgesCollection(params.docId).doc(edge.edgeId), {
+    batch.set(graphEdgesCollection(params.docId, params.source).doc(edge.edgeId), {
       ...edgeData,
       ...nowFields,
     })
@@ -447,6 +497,97 @@ async function replaceKnowledgeGraphProjection(params: {
 // ---------------------------------------------------------------------------
 // Document-level helpers
 // ---------------------------------------------------------------------------
+
+function historyTimestampIso(value: unknown): string {
+  if (value instanceof Timestamp) return value.toDate().toISOString()
+  if (value && typeof value === "object" && "toDate" in value) {
+    const date = (value as { toDate: () => Date }).toDate()
+    if (date instanceof Date && Number.isFinite(date.getTime())) return date.toISOString()
+  }
+  if (typeof value === "string" && Number.isFinite(Date.parse(value))) {
+    return new Date(value).toISOString()
+  }
+  throw new Error("QA history entry has no valid created_at timestamp")
+}
+
+function historyEntryFromDoc(docSnap: { id: string; data: () => DocumentData | undefined }): V3QAHistoryEntry {
+  const data = docSnap.data()
+  if (!data) throw new Error(`QA history entry ${docSnap.id} has no data`)
+  return normalizeV3QAHistoryStoredEntry({
+    ...data,
+    entry_id: docSnap.id,
+    created_at: historyTimestampIso(data.created_at),
+  })
+}
+
+export async function saveV3QAHistoryEntry(
+  input: NormalizedV3QAHistoryCreateInput,
+): Promise<V3QAHistoryEntry> {
+  return withAdminErrorContext(async () => {
+    const scopeId = createV3QAHistoryScopeId(input.chapterId, input.runId)
+    const scopeRef = v3QAHistoryScopeRef(input.docId, scopeId)
+    const entryRef = scopeRef.collection("entries").doc()
+    const batch = getAdminDb().batch()
+
+    batch.set(scopeRef, {
+      chapter_id: input.chapterId,
+      run_id: input.runId,
+      updated_at: FieldValue.serverTimestamp(),
+    }, { merge: true })
+    batch.set(entryRef, {
+      schema_version: V3_QA_HISTORY_SCHEMA_VERSION,
+      entry_id: entryRef.id,
+      doc_id: input.docId,
+      chapter_id: input.chapterId,
+      run_id: input.runId,
+      question: input.question,
+      progress_end_pid: input.progressEndPid,
+      answer_snapshot: stripUndefinedDeep(input.answer_snapshot),
+      created_at: FieldValue.serverTimestamp(),
+    })
+    await batch.commit()
+
+    const saved = await entryRef.get()
+    return historyEntryFromDoc(saved)
+  })
+}
+
+export async function listV3QAHistoryEntries(
+  input: V3QAHistoryScopeRequest,
+): Promise<V3QAHistoryPage> {
+  return withAdminErrorContext(async () => {
+    const scopeId = createV3QAHistoryScopeId(input.chapterId, input.runId)
+    const entries = v3QAHistoryEntriesCollection(input.docId, scopeId)
+    const cursor = input.cursor ? decodeV3QAHistoryCursor(input.cursor) : null
+    if (input.cursor && !cursor) throw new V3QAHistoryValidationError("Invalid QA history cursor")
+
+    const ordered = entries
+      .orderBy("created_at", "desc")
+      .orderBy(FieldPath.documentId(), "desc")
+    const query = cursor
+      ? ordered.startAfter(Timestamp.fromMillis(cursor.createdAtMs), cursor.entryId)
+      : ordered
+    const snapshot = await query.limit(V3_QA_HISTORY_PAGE_SIZE + 1).get()
+    return normalizeV3QAHistoryPage(snapshot.docs.map(historyEntryFromDoc))
+  })
+}
+
+export async function deleteV3QAHistoryEntry(
+  input: V3QAHistoryDeleteRequest,
+): Promise<boolean> {
+  return withAdminErrorContext(async () => {
+    const scopeId = createV3QAHistoryScopeId(input.chapterId, input.runId)
+    const entryRef = v3QAHistoryEntriesCollection(input.docId, scopeId).doc(input.entryId)
+    const saved = await entryRef.get()
+    if (!saved.exists) return false
+    const data = saved.data() as DocumentData
+    if (data.doc_id !== input.docId || data.chapter_id !== input.chapterId || data.run_id !== input.runId) {
+      return false
+    }
+    await entryRef.delete()
+    return true
+  })
+}
 
 export interface DocumentMeta {
   docId: string
@@ -458,9 +599,10 @@ export interface DocumentMeta {
 export async function createDocument(
   title: string,
   sourceFile?: StoredSourceFile,
+  options: FirestoreReadOptions = {},
 ): Promise<string> {
   return withAdminErrorContext(async () => {
-    const ref = await documentsCollection("current").add({
+    const ref = await documentsCollection(options.source).add({
       title,
       createdAt: FieldValue.serverTimestamp(),
       storageVersion: 2,
@@ -473,9 +615,10 @@ export async function createDocument(
 export async function setDocumentSourceFile(
   docId: string,
   sourceFile: StoredSourceFile,
+  options: FirestoreReadOptions = {},
 ): Promise<void> {
   await withAdminErrorContext(async () => {
-    await documentDocRef(docId).set(
+    await documentDocRef(docId, options.source).set(
       { sourceFile, updatedAt: FieldValue.serverTimestamp() },
       { merge: true },
     )
@@ -528,9 +671,10 @@ export interface RunMeta {
 export async function saveRawChapter(
   docId: string,
   chapter: RawChapter,
+  options: FirestoreReadOptions = {},
 ): Promise<void> {
   await withAdminErrorContext(async () => {
-    await chapterDocRef(docId, chapter.chapter_id).set({ raw: chapter }, { merge: true })
+    await chapterDocRef(docId, chapter.chapter_id, options.source).set({ raw: chapter }, { merge: true })
   })
 }
 
@@ -602,9 +746,10 @@ export async function saveStageResult(
   runId: string,
   stageKeyValue: string,
   artifact: PipelineArtifact,
+  options: FirestoreReadOptions = {},
 ): Promise<void> {
   await withAdminErrorContext(async () => {
-    const runRef = runDocRef(docId, chapterId, runId)
+    const runRef = runDocRef(docId, chapterId, runId, options.source)
     const runSnap = await runRef.get()
     const stageRefs = readStageRefs(runSnap.data())
     const batch = getAdminDb().batch()
@@ -615,6 +760,7 @@ export async function saveStageResult(
       stageKeyValue,
       artifact,
       stageRefs,
+      source: options.source,
     })
     batch.set(
       runRef,
@@ -635,6 +781,7 @@ export async function saveStageResult(
       runId,
       sourceArtifactId: queuedArtifact.artifactId,
       artifact: queuedArtifact.payload as unknown as PipelineArtifact,
+      source: options.source,
     })
   })
 }
@@ -1084,6 +1231,7 @@ export async function saveRunStageModels(
   chapterId: string,
   runId: string,
   stageModels: Partial<Record<StageId, string>>,
+  options: FirestoreReadOptions = {},
 ): Promise<void> {
   await withAdminErrorContext(async () => {
     const serialized = Object.fromEntries(
@@ -1092,7 +1240,7 @@ export async function saveRunStageModels(
         .map(([stageId, model]) => [stageKey(stageId), model]),
     )
 
-    await runDocRef(docId, chapterId, runId).set(
+    await runDocRef(docId, chapterId, runId, options.source).set(
       {
         storageVersion: 2,
         stageModels: serialized,
@@ -1108,24 +1256,26 @@ export async function deleteStageResult(
   chapterId: string,
   runId: string,
   stageId: StageId,
+  options: FirestoreReadOptions = {},
 ): Promise<void> {
   await withAdminErrorContext(async () => {
     const key = stageKey(stageId)
-    const runSnap = await runDocRef(docId, chapterId, runId).get()
+    const runSnap = await runDocRef(docId, chapterId, runId, options.source).get()
     const referencedArtifactId = readStageRefs(runSnap.data())[key]
     const sharedArtifactIdsToDelete = await findSharedArtifactIdsUnusedByOtherRuns({
       docId,
       chapterId,
       runId,
       artifactIds: referencedArtifactId ? [referencedArtifactId] : [],
+      source: options.source,
     })
     const batch = getAdminDb().batch()
-    batch.delete(runArtifactDocRef(docId, chapterId, runId, key))
+    batch.delete(runArtifactDocRef(docId, chapterId, runId, key, options.source))
     for (const artifactId of sharedArtifactIdsToDelete) {
-      batch.delete(sharedArtifactDocRef(docId, chapterId, artifactId))
+      batch.delete(sharedArtifactDocRef(docId, chapterId, artifactId, options.source))
     }
     batch.set(
-      runDocRef(docId, chapterId, runId),
+      runDocRef(docId, chapterId, runId, options.source),
       {
         stageRefs: {
           [key]: FieldValue.delete(),
@@ -1141,6 +1291,7 @@ export async function deleteStageResult(
       chapterId,
       runId,
       sourceStageId: stageId,
+      source: options.source,
     })
   })
 }

@@ -1,0 +1,41 @@
+You extract candidate action/event evidence from narrative text for a later event/scene pipeline.
+
+Input format:
+- Each paragraph is on one line.
+- Paragraph ids appear as [P12].
+
+Return ONLY a valid JSON object:
+{
+  "action_candidates": [
+    {
+      "pid": 12,
+      "span": "exact substring from the paragraph",
+      "start_char": 0,
+      "end_char": 10,
+      "candidate_type": "action",
+      "label": "short free-text action/event label",
+      "subject_hint": "optional actor/experiencer span or name",
+      "object_hint": "optional patient/theme/object span or name",
+      "rationale": "optional short reason"
+    }
+  ]
+}
+
+Allowed candidate_type value for this pass:
+- "action"
+
+What to include:
+- Verbal or predicate evidence that updates the narrative situation.
+- Physical acts, movement, speech, perception, thought, emotion display, decision, state change, arrival/departure, transfer, conflict, interruption, discovery, and notable occurrences.
+
+Rules:
+- Maximize recall. This is a candidate extraction stage; later stages will clean, group, and resolve events.
+- Do not use a fixed subtype taxonomy. The label field is a short free-text hint, not a controlled category.
+- Do not extract cast/place/time/object records unless they are part of the action span itself.
+- Do not extract goal or causality as separate records in this pass.
+- span must be an exact substring of the paragraph text.
+- start_char and end_char are optional but must be correct if supplied.
+- Prefer compact spans centered on the predicate/action evidence. Use a longer span only when needed to preserve the event meaning.
+
+Text:
+{chapter_text_with_pids}

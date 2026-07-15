@@ -1,0 +1,65 @@
+You merge EVENT.1 event candidates into larger SCENE.0 scene candidates for an automated narrative pipeline.
+
+Input:
+- event_candidates_json: ordered event candidates. Each item has an event_id, pid span, event summary, and compact evidence for actions, cast, place, time, objects, goals, and causality.
+
+Scene definition:
+- A scene is a larger narrative unit than an event.
+- Group neighboring events into one scene when the same broad situation continues.
+- Split scenes when one or more of these axes materially changes:
+  1. time: the temporal moment, duration, or time signal changes.
+  2. place: the space, location, spatial frame, or setting changes.
+  3. action_focus: the dominant situation, pursuit, problem, activity focus, goal, or semantic meaning changes.
+  4. cast: the active character constellation changes.
+- action_focus is NOT a single action anchor. It is the central situation/focus that can contain several smaller actions and events.
+- A large scene may contain smaller internal phases. Keep those phases together when the same stable place, cast constellation, and macroscopic problem/goal continue.
+
+Return ONLY a valid JSON object:
+{
+  "scene_candidates": [
+    {
+      "event_ids": ["event id"],
+      "summary": "short scene description grounded in the grouped events",
+      "time_axis": {
+        "label": "time continuity or shift label",
+        "evidence_event_ids": ["event id"],
+        "note": "brief optional note"
+      },
+      "place_axis": {
+        "label": "place or spatial frame label",
+        "evidence_event_ids": ["event id"],
+        "note": "brief optional note"
+      },
+      "action_focus_axis": {
+        "label": "dominant scene focus, goal, problem, or situation",
+        "evidence_event_ids": ["event id"],
+        "note": "brief optional note"
+      },
+      "cast_axis": {
+        "label": "active cast constellation label",
+        "evidence_event_ids": ["event id"],
+        "note": "brief optional note"
+      },
+      "boundary_basis": ["time", "place", "action_focus", "cast"],
+      "rationale": "brief reason for this scene grouping"
+    }
+  ]
+}
+
+Rules:
+- Use only event_ids present in event_candidates_json.
+- Preserve event order. A scene should contain neighboring events, not events pulled from distant parts of the chapter.
+- Do not split only because individual actions change if the broader action_focus is stable.
+- Do split when the broader action_focus changes even if the same character remains active.
+- Do not create a standalone scene for a short transition-only bridge, such as landing, passing through a corridor, briefly resuming a chase, entering a destination, or noticing the next setting, when it mainly carries the reader into the next stable situation.
+- Merge transition-only bridge events with the destination scene by default. Merge them with the previous scene only when they mainly resolve the previous scene's central situation.
+- If several events share the same place/cast and a persistent macroscopic problem or goal, keep them in one scene even if there are smaller event-level obstacles, attempts, discoveries, or emotional reactions inside it.
+- Before returning JSON, re-check every candidate scene. If a candidate scene is mostly transition, pursuit-resumption, passage movement, or arrival, and the next candidate establishes the stable destination situation, remove the transition scene and prepend its event_ids to the destination scene.
+- A landing-following-passage-arriving-in-hall sequence is transition/opening material for the hall scene unless the passage itself becomes a sustained scene situation.
+- Do not invent event ids, paragraph ids, scores, thresholds, importance values, or confidence values.
+- boundary_basis must include only axes that help distinguish this scene from adjacent scenes or explain its grouping.
+- Prefer readable scene-sized groups over one-event scenes when adjacent events share time/place/action_focus/cast.
+- If uncertain, keep the event in the nearest plausible neighboring scene instead of marking it for review.
+
+event_candidates_json:
+{event_candidates_json}
