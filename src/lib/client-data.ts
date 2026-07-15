@@ -8,10 +8,17 @@ import type {
 } from "@/types/graph"
 import type { RunReadinessReport } from "@/types/readiness"
 import type { SupportContextKind } from "@/types/support-context"
+import type { V3QARetrievalResult } from "@/lib/pipeline/v3-qa-retrieval-types"
+import type { V3QAAnswerResult } from "@/lib/pipeline/v3-qa-answer-types"
+import type {
+  V3QAHistoryAnswerSnapshot,
+  V3QAHistoryEntry,
+  V3QAHistoryPage,
+} from "@/lib/v3-qa-history-types"
 
 export { stageKey }
 
-export type DataSource = "current" | "legacy"
+export type DataSource = "current" | "legacy" | "v3"
 
 export interface RunMeta {
   runId: string
@@ -155,10 +162,11 @@ export async function saveRunStageModels(
   chapterId: string,
   runId: string,
   stageModels: Partial<Record<StageId, string>>,
+  source?: DataSource,
 ): Promise<void> {
   await requestJson<{ ok: true }>("/api/run-stage-models", {
     method: "POST",
-    body: JSON.stringify({ docId, chapterId, runId, stageModels }),
+    body: JSON.stringify({ docId, chapterId, runId, stageModels, source }),
   })
 }
 
@@ -167,10 +175,87 @@ export async function deleteStageResult(
   chapterId: string,
   runId: string,
   stageId: StageId,
+  source?: DataSource,
 ): Promise<void> {
   await requestJson<{ ok: true }>("/api/stage-result", {
     method: "DELETE",
-    body: JSON.stringify({ docId, chapterId, runId, stageId }),
+    body: JSON.stringify({ docId, chapterId, runId, stageId, source }),
+  })
+}
+
+export async function retrieveV3QAEvidence(params: {
+  docId: string
+  chapterId: string
+  runId: string
+  question: string
+  progressEndPid: number
+  source?: DataSource
+  limit?: number
+}): Promise<V3QARetrievalResult> {
+  return requestJson<V3QARetrievalResult>("/api/pipeline/v3-qa-retrieve", {
+    method: "POST",
+    body: JSON.stringify(params),
+  })
+}
+
+export async function answerV3Question(params: {
+  docId: string
+  chapterId: string
+  runId: string
+  question: string
+  progressEndPid: number
+  source?: DataSource
+  limit?: number
+  model?: string
+}): Promise<V3QAAnswerResult> {
+  return requestJson<V3QAAnswerResult>("/api/pipeline/v3-qa-answer", {
+    method: "POST",
+    body: JSON.stringify(params),
+  })
+}
+
+export async function listV3QAHistory(params: {
+  docId: string
+  chapterId: string
+  runId: string
+  source: DataSource
+  cursor?: string
+}): Promise<V3QAHistoryPage> {
+  const query = new URLSearchParams({
+    docId: params.docId,
+    chapterId: params.chapterId,
+    runId: params.runId,
+    source: params.source,
+  })
+  if (params.cursor) query.set("cursor", params.cursor)
+  return requestJson<V3QAHistoryPage>(`/api/v3/qa-history?${query.toString()}`)
+}
+
+export async function saveV3QAHistory(params: {
+  docId: string
+  chapterId: string
+  runId: string
+  source: DataSource
+  question: string
+  progressEndPid: number
+  answerSnapshot: V3QAHistoryAnswerSnapshot
+}): Promise<V3QAHistoryEntry> {
+  return requestJson<V3QAHistoryEntry>("/api/v3/qa-history", {
+    method: "POST",
+    body: JSON.stringify(params),
+  })
+}
+
+export async function deleteV3QAHistory(params: {
+  docId: string
+  chapterId: string
+  runId: string
+  source: DataSource
+  entryId: string
+}): Promise<void> {
+  await requestJson<{ ok: true }>("/api/v3/qa-history", {
+    method: "DELETE",
+    body: JSON.stringify(params),
   })
 }
 

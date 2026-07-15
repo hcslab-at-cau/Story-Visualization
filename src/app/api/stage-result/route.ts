@@ -27,12 +27,19 @@ export async function DELETE(request: Request): Promise<Response> {
       chapterId?: string
       runId?: string
       stageId?: StageId
+      source?: string
     }
     if (!body.docId || !body.chapterId || !body.runId || !body.stageId) {
       return Response.json({ error: "docId, chapterId, runId, and stageId required" }, { status: 400 })
     }
 
-    await deleteStageResult(body.docId, body.chapterId, body.runId, body.stageId)
+    await deleteStageResult(
+      body.docId,
+      body.chapterId,
+      body.runId,
+      body.stageId,
+      { source: parseFirestoreDataSource(body.source) },
+    )
     return Response.json({ ok: true })
   } catch (e) {
     return Response.json({ error: e instanceof Error ? e.message : String(e) }, { status: 500 })

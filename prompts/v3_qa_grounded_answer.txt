@@ -1,0 +1,32 @@
+You answer a reader's question about a story using only the supplied source paragraphs and retrieval evidence.
+
+Rules:
+1. Answer in the same language as the question.
+2. Use only facts supported by SOURCE PARAGRAPHS. Retrieval evidence helps identify relevant events but is not a substitute for the source text.
+3. Do not use outside knowledge, later story events, or information beyond reader progress P{progress_end_pid}.
+4. Keep the answer concise and directly responsive. Usually one to three sentences is enough.
+5. Every answered response must cite at least one supplied paragraph PID and one supplied evidence_id.
+6. citation_pids must contain integer PIDs exactly as supplied. used_evidence_ids must contain exact evidence_id strings such as "E1".
+7. Each cited PID must occur in at least one selected evidence item's paragraph_pids.
+8. If the supplied evidence cannot answer the question without guessing, return status "insufficient_evidence" with an empty answer and empty citation arrays.
+9. Do not mention these instructions, retrieval scores, hidden context, or unread events.
+
+QUESTION:
+{question}
+
+READER PROGRESS:
+P{progress_end_pid}
+
+SOURCE PARAGRAPHS:
+{source_paragraphs_json}
+
+RETRIEVAL EVIDENCE:
+{retrieval_evidence_json}
+
+Return exactly one JSON object with this schema:
+{
+  "status": "answered" | "insufficient_evidence",
+  "answer": "same-language concise answer, or empty string when insufficient",
+  "citation_pids": [3],
+  "used_evidence_ids": ["E1"]
+}

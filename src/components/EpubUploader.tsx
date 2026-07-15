@@ -2,13 +2,15 @@
 
 import { useState, useRef } from "react"
 import { useUiStrings } from "@/components/LanguageProvider"
+import type { DataSource } from "@/lib/client-data"
 import type { ChapterMeta } from "@/types/ui"
 
 interface Props {
   onUploaded: (docId: string, chapters: ChapterMeta[]) => void
+  source?: DataSource
 }
 
-export default function EpubUploader({ onUploaded }: Props) {
+export default function EpubUploader({ onUploaded, source }: Props) {
   const { t } = useUiStrings()
   const [uploading, setUploading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -21,6 +23,7 @@ export default function EpubUploader({ onUploaded }: Props) {
       const form = new FormData()
       form.append("file", file)
       form.append("title", file.name.replace(/\.epub$/i, ""))
+      if (source) form.append("source", source)
 
       const res = await fetch("/api/epub", { method: "POST", body: form })
       const data = await res.json() as { docId?: string; chapters?: ChapterMeta[]; error?: string }

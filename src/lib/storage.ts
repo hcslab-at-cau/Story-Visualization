@@ -6,7 +6,13 @@
  */
 
 import { createHash, randomUUID } from "crypto"
+import { gunzipSync, gzipSync } from "node:zlib"
+import {
+  storagePrefixForSource,
+  type StorageDataSource,
+} from "./data-source"
 import { explainAdminCredentialError, getAdminStorageBucket } from "./firebase-admin"
+import type { V3SemanticVectorPayload } from "./pipeline/v3-semantic-index-types"
 
 export interface StoredSourceFile {
   bucket: string
@@ -21,7 +27,10 @@ export interface StoredGeneratedImage extends StoredSourceFile {
   downloadUrl: string
 }
 
-const CURRENT_STORAGE_PREFIX = "documents_v2"
+export interface StoredSemanticVectorBlob extends StoredSourceFile {
+  contentType: "application/gzip"
+  contentHash: string
+}
 
 function sanitizeFileName(fileName: string): string {
   const cleaned = fileName
@@ -86,10 +95,11 @@ export async function uploadSourceEpub(
   fileName: string,
   buffer: Buffer,
   contentType = "application/epub+zip",
+  options: { source?: StorageDataSource } = {},
 ): Promise<StoredSourceFile> {
   return withStorageErrorContext(async () => {
     const safeName = sanitizeFileName(fileName)
-    const storagePath = `${CURRENT_STORAGE_PREFIX}/${docId}/source/${safeName}`
+    const storagePath = `${storagePrefixForSource(options.source)}/${docId}/source/${safeName}`
 
     await saveBuffer({
       storagePath,
@@ -116,6 +126,7 @@ export async function uploadGeneratedImage(params: {
   buffer: Buffer
   contentType?: string
   fileExtension?: string
+  source?: StorageDataSource
 }): Promise<StoredGeneratedImage> {
   return withStorageErrorContext(async () => {
     const safeSceneId = sanitizePathSegment(params.sceneId, "scene")
@@ -126,7 +137,7 @@ export async function uploadGeneratedImage(params: {
       .slice(0, 16)
     const fileName = `${safeSceneId}__${contentHash}.${fileExtension}`
     const storagePath = [
-      CURRENT_STORAGE_PREFIX,
+      storagePrefixForSource(params.source),
       params.docId,
       "chapters",
       params.chapterId,
@@ -156,5 +167,56 @@ export async function uploadGeneratedImage(params: {
       sizeBytes: params.buffer.byteLength,
       downloadUrl,
     }
+  })
+}
+
+export async function uploadV3SemanticVectors(params: {
+  docId: string
+  chapterId: string
+  runId: string
+  payload: V3SemanticVectorPayload
+  source?: StorageDataSource
+}): Promise<StoredSemanticVectorBlob> {
+  return withStorageErrorContext(async () => {
+    const fileName = "vectors.json.gz"
+    const storagePath = [
+      storagePrefixForSource(params.source),
+      sanitizePathSegment(params.docId, "document"),
+      "chapters",
+      sanitizePathSegment(params.chapterId, "chapter"),
+      "runs",
+      sanitizePathSegment(params.runId, "run"),
+      "indexes",
+      "idx2",
+      fileName,
+    ].join("/")
+    const buffer = gzipSync(Buffer.from(JSON.stringify(params.payload), "utf8"))
+    const contentHash = createHash("sha256").update(buffer).digest("hex")
+
+    await saveBuffer({ storagePath, buffer, contentType: "application/gzip" })
+
+    return {
+      bucket: bucketName(),
+      storagePath,
+      gsUri: `gs://${bucketName()}/${storagePath}`,
+      fileName,
+      contentType: "application/gzip",
+      sizeBytes: buffer.byteLength,
+      contentHash,
+    }
+  })
+}
+
+export async function downloadV3SemanticVectors(params: {
+  storagePath: string
+  expectedContentHash: string
+}): Promise<V3SemanticVectorPayload> {
+  return withStorageErrorContext(async () => {
+    const [buffer] = await getAdminStorageBucket().file(params.storagePath).download()
+    const contentHash = createHash("sha256").update(buffer).digest("hex")
+    if (contentHash !== params.expectedContentHash) {
+      throw new Error("IDX.2 vector blob content hash mismatch")
+    }
+    return JSON.parse(gunzipSync(buffer).toString("utf8")) as V3SemanticVectorPayload
   })
 }

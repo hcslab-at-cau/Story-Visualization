@@ -365,6 +365,65 @@ ${previousInvalidResponse.slice(0, 4000)}`,
     return this.callJson(prompt, 1, "ent1_mention_extract")
   }
 
+  async extractSceneBoundaryMentions(params: { chapter_text_with_pids: string }): Promise<Record<string, unknown>> {
+    const prompt = this.promptLoader.load("v3_scene_boundary_mentions", params)
+    return this.callJson(prompt, 1, "v3_scene_boundary_mentions")
+  }
+
+  async extractV3Evidence(
+    templateName: string,
+    params: { chapter_text_with_pids: string },
+  ): Promise<Record<string, unknown>> {
+    const prompt = this.promptLoader.load(templateName, params)
+    return this.callJson(prompt, 1, templateName)
+  }
+
+  async refineV3Evidence(params: {
+    paragraphs_json: string
+    candidates_json: string
+  }): Promise<Record<string, unknown>> {
+    const templateName = "v3_evid2_candidate_refine"
+    const prompt = this.promptLoader.load(templateName, params)
+    return this.callJson(prompt, 1, templateName)
+  }
+
+  async gateV3Evidence(params: {
+    paragraphs_json: string
+    refined_candidates_json: string
+  }): Promise<Record<string, unknown>> {
+    const templateName = "v3_evid3_candidate_gate"
+    const prompt = this.promptLoader.load(templateName, params)
+    return this.callJson(prompt, 1, templateName)
+  }
+
+  async groupV3Events(params: {
+    paragraphs_json: string
+    evidence_occurrences_json: string
+  }): Promise<Record<string, unknown>> {
+    const templateName = "v3_event1_group_events"
+    const prompt = this.promptLoader.load(templateName, params)
+    return this.callJson(prompt, 1, templateName)
+  }
+
+  async groupV3Scenes(params: {
+    event_candidates_json: string
+  }): Promise<Record<string, unknown>> {
+    const templateName = "v3_scene0_group_scenes"
+    const prompt = this.promptLoader.load(templateName, params)
+    return this.callJson(prompt, 1, templateName)
+  }
+
+  async answerV3Question(params: {
+    question: string
+    progress_end_pid: string
+    source_paragraphs_json: string
+    retrieval_evidence_json: string
+  }): Promise<Record<string, unknown>> {
+    const templateName = "v3_qa_grounded_answer"
+    const prompt = this.promptLoader.load(templateName, params)
+    return this.callJson(prompt, 2, templateName)
+  }
+
   // ---------------------------------------------------------------------------
   // ENT.2
   // ---------------------------------------------------------------------------

@@ -1,0 +1,41 @@
+You extract candidate entity evidence from narrative text for a later event/scene pipeline.
+
+Input format:
+- Each paragraph is on one line.
+- Paragraph ids appear as [P12].
+
+Return ONLY a valid JSON object:
+{
+  "entity_candidates": [
+    {
+      "pid": 12,
+      "span": "exact substring from the paragraph",
+      "start_char": 0,
+      "end_char": 10,
+      "candidate_type": "cast",
+      "label": "short free-text label",
+      "normalized": "optional canonical form",
+      "rationale": "optional short reason"
+    }
+  ]
+}
+
+Allowed candidate_type values for this pass:
+- "cast": person, character, or group that is an actual story-world participant in the local situation.
+- "place": spatial container, setting, destination, origin, route, named place, or place-like region.
+- "time": explicit time expression, duration, sequence marker, age/period, season, date, or story-time frame.
+- "object": tangible object, prop, possession, body part, document, money, food, tool, animal, or other non-place entity involved in the situation.
+
+Rules:
+- Maximize recall. This is a candidate extraction stage; later stages will clean and merge.
+- Do not extract action, goal, or causality records in this pass.
+- Do not force a fixed subtype taxonomy. Use label only as a short free-text hint for what the span contributes.
+- span must be an exact substring of the paragraph text.
+- start_char and end_char are optional but must be correct if supplied.
+- If a spatial word names a container/setting, use "place"; if it is a prop or non-setting thing, use "object".
+- Do not extract narrator/reader address, generic "you", hypothetical/indefinite people ("someone", "somebody", "anyone"), or negated absences ("no one", "nobody") as cast unless they are actual story-world participants in the current situation.
+- Do not extract mental or cognitive spaces ("mind", "thoughts", "memory", "imagination") as place. If the passage matters, action/goal/causality passes should capture the thinking, desire, or cause instead.
+- Keep each occurrence separate when the same span appears in different paragraphs or positions.
+
+Text:
+{chapter_text_with_pids}

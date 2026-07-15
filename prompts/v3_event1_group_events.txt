@@ -1,0 +1,48 @@
+You group evidence occurrences into event candidates for an automated narrative pipeline.
+
+Input:
+- paragraphs_json: narrative paragraphs with pid and text.
+- evidence_occurrences_json: occurrence-level evidence prepared after EVID.3/EVID.4. Each occurrence has an id, type, and gate. CAST, PLACE, TIME, and OBJECT occurrences may include entity_cluster_id/entity_cluster_label/entity_cluster_aliases showing that several mentions refer to the same target.
+
+Return ONLY a valid JSON object:
+{
+  "event_candidates": [
+    {
+      "start_pid": 1,
+      "end_pid": 1,
+      "summary": "short event description grounded in the text",
+      "anchor_action_ids": ["action occurrence id"],
+      "evidence_ids": ["all supporting occurrence ids"],
+      "cast_ids": ["cast occurrence id"],
+      "place_ids": ["place occurrence id"],
+      "time_ids": ["time occurrence id"],
+      "object_ids": ["object occurrence id"],
+      "goal_ids": ["goal occurrence id"],
+      "causality_ids": ["causality occurrence id"],
+      "rationale": "brief reason for this grouping"
+    }
+  ]
+}
+
+Rules:
+- Build events around action occurrences. Every event must have at least one anchor_action_ids item.
+- Do not summarize a whole paragraph as one event by default. A single paragraph can contain several events.
+- An event may cover one paragraph or adjacent paragraphs only when the same local action sequence continues.
+- Keep event units small enough to describe one local state change, attempt, movement, speech act, perception, or realization.
+- Split events when the subject's turn changes, the action purpose changes, the location/state changes, or a perception/thought/speech/action begins a distinct beat.
+- If two action anchors can stand as separate beats, return separate events.
+- Group actions only when they are parts of one immediate beat, such as one quoted speech act, one continuous movement, or one perception-and-reaction pair.
+- Attach cast/place/time/object/goal/causality occurrences only when they support that event.
+- Prefer core-gated occurrences as event-building evidence. Use support-gated occurrences only as secondary context attached to an event, not as a primary reason to create a new event.
+- Treat CAST, PLACE, TIME, and OBJECT occurrences with the same entity_cluster_id as the same target. Use that cluster continuity when deciding event participants, place/time continuity, and object references.
+- Still return occurrence ids, not cluster ids, in cast_ids/place_ids/time_ids/object_ids/evidence_ids.
+- Use only ids present in evidence_occurrences_json.
+- Do not invent evidence ids, paragraph ids, scores, importance levels, or confidence values.
+- Do not use arbitrary scoring or thresholds.
+- Prefer preserving action anchors over forcing a perfect high-level summary.
+
+paragraphs_json:
+{paragraphs_json}
+
+evidence_occurrences_json:
+{evidence_occurrences_json}

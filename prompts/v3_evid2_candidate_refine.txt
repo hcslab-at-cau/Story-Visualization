@@ -1,0 +1,78 @@
+You refine evidence candidates for an automated event-building pipeline.
+
+Input:
+- paragraphs_json: narrative paragraphs with pid and text.
+- candidates_json: candidates already extracted by EVID.1A-D.
+
+Return ONLY a valid JSON object:
+{
+  "refined_candidates": [
+    {
+      "source_candidate_ids": ["original candidate id"],
+      "candidate_type": "action",
+      "status": "kept_core",
+      "actions": ["merged"],
+      "pid": 12,
+      "span": "exact substring from the paragraph",
+      "start_char": 0,
+      "end_char": 10,
+      "normalized": "optional canonical form",
+      "label": "optional short label",
+      "subject_hint": "optional",
+      "object_hint": "optional",
+      "owner_span": "optional",
+      "target_span": "optional",
+      "cue_span": "optional",
+      "goal_text": "optional",
+      "cause_text": "optional",
+      "effect_text": "optional",
+      "rationale": "brief reason grounded in the text"
+    }
+  ],
+  "rejected_candidates": [
+    {
+      "source_candidate_id": "original candidate id",
+      "reason": "span_not_in_text",
+      "original_reason": "brief objective reason"
+    }
+  ]
+}
+
+Allowed candidate_type values:
+- cast, place, time, object, action, goal, causality
+
+Allowed status values:
+- kept_core: useful as a central event-building candidate.
+- kept_context: valid but peripheral/background/contextual evidence. Keep it for event attachment.
+- corrected: valid after a small type/span/normalization correction.
+
+Allowed actions values:
+- merged: multiple source candidates are the same local evidence.
+- span_corrected: span was adjusted to an exact substring.
+- type_corrected: candidate_type was corrected.
+- normalized: normalized or label fields were cleaned.
+
+Allowed rejection reasons:
+- span_not_in_text
+- wrong_pid
+- hallucinated_or_not_in_paragraph
+- not_a_candidate_record
+
+Hard rules:
+- Be conservative.
+- Reject only objective extraction errors.
+- Do NOT reject a candidate because it is unimportant, minor, background, redundant, weak, vague, or unlikely to form an event by itself.
+- Unimportant or peripheral but text-valid candidates must be kept_context.
+- If two candidates duplicate the same local evidence, return one refined candidate with both source ids.
+- Do not merge source candidates across different candidate_type values. Same surface text is not enough: a cast "it" and an object "it" must remain separate unless one source candidate is being type_corrected.
+- Do not merge pronouns or short referential spans only because they look identical. Merge only when the referent and candidate_type are the same local evidence.
+- span must be an exact substring of the paragraph text for pid.
+- Do not invent a scoring rubric. Do not add importance scores.
+- confidence is optional; only include it if already present or directly supported by the source candidate, not as a new heuristic score.
+- Every source candidate should appear either in refined_candidates.source_candidate_ids or rejected_candidates.source_candidate_id.
+
+paragraphs_json:
+{paragraphs_json}
+
+candidates_json:
+{candidates_json}

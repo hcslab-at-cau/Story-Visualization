@@ -11,6 +11,8 @@ export interface BaseRequestBody {
   runId: string
   model?: string
   parents?: Record<string, string>
+  source?: string
+  seedSource?: string
 }
 
 export interface PipelineProgressEvent {

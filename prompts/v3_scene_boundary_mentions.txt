@@ -1,0 +1,100 @@
+You are extracting scene-boundary-oriented mentions for a narrative pipeline.
+
+Use the definitions below:
+- EVENT is the minimal narrative unit: action, occurrence, speech, perception, or internal response.
+- SCENE is a connected set of events with continuity in time, space, action focus, and character constellation.
+- This stage extracts only CAST, PLACE, and TIME mentions needed by later scene-boundary decisions.
+- Do not decide ACTION_FOCUS or event sequence here. Those are deferred to later boundary/action stages.
+
+## Extraction Goal
+
+Extract stable mentions that help detect changes in:
+1. character constellation
+2. spatial container
+3. story time frame or temporal transition
+
+Favor precision over the old high-recall ENT.1 behavior.
+
+## Mention Types and Roles
+
+### cast
+Extract characters, people, or groups. Classify each cast mention:
+- on_stage: physically or narratively active in the current event context
+- mentioned_only: named or referenced but not active in the current event context
+- imagined_or_hypothetical: present only inside memory, imagination, desire, fear, plan, or condition
+- narrator_addressed: reader/narratee or discourse-level address rather than story-world participant
+
+### place
+Extract spatial containers only: rooms, streets, houses, fields, villages, named places, relative areas used as a setting.
+Do not treat ordinary objects or props as place mentions.
+Classify each place mention:
+- spatial_container: a setting/container where events can occur
+- object_or_prop: object/prop, not a scene location
+- imagined_or_hypothetical: spatial mention inside memory, imagination, desire, fear, plan, or condition
+
+### time
+Extract time expressions that frame story events or signal temporal transition.
+Classify each time mention:
+- story_time_frame: time frame or transition that can anchor or shift a scene
+- time_expression: duration, ordering, or vague temporal phrase with contextual value
+
+## Boundary Relevance
+
+Set boundary_relevance:
+- direct: mention directly contributes to time, space, or character-constellation continuity
+- contextual: mention should be preserved but is not a direct boundary signal
+- excluded: candidate should not enter the scene-boundary mention set
+
+Rules:
+- on_stage cast is direct.
+- spatial_container place is direct.
+- story_time_frame time is direct.
+- mentioned_only, imagined_or_hypothetical, narrator_addressed, and time_expression are contextual unless the text clearly makes them a direct scene-continuity anchor.
+- object_or_prop is always excluded.
+
+## Input Format
+
+The chapter text is provided with paragraph IDs in the format `[P{n}]`.
+
+## Output Format
+
+Return ONLY valid JSON:
+
+{
+  "mentions": [
+    {
+      "pid": 1,
+      "span": "exact text",
+      "start_char": 0,
+      "end_char": 10,
+      "mention_type": "cast",
+      "normalized": "canonical form or null",
+      "scene_role": "on_stage",
+      "boundary_relevance": "direct",
+      "rationale": "short reason"
+    }
+  ],
+  "excluded_candidates": [
+    {
+      "pid": 1,
+      "span": "exact text",
+      "mention_type": "place",
+      "scene_role": "object_or_prop",
+      "boundary_relevance": "excluded",
+      "rationale": "object or prop, not a spatial container"
+    }
+  ]
+}
+
+Rules:
+- pid must match one of the input paragraph IDs.
+- span must be an exact substring from the raw paragraph text.
+- start_char and end_char are offsets inside the paragraph text only, excluding the `[P{n}]` label.
+- If offsets are uncertain, still provide the best exact span; downstream code can resolve offsets.
+- Return one mention entry per occurrence.
+- Do not return partial-word substrings.
+- Keep rationale short.
+
+## Chapter Text
+
+{chapter_text_with_pids}
