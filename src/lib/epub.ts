@@ -5,7 +5,7 @@
  * Uses: epub2 (EPub), cheerio (BeautifulSoup equivalent)
  */
 
-import { createHash } from "crypto"
+import { createHash, randomUUID } from "crypto"
 import { EPub } from "epub2"
 import * as cheerio from "cheerio"
 import {
@@ -14,6 +14,7 @@ import {
   isGenericChapterTitle,
   normalizeChapterTitle,
 } from "@/lib/chapter-normalization"
+import { deriveParagraphId, deriveSourceItemId } from "@/lib/corpus-identity"
 import type { RawChapter, Paragraph, ChapterSource } from "@/types/schema"
 
 const BLOCK_TAGS = [
@@ -59,13 +60,26 @@ function htmlToParagraphs(html: string): string[] {
 // Internal candidate type
 // ---------------------------------------------------------------------------
 
+interface SourceParagraphCandidate {
+  text: string
+  sourceItemId?: string
+  sourceParagraphOrdinal?: number
+}
+
+export interface ParseEpubContext {
+  docId: string
+  bookId?: string
+  corpusRevisionId?: string
+}
+
 interface RawChapterCandidate {
   title: string
-  paragraphs: string[]
+  paragraphs: SourceParagraphCandidate[]
   textLength: number
   sourceType: string
   hrefs: string[]
   sourceUnitIds: string[]
+  sourceItemIds: string[]
   manifestId?: string
   originalTitle?: string
   tocTitle?: string
@@ -84,12 +98,13 @@ interface EpubSourceUnit {
   headingTitle?: string
   selectedTitle: string
   html: string
-  paragraphs: string[]
+  paragraphs: SourceParagraphCandidate[]
   textLength: number
   linkTextLength: number
   imageCount: number
   classHints: string[]
   bodyText: string
+  sourceItemId?: string
   classification: SourceUnitClassification
 }
 
@@ -98,17 +113,54 @@ interface SourceUnitClassification {
   reason: string
 }
 
+function uniqueStrings(values: Array<string | undefined>): string[] {
+  return Array.from(new Set(values.filter((value): value is string => Boolean(value))))
+}
+
+function candidateTexts(candidate: RawChapterCandidate): string[] {
+  return candidate.paragraphs.map((paragraph) => paragraph.text)
+}
+
 function candidateToRawChapter(
   candidate: RawChapterCandidate,
-  docId: string,
+  context: ParseEpubContext,
   chapterId: string,
-): RawChapter {
+  startingGlobalOrdinal: number,
+): { chapter: RawChapter; nextGlobalOrdinal: number } {
   const paras: Paragraph[] = []
   let pos = 0
+  let nextGlobalOrdinal = startingGlobalOrdinal
+
   for (let i = 0; i < candidate.paragraphs.length; i++) {
-    const text = candidate.paragraphs[i]
-    paras.push({ pid: i, start: pos, end: pos + text.length, text })
+    const sourceParagraph = candidate.paragraphs[i]
+    const text = sourceParagraph.text
+    const paragraph: Paragraph = {
+      pid: i,
+      start: pos,
+      end: pos + text.length,
+      text,
+      global_ordinal: nextGlobalOrdinal,
+    }
+
+    if (sourceParagraph.sourceItemId) paragraph.source_item_id = sourceParagraph.sourceItemId
+    if (sourceParagraph.sourceParagraphOrdinal !== undefined) {
+      paragraph.source_paragraph_ordinal = sourceParagraph.sourceParagraphOrdinal
+    }
+    if (
+      context.corpusRevisionId &&
+      sourceParagraph.sourceItemId &&
+      sourceParagraph.sourceParagraphOrdinal !== undefined
+    ) {
+      paragraph.paragraph_id = deriveParagraphId(
+        context.corpusRevisionId,
+        sourceParagraph.sourceItemId,
+        sourceParagraph.sourceParagraphOrdinal,
+      )
+    }
+
+    paras.push(paragraph)
     pos += text.length + 1
+    nextGlobalOrdinal += 1
   }
   const source: ChapterSource = {
     type: candidate.sourceType,
@@ -121,13 +173,26 @@ function candidateToRawChapter(
   if (candidate.classification) source.classification = candidate.classification
   if (candidate.classificationReason) source.classification_reason = candidate.classificationReason
   if (candidate.sourceUnitIds.length > 0) source.source_unit_ids = candidate.sourceUnitIds
-  return {
-    doc_id: docId,
+  const sourceItemIds = uniqueStrings([
+    ...candidate.sourceItemIds,
+    ...candidate.paragraphs.map((paragraph) => paragraph.sourceItemId),
+  ])
+  if (sourceItemIds.length > 0) source.source_item_ids = sourceItemIds
+
+  const chapter: RawChapter = {
+    doc_id: context.docId,
     chapter_id: chapterId,
     title: candidate.title,
     source,
-    text: candidate.paragraphs.join(" "),
+    text: candidateTexts(candidate).join(" "),
     paragraphs: paras,
+  }
+  if (context.bookId) chapter.book_id = context.bookId
+  if (context.corpusRevisionId) chapter.corpus_revision_id = context.corpusRevisionId
+
+  return {
+    chapter,
+    nextGlobalOrdinal,
   }
 }
 
@@ -149,12 +214,14 @@ function mergeShortChapters(
       prev.textLength += cand.textLength
       prev.hrefs.push(...cand.hrefs)
       prev.sourceUnitIds.push(...cand.sourceUnitIds)
+      prev.sourceItemIds.push(...cand.sourceItemIds)
     } else {
       merged.push({
         ...cand,
-        paragraphs: [...cand.paragraphs],
+        paragraphs: cand.paragraphs.map((paragraph) => ({ ...paragraph })),
         hrefs: [...cand.hrefs],
         sourceUnitIds: [...cand.sourceUnitIds],
+        sourceItemIds: [...cand.sourceItemIds],
       })
     }
   }
@@ -163,12 +230,12 @@ function mergeShortChapters(
 
 function splitLongChapter(cand: RawChapterCandidate): RawChapterCandidate[] {
   const result: RawChapterCandidate[] = []
-  let current: string[] = []
+  let current: SourceParagraphCandidate[] = []
   let currentLen = 0
   let partIdx = 1
 
   for (const para of cand.paragraphs) {
-    if (currentLen + para.length > MAX_CHARS && current.length > 0) {
+    if (currentLen + para.text.length > MAX_CHARS && current.length > 0) {
       result.push({
         title: `${cand.title} (${partIdx})`,
         paragraphs: current,
@@ -176,6 +243,7 @@ function splitLongChapter(cand: RawChapterCandidate): RawChapterCandidate[] {
         sourceType: cand.sourceType,
         hrefs: cand.hrefs,
         sourceUnitIds: cand.sourceUnitIds,
+        sourceItemIds: cand.sourceItemIds,
         manifestId: cand.manifestId,
         originalTitle: cand.originalTitle,
         tocTitle: cand.tocTitle,
@@ -187,8 +255,8 @@ function splitLongChapter(cand: RawChapterCandidate): RawChapterCandidate[] {
       currentLen = 0
       partIdx++
     }
-    current.push(para)
-    currentLen += para.length
+    current.push({ ...para })
+    currentLen += para.text.length
   }
   if (current.length > 0) {
     result.push({
@@ -198,6 +266,7 @@ function splitLongChapter(cand: RawChapterCandidate): RawChapterCandidate[] {
       sourceType: cand.sourceType,
       hrefs: cand.hrefs,
       sourceUnitIds: cand.sourceUnitIds,
+      sourceItemIds: cand.sourceItemIds,
       manifestId: cand.manifestId,
       originalTitle: cand.originalTitle,
       tocTitle: cand.tocTitle,
@@ -233,7 +302,7 @@ function dedupeSourceUnits(units: EpubSourceUnit[]): EpubSourceUnit[] {
 const DUPLICATE_CANDIDATE_MIN_CHARS = 400
 
 function candidateContentFingerprint(candidate: RawChapterCandidate): string | undefined {
-  const normalized = candidate.paragraphs.join("\n").replace(/\s+/g, " ").trim()
+  const normalized = candidateTexts(candidate).join("\n").replace(/\s+/g, " ").trim()
   if (normalized.length < DUPLICATE_CANDIDATE_MIN_CHARS) return undefined
   return createHash("sha256").update(normalized).digest("hex")
 }
@@ -263,29 +332,54 @@ function dedupeDuplicateCandidates(candidates: RawChapterCandidate[]): RawChapte
  */
 export async function parseEpub(
   buffer: Buffer,
-  docId: string,
+  docIdOrContext: string | ParseEpubContext,
 ): Promise<RawChapter[]> {
   // epub2 expects a file path; write to a temp location
   const { tmpdir } = await import("os")
   const { join } = await import("path")
   const { writeFileSync, unlinkSync } = await import("fs")
+  const context = normalizeParseEpubContext(docIdOrContext)
 
-  const tmpPath = join(tmpdir(), `epub-${Date.now()}.epub`)
+  const tmpPath = join(tmpdir(), `epub-${randomUUID()}.epub`)
   writeFileSync(tmpPath, buffer)
 
   try {
     const epub = await EPub.createAsync(tmpPath)
-    const candidates = await extractCandidates(epub)
+    const candidates = await extractCandidates(epub, context)
     const normalized = normalizeCandidates(candidates)
-    return normalized.map((c, i) =>
-      candidateToRawChapter(c, docId, `ch${String(i + 1).padStart(2, "0")}`),
-    )
+    return materializeRawChapters(normalized, context)
   } finally {
     unlinkSync(tmpPath)
   }
 }
 
-async function extractCandidates(epub: EPub): Promise<RawChapterCandidate[]> {
+function normalizeParseEpubContext(docIdOrContext: string | ParseEpubContext): ParseEpubContext {
+  return typeof docIdOrContext === "string"
+    ? { docId: docIdOrContext }
+    : docIdOrContext
+}
+
+function materializeRawChapters(
+  candidates: RawChapterCandidate[],
+  context: ParseEpubContext,
+): RawChapter[] {
+  const chapters: RawChapter[] = []
+  let nextGlobalOrdinal = 0
+
+  for (const [index, candidate] of candidates.entries()) {
+    const chapterId = `ch${String(index + 1).padStart(2, "0")}`
+    const materialized = candidateToRawChapter(candidate, context, chapterId, nextGlobalOrdinal)
+    chapters.push(materialized.chapter)
+    nextGlobalOrdinal = materialized.nextGlobalOrdinal
+  }
+
+  return chapters
+}
+
+async function extractCandidates(
+  epub: EPub,
+  context: ParseEpubContext,
+): Promise<RawChapterCandidate[]> {
   const tocTitleByKey = buildTocTitleMap(epub)
   const sourceUnits: EpubSourceUnit[] = []
 
@@ -302,6 +396,10 @@ async function extractCandidates(epub: EPub): Promise<RawChapterCandidate[]> {
       const href = item?.href ?? spineItem.href
       const originalTitle = item?.title ?? spineItem.title ?? id
       const htmlSummary = summarizeHtml(html)
+      const normalizedHref = normalizeHrefWithoutFragment(href ?? id)
+      const sourceItemId = context.corpusRevisionId
+        ? deriveSourceItemId(context.corpusRevisionId, spineIndex, id, normalizedHref)
+        : undefined
       const tocTitle = titleFromToc(tocTitleByKey, id, href)
       const selectedTitle = selectSourceUnitTitle({
         spineIndex,
@@ -320,12 +418,17 @@ async function extractCandidates(epub: EPub): Promise<RawChapterCandidate[]> {
         headingTitle: htmlSummary.headingTitle,
         selectedTitle,
         html,
-        paragraphs: htmlSummary.paragraphs,
+        paragraphs: htmlSummary.paragraphs.map((text, index) => ({
+          text,
+          sourceItemId,
+          sourceParagraphOrdinal: sourceItemId ? index : undefined,
+        })),
         textLength: htmlSummary.textLength,
         linkTextLength: htmlSummary.linkTextLength,
         imageCount: htmlSummary.imageCount,
         classHints: htmlSummary.classHints,
         bodyText: htmlSummary.bodyText,
+        sourceItemId,
       }
       sourceUnits.push({
         ...baseUnit,
@@ -455,7 +558,7 @@ function classifySourceUnit(unit: Omit<EpubSourceUnit, "classification">): Sourc
   ].join(" ").toLowerCase()
   const bodyLower = unit.bodyText.toLowerCase()
   const linkRatio = unit.textLength > 0 ? unit.linkTextLength / unit.textLength : 0
-  const hasChapterHeading = [unit.headingTitle, ...unit.paragraphs.slice(0, 3)]
+  const hasChapterHeading = [unit.headingTitle, ...unit.paragraphs.slice(0, 3).map((paragraph) => paragraph.text)]
     .some(isChapterHeadingCandidate)
 
   if (unit.textLength < 20 && unit.imageCount === 0) {
@@ -521,14 +624,20 @@ function chaptersFromSourceUnits(units: EpubSourceUnit[]): RawChapterCandidate[]
           classification_reason: unit.classification.reason,
           source_unit_ids: [unit.unitId],
         },
-        text: unit.paragraphs.join(" "),
-        paragraphs: unit.paragraphs.map((text, index) => ({ pid: index, start: 0, end: text.length, text })),
+        text: unit.paragraphs.map((paragraph) => paragraph.text).join(" "),
+        paragraphs: unit.paragraphs.map((paragraph, index) => ({
+          pid: index,
+          start: 0,
+          end: paragraph.text.length,
+          text: paragraph.text,
+        })),
       }, unit.manifestId, unit.spineIndex + 1),
       paragraphs: unit.paragraphs,
       textLength: unit.textLength,
       sourceType: "spine",
       hrefs: unit.href ? [unit.href] : [],
       sourceUnitIds: [unit.unitId],
+      sourceItemIds: unit.sourceItemId ? [unit.sourceItemId] : [],
       manifestId: unit.manifestId,
       originalTitle: unit.originalTitle,
       tocTitle: unit.tocTitle,
