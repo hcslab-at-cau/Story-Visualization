@@ -46,6 +46,7 @@ class FakeCorpusBlobStore implements CorpusBlobStore {
   readonly objects = new Map<string, StoredSourceFile>()
   putCalls = 0
   writeCount = 0
+  putFailures: unknown[] = []
 
   private pauseEnteredResolve?: () => void
   private pauseEntered?: Promise<void>
@@ -77,6 +78,9 @@ class FakeCorpusBlobStore implements CorpusBlobStore {
 
   async putIfAbsent(input: PutCorpusBlobInput): Promise<StoredSourceFile> {
     this.putCalls += 1
+
+    const failure = this.putFailures.shift()
+    if (failure !== undefined) throw failure
 
     if (this.pausedPut) {
       const pause = this.pausedPut
@@ -111,9 +115,14 @@ class FakeCorpusImportRepository implements CorpusImportRepository {
   listChapterCalls = 0
   workspaceCalls = 0
   lastClaimInput?: ClaimRevisionInput
+  lastFailInput?: FailRevisionInput
 
+  saveChapterFailures: unknown[] = []
   completeFailures: unknown[] = []
+  failRevisionFailures: unknown[] = []
+  listChapterFailures: unknown[] = []
   workspaceFailures: unknown[] = []
+  listedChaptersOverride?: RawChapter[]
   completeOnNextClaim?: {
     record: CorpusRevisionRecord
     chapters: RawChapter[]
@@ -176,6 +185,8 @@ class FakeCorpusImportRepository implements CorpusImportRepository {
     this.saveChapterCalls += 1
     const revision = this.revisions.get(revisionId)
     if (revision?.claimToken !== claimToken) throw new Error("claim lost while saving chapters")
+    const failure = this.saveChapterFailures.shift()
+    if (failure !== undefined) throw failure
 
     const snapshot = cloneChapters(chapters)
     this.savedChapterSnapshots.push(snapshot)
@@ -204,8 +215,11 @@ class FakeCorpusImportRepository implements CorpusImportRepository {
 
   async failRevision(input: FailRevisionInput): Promise<void> {
     this.failCalls += 1
+    this.lastFailInput = input
     const revision = this.revisions.get(input.corpusRevisionId)
     if (revision?.claimToken !== input.claimToken) throw new Error("claim lost while failing")
+    const failure = this.failRevisionFailures.shift()
+    if (failure !== undefined) throw failure
     assert.ok(revision)
     this.revisions.set(input.corpusRevisionId, {
       ...revision,
@@ -219,6 +233,11 @@ class FakeCorpusImportRepository implements CorpusImportRepository {
     this.listChapterCalls += 1
     const revision = this.revisions.get(revisionId)
     if (revision?.status !== "complete") return []
+    const failure = this.listChapterFailures.shift()
+    if (failure !== undefined) throw failure
+    if (this.listedChaptersOverride !== undefined) {
+      return cloneChapters(this.listedChaptersOverride)
+    }
 
     const byId = this.chapters.get(revisionId) ?? new Map<string, RawChapter>()
     return (revision.chapterIds ?? []).map((chapterId) => {
@@ -286,6 +305,41 @@ function makeDependencies(
     },
   }
   return { dependencies, state }
+}
+
+async function seedCompletedRevision(
+  repository: FakeCorpusImportRepository,
+  buffer: Buffer,
+): Promise<{
+  identity: ReturnType<typeof deriveCorpusIdentity>
+  record: CorpusRevisionRecord
+  sourceFile: StoredSourceFile
+  chapters: RawChapter[]
+}> {
+  const identity = deriveCorpusIdentity(buffer)
+  const sourceFile = makeStoredSourceFile({
+    ...identity,
+    buffer,
+    fileName: "stored.epub",
+    contentType: "application/epub+zip",
+  })
+  const chapters = await fakeParser()(buffer, {
+    docId: identity.corpusRevisionId,
+    bookId: identity.bookId,
+    corpusRevisionId: identity.corpusRevisionId,
+  })
+  const record: CorpusRevisionRecord = {
+    ...identity,
+    status: "complete",
+    sourceFile,
+    chapterIds: chapters.map((chapter) => chapter.chapter_id),
+  }
+  repository.revisions.set(identity.corpusRevisionId, record)
+  repository.chapters.set(
+    identity.corpusRevisionId,
+    new Map(chapters.map((chapter) => [chapter.chapter_id, structuredClone(chapter)])),
+  )
+  return { identity, record, sourceFile, chapters }
 }
 
 test("initial real EPUB import persists one canonical revision and a renamed byte-identical retry reuses it", async () => {
@@ -471,12 +525,15 @@ test("concurrent identical imports allow only the active claimant to write", asy
     dependencies,
   )
 
-  await assert.rejects(secondImport, (error: unknown) => {
-    assert.ok(error instanceof CorpusImportError)
-    assert.equal(error.code, "import_in_progress")
-    return true
-  })
-  blobStore.resumePut()
+  try {
+    await assert.rejects(secondImport, (error: unknown) => {
+      assert.ok(error instanceof CorpusImportError)
+      assert.equal(error.code, "import_in_progress")
+      return true
+    })
+  } finally {
+    blobStore.resumePut()
+  }
   const completed = await firstImport
 
   assert.equal(completed.reused, false)
@@ -526,6 +583,202 @@ test("a claim race that reports complete returns the stored manifest without blo
   assert.equal(blobStore.putCalls, 0)
   assert.equal(repository.saveChapterCalls, 0)
   assert.equal(repository.completeCalls, 0)
+})
+
+test("blob persistence failure marks the blob step and preserves the original error", async () => {
+  const buffer = Buffer.from("blob persistence failure")
+  const identity = deriveCorpusIdentity(buffer)
+  const originalError = new Error("blob store unavailable")
+  const repository = new FakeCorpusImportRepository()
+  const blobStore = new FakeCorpusBlobStore()
+  blobStore.putFailures.push(originalError)
+  const { dependencies } = makeDependencies(repository, blobStore)
+
+  await assert.rejects(importCorpusEpub(makeInput(buffer), dependencies), (error: unknown) => {
+    assert.strictEqual(error, originalError)
+    return true
+  })
+
+  assert.equal(repository.revisions.get(identity.corpusRevisionId)?.status, "failed")
+  assert.equal(repository.revisions.get(identity.corpusRevisionId)?.failedStep, "blob")
+  assert.equal(repository.lastFailInput?.failedStep, "blob")
+  assert.equal(repository.saveChapterCalls, 0)
+  assert.equal(repository.completeCalls, 0)
+  assert.equal(blobStore.writeCount, 0)
+})
+
+test("chapter persistence failure marks the chapters step and preserves the original error", async () => {
+  const buffer = Buffer.from("chapter persistence failure")
+  const identity = deriveCorpusIdentity(buffer)
+  const originalError = new Error("chapter batch unavailable")
+  const repository = new FakeCorpusImportRepository()
+  repository.saveChapterFailures.push(originalError)
+  const blobStore = new FakeCorpusBlobStore()
+  const { dependencies } = makeDependencies(repository, blobStore)
+
+  await assert.rejects(importCorpusEpub(makeInput(buffer), dependencies), (error: unknown) => {
+    assert.strictEqual(error, originalError)
+    return true
+  })
+
+  assert.equal(repository.revisions.get(identity.corpusRevisionId)?.status, "failed")
+  assert.equal(repository.revisions.get(identity.corpusRevisionId)?.failedStep, "chapters")
+  assert.equal(repository.lastFailInput?.failedStep, "chapters")
+  assert.equal(blobStore.writeCount, 1)
+  assert.equal(repository.saveChapterCalls, 1)
+  assert.equal(repository.completeCalls, 0)
+})
+
+test("failure cleanup never masks the original blob, chapter, or completion error", async (t) => {
+  const cases: Array<{
+    name: string
+    failedStep: "blob" | "chapters" | "complete"
+    inject(repository: FakeCorpusImportRepository, blobStore: FakeCorpusBlobStore, error: Error): void
+  }> = [
+    {
+      name: "blob",
+      failedStep: "blob",
+      inject: (_repository, blobStore, error) => blobStore.putFailures.push(error),
+    },
+    {
+      name: "chapters",
+      failedStep: "chapters",
+      inject: (repository, _blobStore, error) => repository.saveChapterFailures.push(error),
+    },
+    {
+      name: "complete",
+      failedStep: "complete",
+      inject: (repository, _blobStore, error) => repository.completeFailures.push(error),
+    },
+  ]
+
+  for (const testCase of cases) {
+    await t.test(testCase.name, async () => {
+      const buffer = Buffer.from(`cleanup failure at ${testCase.name}`)
+      const originalError = new Error(`original ${testCase.name} failure`)
+      const cleanupError = new Error(`cleanup after ${testCase.name} failed`)
+      const repository = new FakeCorpusImportRepository()
+      const blobStore = new FakeCorpusBlobStore()
+      testCase.inject(repository, blobStore, originalError)
+      repository.failRevisionFailures.push(cleanupError)
+      const { dependencies } = makeDependencies(repository, blobStore)
+
+      let thrown: unknown
+      try {
+        await importCorpusEpub(makeInput(buffer), dependencies)
+      } catch (error) {
+        thrown = error
+      }
+
+      assert.strictEqual(thrown, originalError)
+      assert.strictEqual((thrown as Error & { cause?: unknown }).cause, cleanupError)
+      assert.equal(repository.lastFailInput?.failedStep, testCase.failedStep)
+      assert.equal(repository.failCalls, 1)
+    })
+  }
+})
+
+const malformedCompletedRevisionCases: Array<{
+  name: string
+  mutate(record: CorpusRevisionRecord): void
+}> = [
+  { name: "missing source file", mutate: (record) => { delete record.sourceFile } },
+  { name: "missing chapter manifest", mutate: (record) => { delete record.chapterIds } },
+  { name: "empty chapter manifest", mutate: (record) => { record.chapterIds = [] } },
+  { name: "duplicate chapter IDs", mutate: (record) => {
+    record.chapterIds = ["ch01", "ch01"]
+  } },
+  { name: "blank chapter ID", mutate: (record) => { record.chapterIds = ["   "] } },
+]
+
+for (const testCase of malformedCompletedRevisionCases) {
+  test(`completed reuse rejects ${testCase.name} before workspace creation`, async () => {
+    const buffer = Buffer.from(`malformed completed revision: ${testCase.name}`)
+    const repository = new FakeCorpusImportRepository()
+    const { record } = await seedCompletedRevision(repository, buffer)
+    testCase.mutate(record)
+    const blobStore = new FakeCorpusBlobStore()
+    const { dependencies } = makeDependencies(repository, blobStore)
+
+    await assert.rejects(importCorpusEpub(makeInput(buffer), dependencies), (error: unknown) => {
+      assert.ok(error instanceof CorpusImportError)
+      assert.equal(error.statusCode, 409)
+      assert.equal(error.code, "revision_unavailable")
+      return true
+    })
+
+    assert.equal(repository.workspaceCalls, 0)
+    assert.equal(repository.workspaces.size, 0)
+  })
+}
+
+test("completed reuse validates exact chapter count, order, and IDs before workspace creation", async (t) => {
+  const cases: Array<{
+    name: string
+    listed(first: RawChapter, second: RawChapter): RawChapter[]
+  }> = [
+    { name: "count mismatch", listed: (first) => [first] },
+    { name: "order mismatch", listed: (first, second) => [second, first] },
+    { name: "ID mismatch", listed: (first, second) => [
+      first,
+      { ...structuredClone(second), chapter_id: "ch99" },
+    ] },
+  ]
+
+  for (const testCase of cases) {
+    await t.test(testCase.name, async () => {
+      const buffer = Buffer.from(`completed manifest mismatch: ${testCase.name}`)
+      const repository = new FakeCorpusImportRepository()
+      const fixture = await seedCompletedRevision(repository, buffer)
+      const first = fixture.chapters[0]
+      assert.ok(first)
+      const second: RawChapter = {
+        ...structuredClone(first),
+        chapter_id: "ch02",
+        title: "Second synthetic chapter",
+      }
+      fixture.record.chapterIds = [first.chapter_id, second.chapter_id]
+      repository.chapters.set(
+        fixture.identity.corpusRevisionId,
+        new Map([
+          [first.chapter_id, structuredClone(first)],
+          [second.chapter_id, structuredClone(second)],
+        ]),
+      )
+      repository.listedChaptersOverride = testCase.listed(first, second)
+      const blobStore = new FakeCorpusBlobStore()
+      const { dependencies } = makeDependencies(repository, blobStore)
+
+      await assert.rejects(importCorpusEpub(makeInput(buffer), dependencies), (error: unknown) => {
+        assert.ok(error instanceof CorpusImportError)
+        assert.equal(error.statusCode, 409)
+        assert.equal(error.code, "revision_unavailable")
+        return true
+      })
+
+      assert.equal(repository.listChapterCalls, 1)
+      assert.equal(repository.workspaceCalls, 0)
+      assert.equal(repository.workspaces.size, 0)
+    })
+  }
+})
+
+test("completed reuse preserves unrelated chapter-list transport errors without creating a workspace", async () => {
+  const buffer = Buffer.from("completed transport failure")
+  const repository = new FakeCorpusImportRepository()
+  await seedCompletedRevision(repository, buffer)
+  const transportError = new Error("firestore transport unavailable")
+  repository.listChapterFailures.push(transportError)
+  const blobStore = new FakeCorpusBlobStore()
+  const { dependencies } = makeDependencies(repository, blobStore)
+
+  await assert.rejects(importCorpusEpub(makeInput(buffer), dependencies), (error: unknown) => {
+    assert.strictEqual(error, transportError)
+    return true
+  })
+
+  assert.equal(repository.workspaceCalls, 0)
+  assert.equal(repository.workspaces.size, 0)
 })
 
 test("a completion failure marks the revision failed with a bounded diagnostic and retry reuses deterministic data", async () => {
@@ -616,12 +869,44 @@ test("claims use the exact five-minute lease and an expired claim is reclaimed",
   assert.equal(repository.revisions.get(identity.corpusRevisionId)?.status, "complete")
 })
 
-test("workspaceCorpusRevisionId selects only a present string canonical marker", () => {
-  const revisionId = "cr_v1_abc123"
+test("omitted book ID preserves stored explicit association for failed and expired pending retries", async (t) => {
+  for (const status of ["failed", "pending"] as const) {
+    await t.test(status, async () => {
+      const buffer = Buffer.from(`stored explicit ${status} revision`)
+      const derived = deriveCorpusIdentity(buffer)
+      const repository = new FakeCorpusImportRepository()
+      repository.revisions.set(derived.corpusRevisionId, {
+        ...derived,
+        bookId: "stored-explicit-book",
+        status,
+        ...(status === "pending"
+          ? { claimToken: "expired-claim", claimExpiresAtMs: NOW.getTime() }
+          : { failedStep: "chapters", failureMessage: "retryable" }),
+      })
+      const blobStore = new FakeCorpusBlobStore()
+      const { dependencies } = makeDependencies(repository, blobStore)
+
+      const result = await importCorpusEpub(makeInput(buffer), dependencies)
+
+      assert.equal(result.bookId, "stored-explicit-book")
+      assert.equal(result.chapters[0]?.book_id, "stored-explicit-book")
+      assert.equal(repository.lastClaimInput?.bookId, "stored-explicit-book")
+      assert.equal(repository.revisions.get(derived.corpusRevisionId)?.bookId, "stored-explicit-book")
+      assert.equal(repository.revisions.get(derived.corpusRevisionId)?.status, "complete")
+    })
+  }
+})
+
+test("workspaceCorpusRevisionId accepts only a canonical revision marker", () => {
+  const revisionId = deriveCorpusIdentity(Buffer.from("canonical workspace marker")).corpusRevisionId
 
   assert.equal(workspaceCorpusRevisionId({ corpusRevisionId: revisionId }), revisionId)
   assert.equal(workspaceCorpusRevisionId({}), null)
   assert.equal(workspaceCorpusRevisionId({ corpusRevisionId: "" }), null)
+  assert.equal(workspaceCorpusRevisionId({ corpusRevisionId: "cr_v1_abc123" }), null)
+  assert.equal(workspaceCorpusRevisionId({ corpusRevisionId: ` ${revisionId}` }), null)
+  assert.equal(workspaceCorpusRevisionId({ corpusRevisionId: `${revisionId} ` }), null)
+  assert.equal(workspaceCorpusRevisionId({ corpusRevisionId: "legacy-document-id" }), null)
   assert.equal(workspaceCorpusRevisionId({ corpusRevisionId: 17 }), null)
   assert.equal(workspaceCorpusRevisionId(null), null)
 })

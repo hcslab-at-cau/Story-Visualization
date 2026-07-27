@@ -19,6 +19,8 @@ export class CorpusImportError extends Error {
 
 export const CORPUS_CLAIM_LEASE_MS = 5 * 60 * 1000
 
+const CORPUS_REVISION_ID_PATTERN = /^cr_v1_[a-f0-9]{64}$/
+
 export type CorpusRevisionStatus = "pending" | "complete" | "failed"
 export type CorpusImportFailureStep = "blob" | "chapters" | "complete"
 
@@ -139,16 +141,43 @@ function conflictForKnownRevision(
   }
 }
 
-function completedSourceFile(record: CorpusRevisionRecord): StoredSourceFile {
-  if (record.status !== "complete" || !record.sourceFile) {
-    throw new CorpusImportError(
-      "completed corpus revision is unavailable",
-      409,
-      "revision_unavailable",
-    )
+function revisionUnavailable(): CorpusImportError {
+  return new CorpusImportError(
+    "completed corpus revision is unavailable",
+    409,
+    "revision_unavailable",
+  )
+}
+
+function completedRevisionMetadata(record: CorpusRevisionRecord): {
+  sourceFile: StoredSourceFile
+  chapterIds: string[]
+} {
+  if (record.status !== "complete" || !record.sourceFile) throw revisionUnavailable()
+
+  const chapterIds = record.chapterIds
+  if (
+    !Array.isArray(chapterIds) ||
+    chapterIds.length === 0 ||
+    chapterIds.some((chapterId) => (
+      typeof chapterId !== "string" || chapterId.trim().length === 0
+    )) ||
+    new Set(chapterIds).size !== chapterIds.length
+  ) {
+    throw revisionUnavailable()
   }
 
-  return record.sourceFile
+  return { sourceFile: record.sourceFile, chapterIds }
+}
+
+function verifyCompletedChapters(chapterIds: string[], chapters: RawChapter[]): void {
+  if (
+    !Array.isArray(chapters) ||
+    chapters.length !== chapterIds.length ||
+    chapters.some((chapter, index) => chapter?.chapter_id !== chapterIds[index])
+  ) {
+    throw revisionUnavailable()
+  }
 }
 
 async function reuseCompletedRevision(
@@ -157,7 +186,10 @@ async function reuseCompletedRevision(
   input: CorpusImportInput,
   repository: CorpusImportRepository,
 ): Promise<CorpusImportResult> {
-  const sourceFile = completedSourceFile(record)
+  const { sourceFile, chapterIds } = completedRevisionMetadata(record)
+  const chapters = await repository.listChapters(identity.corpusRevisionId)
+  verifyCompletedChapters(chapterIds, chapters)
+
   await repository.ensureWorkspace({
     ...identity,
     title: input.title,
@@ -168,7 +200,7 @@ async function reuseCompletedRevision(
   return {
     ...identity,
     docId: identity.corpusRevisionId,
-    chapters: await repository.listChapters(identity.corpusRevisionId),
+    chapters,
     sourceFile,
     reused: true,
   }
@@ -178,10 +210,37 @@ function failureDiagnostic(error: unknown): string {
   return (error instanceof Error ? error.message : String(error)).slice(0, 500)
 }
 
+function attachCleanupCause(error: unknown, cleanupError: unknown): void {
+  if (!(error instanceof Error) || !Object.isExtensible(error) || "cause" in error) return
+
+  try {
+    Object.defineProperty(error, "cause", {
+      configurable: true,
+      enumerable: false,
+      value: cleanupError,
+      writable: true,
+    })
+  } catch {
+    // A cleanup diagnostic must never replace the persistence error.
+  }
+}
+
+async function failRevisionWithoutMasking(
+  repository: CorpusImportRepository,
+  input: FailRevisionInput,
+  originalError: unknown,
+): Promise<void> {
+  try {
+    await repository.failRevision(input)
+  } catch (cleanupError) {
+    attachCleanupCause(originalError, cleanupError)
+  }
+}
+
 export function workspaceCorpusRevisionId(workspace: unknown): string | null {
   if (typeof workspace !== "object" || workspace === null) return null
   const corpusRevisionId = (workspace as { corpusRevisionId?: unknown }).corpusRevisionId
-  return typeof corpusRevisionId === "string" && corpusRevisionId.length > 0
+  return typeof corpusRevisionId === "string" && CORPUS_REVISION_ID_PATTERN.test(corpusRevisionId)
     ? corpusRevisionId
     : null
 }
@@ -287,12 +346,16 @@ export async function importCorpusEpub(
     }
   } catch (error) {
     if (!completed) {
-      await dependencies.repository.failRevision({
-        corpusRevisionId: identity.corpusRevisionId,
-        claimToken,
-        failedStep,
-        message: failureDiagnostic(error),
-      })
+      await failRevisionWithoutMasking(
+        dependencies.repository,
+        {
+          corpusRevisionId: identity.corpusRevisionId,
+          claimToken,
+          failedStep,
+          message: failureDiagnostic(error),
+        },
+        error,
+      )
     }
     throw error
   }
