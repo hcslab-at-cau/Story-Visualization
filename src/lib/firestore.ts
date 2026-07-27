@@ -15,7 +15,6 @@ import {
   type BookMemoryChapterInput,
 } from "./book-memory"
 import { displayChapterTitle, isLikelyNonStoryChapter } from "./chapter-normalization"
-import { workspaceCorpusRevisionId } from "./corpus-import"
 import {
   CURRENT_DOCUMENTS_COLLECTION,
   LEGACY_DOCUMENTS_COLLECTION,
@@ -26,9 +25,11 @@ import {
 import { explainAdminCredentialError, getAdminDb } from "./firebase-admin"
 import {
   isCanonicalRevisionComplete,
+  listCanonicalChapterIds,
   listCanonicalRawChapters,
   loadCanonicalRawChapter,
 } from "./server/firestore-corpus-import-store"
+import { createCorpusAwareFirestoreReads } from "./server/corpus-aware-firestore-read"
 import { projectKnowledgeGraphArtifact } from "./knowledge-graph"
 import { stageKey } from "./stage-key"
 import type {
@@ -604,6 +605,43 @@ export interface DocumentMeta {
   sourceFile?: StoredSourceFile
 }
 
+const corpusAwareFirestoreReads = createCorpusAwareFirestoreReads<DocumentMeta>({
+  async listWorkspaceDocuments(source) {
+    const snap = await documentsCollection(source)
+      .orderBy("createdAt", "desc")
+      .get()
+    return snap.docs.map((document) => ({
+      docId: document.id,
+      ...(document.data() as Omit<DocumentMeta, "docId">),
+    }))
+  },
+  async loadWorkspace(docId, source) {
+    const workspace = await documentDocRef(docId, source).get()
+    return workspace.data()
+  },
+  isCanonicalRevisionComplete,
+  loadCanonicalRawChapter,
+  async loadEmbeddedRawChapter(docId, chapterId, source) {
+    const snap = await chapterDocRef(docId, chapterId, source).get()
+    if (!snap.exists) return null
+    const data = snap.data() as DocumentData
+    return (data.raw as RawChapter) ?? null
+  },
+  listCanonicalRawChapters,
+  async listEmbeddedChapters(docId, source) {
+    const snap = await documentDocRef(docId, source).collection("chapters").get()
+    return snap.docs.map((chapterDoc) => ({
+      chapterId: chapterDoc.id,
+      raw: (chapterDoc.data() as DocumentData).raw as RawChapter | undefined,
+    }))
+  },
+  listCanonicalChapterIds,
+  async listEmbeddedChapterIds(docId, source) {
+    const snap = await documentDocRef(docId, source).collection("chapters").get()
+    return snap.docs.map((chapterDoc) => chapterDoc.id)
+  },
+})
+
 export async function createDocument(
   title: string,
   sourceFile?: StoredSourceFile,
@@ -635,20 +673,7 @@ export async function setDocumentSourceFile(
 
 export async function listDocuments(options: FirestoreReadOptions = {}): Promise<DocumentMeta[]> {
   return withAdminErrorContext(async () => {
-    const snap = await documentsCollection(options.source)
-      .orderBy("createdAt", "desc")
-      .get()
-
-    const documents = snap.docs.map((d) => ({
-      docId: d.id,
-      ...(d.data() as Omit<DocumentMeta, "docId">),
-    }))
-    const visible = await Promise.all(documents.map(async (document) => {
-      const corpusRevisionId = workspaceCorpusRevisionId(document)
-      return corpusRevisionId === null || isCanonicalRevisionComplete(corpusRevisionId)
-    }))
-
-    return documents.filter((_, index) => visible[index])
+    return corpusAwareFirestoreReads.listDocuments(options.source ?? "current")
   })
 }
 
@@ -698,16 +723,11 @@ export async function loadRawChapter(
   options: FirestoreReadOptions = {},
 ): Promise<RawChapter | null> {
   return withAdminErrorContext(async () => {
-    const workspace = await documentDocRef(docId, options.source).get()
-    const corpusRevisionId = workspaceCorpusRevisionId(workspace.data())
-    if (corpusRevisionId) {
-      return loadCanonicalRawChapter(corpusRevisionId, chapterId)
-    }
-
-    const snap = await chapterDocRef(docId, chapterId, options.source).get()
-    if (!snap.exists) return null
-    const data = snap.data() as DocumentData
-    return (data.raw as RawChapter) ?? null
+    return corpusAwareFirestoreReads.loadRawChapter(
+      docId,
+      chapterId,
+      options.source ?? "current",
+    )
   })
 }
 
@@ -765,17 +785,13 @@ export async function listChapters(
   options: FirestoreReadOptions = {},
 ): Promise<ChapterMeta[]> {
   return withAdminErrorContext(async () => {
-    const workspace = await documentDocRef(docId, options.source).get()
-    const corpusRevisionId = workspaceCorpusRevisionId(workspace.data())
-    if (corpusRevisionId) {
-      return chapterMetaFromRawChapters(await listCanonicalRawChapters(corpusRevisionId))
-    }
-
-    const snap = await documentDocRef(docId, options.source).collection("chapters").get()
-    return chapterMetaFromCandidates(snap.docs.map((chapterDoc) => ({
-      chapterId: chapterDoc.id,
-      raw: (chapterDoc.data() as DocumentData).raw as RawChapter | undefined,
-    })))
+    const listing = await corpusAwareFirestoreReads.listChapters(
+      docId,
+      options.source ?? "current",
+    )
+    return listing.kind === "canonical"
+      ? chapterMetaFromRawChapters(listing.chapters)
+      : chapterMetaFromCandidates(listing.chapters)
   })
 }
 
@@ -1441,12 +1457,11 @@ export async function cleanupDocumentStorage(
   docId: string,
 ): Promise<DocumentStorageCleanupResult> {
   return withAdminErrorContext(async () => {
-    const chaptersSnap = await documentDocRef(docId).collection("chapters").get()
+    const chapterIds = await corpusAwareFirestoreReads.listCleanupChapterIds(docId, "current")
     const invalidRuns: DocumentStorageCleanupResult["invalidRuns"] = []
     let orphanSharedArtifactsDeleted = 0
 
-    for (const chapterDoc of chaptersSnap.docs) {
-      const chapterId = chapterDoc.id
+    for (const chapterId of chapterIds) {
       const runsSnap = await chapterDocRef(docId, chapterId).collection("runs").get()
 
       for (const runDoc of runsSnap.docs) {
@@ -1471,7 +1486,7 @@ export async function cleanupDocumentStorage(
 
     return {
       docId,
-      chaptersScanned: chaptersSnap.size,
+      chaptersScanned: chapterIds.length,
       invalidRunsDeleted: invalidRuns.length,
       orphanSharedArtifactsDeleted,
       invalidRuns,
