@@ -23,6 +23,8 @@ export const CORPUS_REVISIONS_COLLECTION = "corpus_revisions"
 
 const CORPUS_REVISION_ID_PATTERN = /^cr_v1_([a-f0-9]{64})$/
 const CHAPTER_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/
+const PARAGRAPH_ID_PATTERN = /^p_v1_[a-f0-9]{64}$/
+const SOURCE_ITEM_ID_PATTERN = /^si_v1_[a-f0-9]{64}$/
 const STORAGE_VERSION = 2
 const FAILURE_MESSAGE_MAX_LENGTH = 500
 
@@ -158,6 +160,79 @@ function validatedChapterIds(value: unknown): string[] | undefined {
   return chapterIds
 }
 
+function validatedNonNegativeSafeInteger(
+  value: unknown,
+  message: string,
+): number {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
+    throw revisionUnavailable(message)
+  }
+  return value
+}
+
+function validatedOptionalPattern(
+  value: unknown,
+  pattern: RegExp,
+  message: string,
+): string | undefined {
+  if (value === undefined) return undefined
+  if (typeof value !== "string" || !pattern.test(value)) {
+    throw revisionUnavailable(message)
+  }
+  return value
+}
+
+function validatedParagraphs(value: unknown): RawChapter["paragraphs"] {
+  if (!Array.isArray(value)) throw revisionUnavailable("stored canonical chapter paragraphs are invalid")
+
+  return value.map((paragraph) => {
+    if (typeof paragraph !== "object" || paragraph === null) {
+      throw revisionUnavailable("stored canonical chapter paragraphs are invalid")
+    }
+
+    const record = paragraph as Record<string, unknown>
+    const start = validatedNonNegativeSafeInteger(record.start, "stored canonical paragraph start is invalid")
+    const end = validatedNonNegativeSafeInteger(record.end, "stored canonical paragraph end is invalid")
+    if (end < start) {
+      throw revisionUnavailable("stored canonical paragraph end is invalid")
+    }
+
+    const text = record.text
+    if (typeof text !== "string") {
+      throw revisionUnavailable("stored canonical paragraph text is invalid")
+    }
+
+    return {
+      pid: validatedNonNegativeSafeInteger(record.pid, "stored canonical paragraph pid is invalid"),
+      start,
+      end,
+      text,
+      ...(validatedOptionalPattern(record.paragraph_id, PARAGRAPH_ID_PATTERN, "stored canonical paragraph_id is invalid")
+        ? { paragraph_id: validatedOptionalPattern(record.paragraph_id, PARAGRAPH_ID_PATTERN, "stored canonical paragraph_id is invalid") }
+        : {}),
+      ...(validatedOptionalPattern(record.source_item_id, SOURCE_ITEM_ID_PATTERN, "stored canonical source_item_id is invalid")
+        ? { source_item_id: validatedOptionalPattern(record.source_item_id, SOURCE_ITEM_ID_PATTERN, "stored canonical source_item_id is invalid") }
+        : {}),
+      ...(record.source_paragraph_ordinal !== undefined
+        ? {
+          source_paragraph_ordinal: validatedNonNegativeSafeInteger(
+            record.source_paragraph_ordinal,
+            "stored canonical source_paragraph_ordinal is invalid",
+          ),
+        }
+        : {}),
+      ...(record.global_ordinal !== undefined
+        ? {
+          global_ordinal: validatedNonNegativeSafeInteger(
+            record.global_ordinal,
+            "stored canonical global_ordinal is invalid",
+          ),
+        }
+        : {}),
+    }
+  })
+}
+
 function validatedRevisionRecord(
   corpusRevisionId: string,
   value: unknown,
@@ -174,7 +249,14 @@ function validatedRevisionRecord(
     throw revisionUnavailable("canonical corpus revision source digest is invalid")
   }
 
-  const bookId = typeof record.bookId === "string" ? validateBookId(record.bookId) : null
+  let bookId: string | null = null
+  if (typeof record.bookId === "string") {
+    try {
+      bookId = validateBookId(record.bookId)
+    } catch {
+      throw revisionUnavailable("canonical corpus revision book ID is invalid")
+    }
+  }
   if (!bookId) throw revisionUnavailable("canonical corpus revision book ID is invalid")
 
   const status = record.status
@@ -278,7 +360,10 @@ function validatedChapterShape(
     throw revisionUnavailable("stored canonical chapter is invalid")
   }
 
-  return record as unknown as RawChapter
+  return {
+    ...(record as unknown as RawChapter),
+    paragraphs: validatedParagraphs(record.paragraphs),
+  }
 }
 
 function validatedOrderedChapterIds(chapterIds: string[]): string[] {

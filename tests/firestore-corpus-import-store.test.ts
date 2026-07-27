@@ -197,7 +197,20 @@ function rawChapter(identity: ReturnType<typeof deriveCorpusIdentity>, chapterId
     chapter_id: chapterId,
     title: "Chapter 1",
     text: "body",
-    paragraphs: [],
+    paragraphs: [validParagraph()],
+  }
+}
+
+function validParagraph(): StoredRecord {
+  return {
+    pid: 0,
+    start: 0,
+    end: 4,
+    text: "body",
+    paragraph_id: `p_v1_${"a".repeat(64)}`,
+    source_item_id: `si_v1_${"b".repeat(64)}`,
+    source_paragraph_ordinal: 0,
+    global_ordinal: 0,
   }
 }
 
@@ -238,6 +251,20 @@ test("loadCanonicalRawChapter returns null for non-manifest chapter IDs without 
 
   assert.equal(result, null)
   assert.equal(fakeDb.readCount(chapterPath(identity.corpusRevisionId, "ch99")), 0)
+})
+
+test("loadCanonicalRawChapter returns a valid canonical chapter when the manifest row matches", async () => {
+  const identity = deriveCorpusIdentity(Buffer.from("manifest valid row"))
+  const fakeDb = new FakeFirestore()
+  fakeDb.seed(revisionPath(identity.corpusRevisionId), completeRevisionDoc(identity, ["ch01"]))
+  fakeDb.seed(chapterPath(identity.corpusRevisionId, "ch01"), { raw: rawChapter(identity, "ch01") })
+
+  const chapter = await loadCanonicalRawChapter(identity.corpusRevisionId, "ch01", {
+    getDb: () => fakeDb as never,
+  })
+
+  assert.equal(chapter?.chapter_id, "ch01")
+  assert.equal(chapter?.paragraphs[0]?.text, "body")
 })
 
 test("loadCanonicalRawChapter throws when a manifest-listed canonical chapter row is missing", async () => {
@@ -346,6 +373,81 @@ test("isCanonicalRevisionComplete returns false for malformed complete records",
   })
 
   assert.equal(result, false)
+})
+
+test("isCanonicalRevisionComplete returns false for malformed present book IDs", async () => {
+  const identity = deriveCorpusIdentity(Buffer.from("malformed complete book id"))
+  const fakeDb = new FakeFirestore()
+  fakeDb.seed(revisionPath(identity.corpusRevisionId), {
+    ...completeRevisionDoc(identity, ["ch01"]),
+    bookId: "bad book id",
+  })
+
+  const result = await isCanonicalRevisionComplete(identity.corpusRevisionId, {
+    getDb: () => fakeDb as never,
+  })
+
+  assert.equal(result, false)
+})
+
+test("loadCanonicalRawChapter rejects malformed canonical paragraph objects", async () => {
+  const identity = deriveCorpusIdentity(Buffer.from("malformed paragraph object"))
+  const fakeDb = new FakeFirestore()
+  fakeDb.seed(revisionPath(identity.corpusRevisionId), completeRevisionDoc(identity, ["ch01"]))
+  fakeDb.seed(chapterPath(identity.corpusRevisionId, "ch01"), {
+    raw: {
+      ...rawChapter(identity, "ch01"),
+      paragraphs: [{}],
+    },
+  })
+
+  await assert.rejects(
+    loadCanonicalRawChapter(identity.corpusRevisionId, "ch01", {
+      getDb: () => fakeDb as never,
+    }),
+    (error: unknown) => error instanceof CorpusImportError &&
+      error.statusCode === 409 &&
+      error.code === "revision_unavailable",
+  )
+})
+
+test("loadCanonicalRawChapter rejects malformed canonical paragraph text values", async () => {
+  const identity = deriveCorpusIdentity(Buffer.from("malformed paragraph text"))
+  const fakeDb = new FakeFirestore()
+  fakeDb.seed(revisionPath(identity.corpusRevisionId), completeRevisionDoc(identity, ["ch01"]))
+  fakeDb.seed(chapterPath(identity.corpusRevisionId, "ch01"), {
+    raw: {
+      ...rawChapter(identity, "ch01"),
+      paragraphs: [{ ...validParagraph(), text: 7 }],
+    },
+  })
+
+  await assert.rejects(
+    loadCanonicalRawChapter(identity.corpusRevisionId, "ch01", {
+      getDb: () => fakeDb as never,
+    }),
+    (error: unknown) => error instanceof CorpusImportError &&
+      error.statusCode === 409 &&
+      error.code === "revision_unavailable",
+  )
+})
+
+test("saveChapters rejects malformed canonical paragraph metadata", async () => {
+  const identity = deriveCorpusIdentity(Buffer.from("save malformed paragraph metadata"))
+  const fakeDb = new FakeFirestore()
+  fakeDb.seed(revisionPath(identity.corpusRevisionId), pendingRevisionDoc(identity, "claim-token"))
+
+  await assert.rejects(
+    createRepository(fakeDb).saveChapters(identity.corpusRevisionId, "claim-token", [
+      {
+        ...rawChapter(identity, "ch01"),
+        paragraphs: [{ ...validParagraph(), paragraph_id: "bad" }],
+      } as never,
+    ]),
+    (error: unknown) => error instanceof CorpusImportError &&
+      error.statusCode === 409 &&
+      error.code === "revision_unavailable",
+  )
 })
 
 test("failRevision writes a bounded fallback failure message when the input message is empty", async () => {
