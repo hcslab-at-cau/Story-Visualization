@@ -106,3 +106,93 @@ test("paragraph IDs are deterministic and sensitive to every provenance componen
   assert.notEqual(paragraphId, deriveParagraphId(revisionId, otherSourceItemId, 0))
   assert.notEqual(paragraphId, deriveParagraphId(revisionId, sourceItemId, 1))
 })
+
+test("source item IDs require a non-negative safe spine index", () => {
+  const revisionId = deriveCorpusIdentity(Buffer.from("fixture")).corpusRevisionId
+
+  for (const spineIndex of [-1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+    assert.throws(
+      () => deriveSourceItemId(revisionId, spineIndex, "chapter-1", "text/ch1.xhtml"),
+      /spineIndex/,
+      `spineIndex ${String(spineIndex)}`,
+    )
+  }
+})
+
+test("paragraph IDs require a non-negative safe source paragraph ordinal", () => {
+  const revisionId = deriveCorpusIdentity(Buffer.from("fixture")).corpusRevisionId
+  const sourceItemId = deriveSourceItemId(revisionId, 0, "chapter-1", "text/ch1.xhtml")
+
+  for (const sourceParagraphOrdinal of [-1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+    assert.throws(
+      () => deriveParagraphId(revisionId, sourceItemId, sourceParagraphOrdinal),
+      /sourceParagraphOrdinal/,
+      `sourceParagraphOrdinal ${String(sourceParagraphOrdinal)}`,
+    )
+  }
+})
+
+test("source item IDs require a canonical corpus revision ID", () => {
+  for (const revisionId of [
+    "",
+    "cr_v1_short",
+    `cr_v1_${"A".repeat(64)}`,
+    `cr_v1_${"0".repeat(63)}`,
+    `cr_v1_${"0".repeat(65)}`,
+    `cr_v1_${"0".repeat(32)}\0${"0".repeat(31)}`,
+  ]) {
+    assert.throws(
+      () => deriveSourceItemId(revisionId, 0, "chapter-1", "text/ch1.xhtml"),
+      /revisionId/,
+    )
+  }
+})
+
+test("paragraph IDs require a canonical corpus revision ID", () => {
+  const validRevisionId = deriveCorpusIdentity(Buffer.from("fixture")).corpusRevisionId
+  const sourceItemId = deriveSourceItemId(validRevisionId, 0, "chapter-1", "text/ch1.xhtml")
+
+  for (const revisionId of [
+    "",
+    "cr_v1_short",
+    `cr_v1_${"A".repeat(64)}`,
+    `cr_v1_${"0".repeat(63)}`,
+    `cr_v1_${"0".repeat(65)}`,
+    `cr_v1_${"0".repeat(32)}\0${"0".repeat(31)}`,
+  ]) {
+    assert.throws(() => deriveParagraphId(revisionId, sourceItemId, 0), /revisionId/)
+  }
+})
+
+test("paragraph IDs require a canonical source item ID", () => {
+  const revisionId = deriveCorpusIdentity(Buffer.from("fixture")).corpusRevisionId
+
+  for (const sourceItemId of [
+    "",
+    "si_v1_short",
+    `si_v1_${"A".repeat(64)}`,
+    `si_v1_${"0".repeat(63)}`,
+    `si_v1_${"0".repeat(65)}`,
+    `si_v1_${"0".repeat(32)}\0${"0".repeat(31)}`,
+  ]) {
+    assert.throws(() => deriveParagraphId(revisionId, sourceItemId, 0), /sourceItemId/)
+  }
+})
+
+test("source item IDs reject NUL in manifest IDs", () => {
+  const revisionId = deriveCorpusIdentity(Buffer.from("fixture")).corpusRevisionId
+
+  assert.throws(
+    () => deriveSourceItemId(revisionId, 0, "a\0", "b"),
+    /manifestId/,
+  )
+})
+
+test("source item IDs reject NUL in normalized hrefs", () => {
+  const revisionId = deriveCorpusIdentity(Buffer.from("fixture")).corpusRevisionId
+
+  assert.throws(
+    () => deriveSourceItemId(revisionId, 0, "a", "\0b"),
+    /normalizedHref/,
+  )
+})
