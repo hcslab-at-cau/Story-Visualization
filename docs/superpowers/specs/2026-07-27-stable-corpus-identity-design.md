@@ -119,8 +119,9 @@ Short-chapter merge, long-chapter split, and duplicate suppression preserve thes
    - A complete revision returns the existing result.
    - An active pending revision returns an in-progress conflict instead of starting a second writer.
    - A failed revision or a pending claim older than five minutes is reclaimed under the same revision ID for retry.
+   - If an omitted `bookId` races with a stored explicit association, the stored association wins; an explicitly conflicting `bookId` still fails.
 5. Put the source at the fixed canonical storage path with create-only semantics. A retry may reuse the existing object for the same content identity but never replaces a different revision.
-6. Write deterministic canonical chapter documents. The revision manifest's `chapterIds` is the authoritative set; incomplete rows are never listed.
+6. Write deterministic canonical chapter documents in conservative transactions capped by both write count and estimated serialized bytes. The revision manifest's `chapterIds` is the authoritative set; incomplete rows are never listed.
 7. Mark the revision `complete` last, including its exact chapter manifest and source-file metadata.
 8. Upsert the source-specific workspace reference. If this final reference write fails, the canonical revision remains complete and a retry only repairs the missing reference.
 9. On failure after a claim, mark the revision `failed` with the failed step and a bounded diagnostic. Failed revisions remain hidden and reuse the same identity on retry.
@@ -134,6 +135,7 @@ The coordinator owns this lifecycle behind narrow repository and blob interfaces
 - `listChapters` and `loadRawChapter` first inspect the workspace document. When it has `corpusRevisionId`, they read the canonical revision manifest and canonical chapter documents.
 - Documents without a canonical reference continue using their embedded chapter subcollection exactly as before.
 - `listDocuments` includes legacy documents and complete canonical workspace references, but excludes new references whose canonical revision is not complete.
+- Storage maintenance resolves canonical chapter IDs from the complete revision manifest, so it can scan run/artifact subcollections even when no embedded workspace chapter parent document exists.
 - Existing random-ID documents are not rewritten, merged, or linked by title.
 
 ## Error and Concurrency Semantics

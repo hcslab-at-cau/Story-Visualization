@@ -562,9 +562,9 @@ const revisionRef = (revisionId: string) => getAdminDb().collection(CORPUS_REVIS
 const bookRef = (bookId: string) => getAdminDb().collection(CORPUS_BOOKS_COLLECTION).doc(bookId)
 ```
 
-`claimRevision` uses one Firestore transaction. It validates `bookId`, returns `complete` for complete records, returns `in_progress` when `claimExpiresAtMs > nowMs`, and otherwise creates/reclaims `pending` with the supplied token. `completeRevision` and `failRevision` transactionally compare `claimToken`; stale writers throw `CorpusImportError` with `409` and code `claim_lost`.
+`claimRevision` uses one Firestore transaction. It validates explicit `bookId` intent, preserves a stored explicit association for an omitted-book claimant that loses the first-import race, returns `complete` for complete records, returns `in_progress` when `claimExpiresAtMs > nowMs`, and otherwise creates/reclaims `pending` with the supplied token. `completeRevision` and `failRevision` transactionally compare `claimToken`; stale writers throw `CorpusImportError` with `409` and code `claim_lost`.
 
-`saveChapters` uses deterministic chapter IDs and Firestore batches of at most 400 writes. `listChapters` reads only the completed revision's ordered `chapterIds` manifest. `ensureWorkspace` merge-writes the source-selected `documents_v2` or `documents_v3` record with `bookId`, `corpusRevisionId`, title, and source file.
+`saveChapters` uses deterministic chapter IDs and conservative Firestore transactions of at most 20 chapter writes and 3 MiB of estimated serialized payload. `listChapters` reads only the completed revision's ordered `chapterIds` manifest. `ensureWorkspace` merge-writes the source-selected `documents_v2` or `documents_v3` record with `bookId`, `corpusRevisionId`, title, and source file.
 
 - [ ] **Step 2: Implement create-only canonical blob storage**
 
