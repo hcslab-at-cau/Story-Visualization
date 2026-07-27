@@ -15,6 +15,7 @@ import {
   type BookMemoryChapterInput,
 } from "./book-memory"
 import { displayChapterTitle, isLikelyNonStoryChapter } from "./chapter-normalization"
+import { workspaceCorpusRevisionId } from "./corpus-import"
 import {
   CURRENT_DOCUMENTS_COLLECTION,
   LEGACY_DOCUMENTS_COLLECTION,
@@ -23,6 +24,11 @@ import {
   type FirestoreDataSource,
 } from "./data-source"
 import { explainAdminCredentialError, getAdminDb } from "./firebase-admin"
+import {
+  isCanonicalRevisionComplete,
+  listCanonicalRawChapters,
+  loadCanonicalRawChapter,
+} from "./server/firestore-corpus-import-store"
 import { projectKnowledgeGraphArtifact } from "./knowledge-graph"
 import { stageKey } from "./stage-key"
 import type {
@@ -592,6 +598,8 @@ export async function deleteV3QAHistoryEntry(
 export interface DocumentMeta {
   docId: string
   title: string
+  bookId?: string
+  corpusRevisionId?: string
   createdAt?: unknown
   sourceFile?: StoredSourceFile
 }
@@ -631,10 +639,16 @@ export async function listDocuments(options: FirestoreReadOptions = {}): Promise
       .orderBy("createdAt", "desc")
       .get()
 
-    return snap.docs.map((d) => ({
+    const documents = snap.docs.map((d) => ({
       docId: d.id,
       ...(d.data() as Omit<DocumentMeta, "docId">),
     }))
+    const visible = await Promise.all(documents.map(async (document) => {
+      const corpusRevisionId = workspaceCorpusRevisionId(document)
+      return corpusRevisionId === null || isCanonicalRevisionComplete(corpusRevisionId)
+    }))
+
+    return documents.filter((_, index) => visible[index])
   })
 }
 
@@ -684,6 +698,12 @@ export async function loadRawChapter(
   options: FirestoreReadOptions = {},
 ): Promise<RawChapter | null> {
   return withAdminErrorContext(async () => {
+    const workspace = await documentDocRef(docId, options.source).get()
+    const corpusRevisionId = workspaceCorpusRevisionId(workspace.data())
+    if (corpusRevisionId) {
+      return loadCanonicalRawChapter(corpusRevisionId, chapterId)
+    }
+
     const snap = await chapterDocRef(docId, chapterId, options.source).get()
     if (!snap.exists) return null
     const data = snap.data() as DocumentData
@@ -699,40 +719,63 @@ function rawChapterDuplicateFingerprint(raw: RawChapter | undefined): string | u
   return createHash("sha256").update(text).digest("hex")
 }
 
+interface ChapterMetaCandidate {
+  chapterId: string
+  raw?: RawChapter
+}
+
+function chapterMetaFromCandidates(candidates: readonly ChapterMetaCandidate[]): ChapterMeta[] {
+  const seenFingerprints = new Set<string>()
+
+  return candidates
+    .map(({ chapterId, raw }) => {
+      const index = parseInt(chapterId.replace(/\D/g, "") || "0", 10)
+      return {
+        chapterId,
+        title: displayChapterTitle(raw, chapterId, index),
+        index,
+        raw,
+      }
+    })
+    .filter((chapter) => !isLikelyNonStoryChapter(chapter.raw, chapter.chapterId))
+    .sort((a, b) => a.index - b.index)
+    .filter((chapter) => {
+      const fingerprint = rawChapterDuplicateFingerprint(chapter.raw)
+      if (!fingerprint) return true
+      if (seenFingerprints.has(fingerprint)) return false
+      seenFingerprints.add(fingerprint)
+      return true
+    })
+    .map((chapter) => ({
+      chapterId: chapter.chapterId,
+      title: chapter.title,
+      index: chapter.index,
+    }))
+}
+
+export function chapterMetaFromRawChapters(rawChapters: readonly RawChapter[]): ChapterMeta[] {
+  return chapterMetaFromCandidates(rawChapters.map((raw) => ({
+    chapterId: raw.chapter_id,
+    raw,
+  })))
+}
+
 export async function listChapters(
   docId: string,
   options: FirestoreReadOptions = {},
 ): Promise<ChapterMeta[]> {
   return withAdminErrorContext(async () => {
-    const snap = await documentDocRef(docId, options.source).collection("chapters").get()
-    const seenFingerprints = new Set<string>()
+    const workspace = await documentDocRef(docId, options.source).get()
+    const corpusRevisionId = workspaceCorpusRevisionId(workspace.data())
+    if (corpusRevisionId) {
+      return chapterMetaFromRawChapters(await listCanonicalRawChapters(corpusRevisionId))
+    }
 
-    return snap.docs
-      .map((d) => {
-        const data = d.data() as DocumentData
-        const raw = data.raw as RawChapter | undefined
-        const index = parseInt(d.id.replace(/\D/g, "") || "0", 10)
-        return {
-          chapterId: d.id,
-          title: displayChapterTitle(raw, d.id, index),
-          index,
-          raw,
-        }
-      })
-      .filter((chapter) => !isLikelyNonStoryChapter(chapter.raw, chapter.chapterId))
-      .sort((a, b) => a.index - b.index)
-      .filter((chapter) => {
-        const fingerprint = rawChapterDuplicateFingerprint(chapter.raw)
-        if (!fingerprint) return true
-        if (seenFingerprints.has(fingerprint)) return false
-        seenFingerprints.add(fingerprint)
-        return true
-      })
-      .map((chapter) => ({
-        chapterId: chapter.chapterId,
-        title: chapter.title,
-        index: chapter.index,
-      }))
+    const snap = await documentDocRef(docId, options.source).collection("chapters").get()
+    return chapterMetaFromCandidates(snap.docs.map((chapterDoc) => ({
+      chapterId: chapterDoc.id,
+      raw: (chapterDoc.data() as DocumentData).raw as RawChapter | undefined,
+    })))
   })
 }
 
