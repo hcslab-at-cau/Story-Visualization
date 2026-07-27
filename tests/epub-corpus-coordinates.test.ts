@@ -225,6 +225,56 @@ test("splitLongChapter keeps one source item while source ordinals continue acro
   assertContiguousGlobals(parsed)
 })
 
+test("merge then split lists only source items represented by each emitted part", async () => {
+  const oversizedParagraphs = Array.from(
+    { length: 45 },
+    (_, index) => `Archive Walk paragraph ${index + 1} follows the same synthetic survey team through a stone corridor and repeats enough neutral fixture prose to cross the long-chapter split threshold without using copyrighted text. `.repeat(4),
+  )
+  const shortTail = "Lantern Log keeps a named lookout, a quay setting, and a handoff detail so it remains story content despite staying short."
+  const bytes = await buildSyntheticEpub({
+    chapters: [
+      {
+        manifestId: "chap-archive-walk",
+        href: "Text/archive-walk.xhtml",
+        title: "Archive Walk",
+        bodyParagraphs: oversizedParagraphs,
+      },
+      {
+        manifestId: "chap-lantern-log",
+        href: "Text/lantern-log.xhtml",
+        title: "Lantern Log",
+        bodyParagraphs: [shortTail],
+      },
+      {
+        manifestId: "chap-after-watch",
+        href: "Text/after-watch.xhtml",
+        title: "After Watch",
+        topic: "synthetic return patrol",
+      },
+    ],
+  })
+  const { context } = buildContext(bytes, "doc-merge-then-split")
+
+  const parsed = await parseEpub(bytes, context)
+
+  assert.ok(parsed.length >= 2, "expected the merged oversized candidate to split")
+  const tailParagraph = flattenParagraphs(parsed).find(({ paragraph }) => paragraph.text === shortTail)
+  const tailSourceItemId = tailParagraph?.paragraph.source_item_id
+  assert.ok(tailSourceItemId, "expected the short merged tail to retain its source item")
+
+  for (const chapter of parsed) {
+    const representedSourceItemIds = Array.from(new Set(
+      chapter.paragraphs.flatMap((paragraph) => (
+        paragraph.source_item_id ? [paragraph.source_item_id] : []
+      )),
+    ))
+    assert.deepEqual(chapter.source?.source_item_ids, representedSourceItemIds)
+    if (!representedSourceItemIds.includes(tailSourceItemId)) {
+      assert.equal(chapter.source?.source_item_ids?.includes(tailSourceItemId), false)
+    }
+  }
+})
+
 test("dedupeSourceUnits drops duplicate spine idrefs for the same manifest and keeps contiguous globals", async () => {
   const bytes = await buildSyntheticEpub({
     chapters: [

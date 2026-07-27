@@ -121,6 +121,10 @@ function candidateTexts(candidate: RawChapterCandidate): string[] {
   return candidate.paragraphs.map((paragraph) => paragraph.text)
 }
 
+function sourceItemIdsFromParagraphs(paragraphs: SourceParagraphCandidate[]): string[] {
+  return uniqueStrings(paragraphs.map((paragraph) => paragraph.sourceItemId))
+}
+
 function candidateToRawChapter(
   candidate: RawChapterCandidate,
   context: ParseEpubContext,
@@ -174,10 +178,7 @@ function candidateToRawChapter(
   if (candidate.classification) source.classification = candidate.classification
   if (candidate.classificationReason) source.classification_reason = candidate.classificationReason
   if (candidate.sourceUnitIds.length > 0) source.source_unit_ids = candidate.sourceUnitIds
-  const sourceItemIds = uniqueStrings([
-    ...candidate.sourceItemIds,
-    ...candidate.paragraphs.map((paragraph) => paragraph.sourceItemId),
-  ])
+  const sourceItemIds = sourceItemIdsFromParagraphs(candidate.paragraphs)
   if (sourceItemIds.length > 0) source.source_item_ids = sourceItemIds
 
   const chapter: RawChapter = {
@@ -244,7 +245,7 @@ function splitLongChapter(cand: RawChapterCandidate): RawChapterCandidate[] {
         sourceType: cand.sourceType,
         hrefs: cand.hrefs,
         sourceUnitIds: cand.sourceUnitIds,
-        sourceItemIds: cand.sourceItemIds,
+        sourceItemIds: sourceItemIdsFromParagraphs(current),
         manifestId: cand.manifestId,
         originalTitle: cand.originalTitle,
         tocTitle: cand.tocTitle,
@@ -267,7 +268,7 @@ function splitLongChapter(cand: RawChapterCandidate): RawChapterCandidate[] {
       sourceType: cand.sourceType,
       hrefs: cand.hrefs,
       sourceUnitIds: cand.sourceUnitIds,
-      sourceItemIds: cand.sourceItemIds,
+      sourceItemIds: sourceItemIdsFromParagraphs(current),
       manifestId: cand.manifestId,
       originalTitle: cand.originalTitle,
       tocTitle: cand.tocTitle,
