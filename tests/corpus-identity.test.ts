@@ -59,6 +59,7 @@ test("book IDs reject empty, path-like, whitespace, and invalid-leading values",
 
 test("source item IDs use deterministic NUL-separated provenance", () => {
   const revisionId = deriveCorpusIdentity(Buffer.from("fixture")).corpusRevisionId
+  const otherRevisionId = deriveCorpusIdentity(Buffer.from("other fixture")).corpusRevisionId
   const sourceItemId = deriveSourceItemId(revisionId, 0, "chapter-1", "text/ch1.xhtml")
 
   assert.match(sourceItemId, /^si_v1_[a-f0-9]{64}$/)
@@ -69,6 +70,10 @@ test("source item IDs use deterministic NUL-separated provenance", () => {
   assert.equal(
     sourceItemId,
     deriveSourceItemId(revisionId, 0, "chapter-1", "text/ch1.xhtml"),
+  )
+  assert.notEqual(
+    sourceItemId,
+    deriveSourceItemId(otherRevisionId, 0, "chapter-1", "text/ch1.xhtml"),
   )
   assert.notEqual(
     sourceItemId,
@@ -84,9 +89,11 @@ test("source item IDs use deterministic NUL-separated provenance", () => {
   )
 })
 
-test("paragraph IDs are deterministic and sensitive to the source paragraph ordinal", () => {
+test("paragraph IDs are deterministic and sensitive to every provenance component", () => {
   const revisionId = deriveCorpusIdentity(Buffer.from("fixture")).corpusRevisionId
+  const otherRevisionId = deriveCorpusIdentity(Buffer.from("other fixture")).corpusRevisionId
   const sourceItemId = deriveSourceItemId(revisionId, 0, "chapter-1", "text/ch1.xhtml")
+  const otherSourceItemId = deriveSourceItemId(revisionId, 1, "chapter-1", "text/ch1.xhtml")
   const paragraphId = deriveParagraphId(revisionId, sourceItemId, 0)
 
   assert.match(paragraphId, /^p_v1_[a-f0-9]{64}$/)
@@ -95,5 +102,7 @@ test("paragraph IDs are deterministic and sensitive to the source paragraph ordi
     `p_v1_${sha256(`${revisionId}\0${sourceItemId}\0${0}`)}`,
   )
   assert.equal(paragraphId, deriveParagraphId(revisionId, sourceItemId, 0))
+  assert.notEqual(paragraphId, deriveParagraphId(otherRevisionId, sourceItemId, 0))
+  assert.notEqual(paragraphId, deriveParagraphId(revisionId, otherSourceItemId, 0))
   assert.notEqual(paragraphId, deriveParagraphId(revisionId, sourceItemId, 1))
 })
