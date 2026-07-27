@@ -30,6 +30,8 @@ export interface FirestoreCorpusImportRepositoryDependencies {
   getDb?: () => Firestore
 }
 
+type CanonicalReadDependencies = FirestoreCorpusImportRepositoryDependencies
+
 function withAdminErrorContext<T>(operation: () => Promise<T>): Promise<T> {
   return operation().catch((error) => {
     throw explainAdminCredentialError(error)
@@ -70,10 +72,26 @@ function canonicalStoragePath(corpusRevisionId: string): string {
   return `corpus_revisions/${corpusRevisionId}/source.epub`
 }
 
+function validatedCorpusRevisionId(corpusRevisionId: string): string {
+  if (!CORPUS_REVISION_ID_PATTERN.test(corpusRevisionId)) {
+    throw revisionUnavailable("canonical corpus revision ID is invalid")
+  }
+  return corpusRevisionId
+}
+
 function sourceShaFromRevisionId(corpusRevisionId: string): string {
   const match = CORPUS_REVISION_ID_PATTERN.exec(corpusRevisionId)
   if (!match) throw revisionUnavailable("canonical corpus revision ID is invalid")
   return match[1]
+}
+
+function validateCanonicalIdentity(corpusRevisionId: string, sourceSha256: string): string {
+  validatedCorpusRevisionId(corpusRevisionId)
+  const expectedSourceSha256 = sourceShaFromRevisionId(corpusRevisionId)
+  if (sourceSha256 !== expectedSourceSha256) {
+    throw new Error(`sourceSha256 must equal ${expectedSourceSha256}`)
+  }
+  return expectedSourceSha256
 }
 
 function validatedChapterId(chapterId: unknown): string {
@@ -144,6 +162,7 @@ function validatedRevisionRecord(
   corpusRevisionId: string,
   value: unknown,
 ): CorpusRevisionRecord {
+  validatedCorpusRevisionId(corpusRevisionId)
   if (typeof value !== "object" || value === null) {
     throw revisionUnavailable("canonical corpus revision is invalid")
   }
@@ -201,6 +220,16 @@ function validatedRevisionRecord(
     throw revisionUnavailable("canonical failure message is invalid")
   }
 
+  if (status === "complete") {
+    if (!sourceFile) throw revisionUnavailable("stored canonical source file is invalid")
+    if (!chapterIds || chapterIds.length === 0) {
+      throw revisionUnavailable("canonical chapter manifest is invalid")
+    }
+    if (chapterCount !== chapterIds.length) {
+      throw revisionUnavailable("canonical chapter count is invalid")
+    }
+  }
+
   return {
     bookId,
     corpusRevisionId,
@@ -220,6 +249,7 @@ function validatedRevisionRecord(
 function validatedChapterShape(
   chapter: unknown,
   corpusRevisionId: string,
+  expectedChapterId: string,
   expectedBookId?: string,
 ): RawChapter {
   if (typeof chapter !== "object" || chapter === null) {
@@ -228,6 +258,9 @@ function validatedChapterShape(
 
   const record = chapter as Record<string, unknown>
   const chapterId = validatedChapterId(record.chapter_id)
+  if (chapterId !== expectedChapterId) {
+    throw revisionUnavailable("stored canonical chapter ID is invalid")
+  }
   if (record.doc_id !== corpusRevisionId) {
     throw revisionUnavailable("stored canonical chapter doc ID is invalid")
   }
@@ -259,7 +292,9 @@ function validatedOrderedChapterIds(chapterIds: string[]): string[] {
 }
 
 function sanitizedFailureMessage(message: string): string {
-  return message.slice(0, FAILURE_MESSAGE_MAX_LENGTH)
+  const trimmed = message.trim()
+  return (trimmed.length > 0 ? trimmed : "corpus import failed")
+    .slice(0, FAILURE_MESSAGE_MAX_LENGTH)
 }
 
 export class FirestoreCorpusImportRepository implements CorpusImportRepository {
@@ -272,18 +307,23 @@ export class FirestoreCorpusImportRepository implements CorpusImportRepository {
   }
 
   private revisionRef(corpusRevisionId: string) {
+    validatedCorpusRevisionId(corpusRevisionId)
     return this.db().collection(CORPUS_REVISIONS_COLLECTION).doc(corpusRevisionId)
   }
 
   private bookRef(bookId: string) {
+    validateBookId(bookId)
     return this.db().collection(CORPUS_BOOKS_COLLECTION).doc(bookId)
   }
 
   private workspaceRef(corpusRevisionId: string, source: FirestoreDataSource) {
+    validatedCorpusRevisionId(corpusRevisionId)
     return this.db().collection(firestoreDocumentsCollectionName(source)).doc(corpusRevisionId)
   }
 
   private chapterRef(corpusRevisionId: string, chapterId: string) {
+    validatedCorpusRevisionId(corpusRevisionId)
+    validatedChapterId(chapterId)
     return this.revisionRef(corpusRevisionId).collection("chapters").doc(chapterId)
   }
 
@@ -297,7 +337,7 @@ export class FirestoreCorpusImportRepository implements CorpusImportRepository {
 
   async claimRevision(input: ClaimRevisionInput): Promise<ClaimRevisionResult> {
     validateBookId(input.bookId)
-    const sourceSha256 = sourceShaFromRevisionId(input.corpusRevisionId)
+    const sourceSha256 = validateCanonicalIdentity(input.corpusRevisionId, input.sourceSha256)
 
     return withAdminErrorContext(async () => this.db().runTransaction(async (transaction) => {
       const revisionRef = this.revisionRef(input.corpusRevisionId)
@@ -366,12 +406,19 @@ export class FirestoreCorpusImportRepository implements CorpusImportRepository {
     claimToken: string,
     chapters: RawChapter[],
   ): Promise<void> {
+    validatedCorpusRevisionId(corpusRevisionId)
     const revisionRecord = await this.getRevision(corpusRevisionId)
     if (!revisionRecord) throw claimLost()
 
     const seenChapterIds = new Set<string>()
     const sanitizedChapters = chapters.map((chapter) => {
-      const validated = validatedChapterShape(chapter, corpusRevisionId, revisionRecord.bookId)
+      const chapterId = validatedChapterId((chapter as { chapter_id?: unknown }).chapter_id)
+      const validated = validatedChapterShape(
+        chapter,
+        corpusRevisionId,
+        chapterId,
+        revisionRecord.bookId,
+      )
       if (seenChapterIds.has(validated.chapter_id)) {
         throw revisionUnavailable("canonical chapter manifest is invalid")
       }
@@ -406,9 +453,9 @@ export class FirestoreCorpusImportRepository implements CorpusImportRepository {
 
   async completeRevision(input: CompleteRevisionInput): Promise<void> {
     validateBookId(input.bookId)
+    const sourceSha256 = validateCanonicalIdentity(input.corpusRevisionId, input.sourceSha256)
     const sourceFile = validatedStoredSourceFile(input.sourceFile, input.corpusRevisionId)
     const chapterIds = validatedOrderedChapterIds(input.chapterIds.map((chapterId) => validatedChapterId(chapterId)))
-    const sourceSha256 = sourceShaFromRevisionId(input.corpusRevisionId)
 
     await withAdminErrorContext(async () => this.db().runTransaction(async (transaction) => {
       const revisionRef = this.revisionRef(input.corpusRevisionId)
@@ -443,6 +490,7 @@ export class FirestoreCorpusImportRepository implements CorpusImportRepository {
   }
 
   async failRevision(input: FailRevisionInput): Promise<void> {
+    validatedCorpusRevisionId(input.corpusRevisionId)
     const sourceSha256 = sourceShaFromRevisionId(input.corpusRevisionId)
 
     await withAdminErrorContext(async () => this.db().runTransaction(async (transaction) => {
@@ -491,7 +539,7 @@ export class FirestoreCorpusImportRepository implements CorpusImportRepository {
       return snapshots.map((snapshot, index) => {
         if (!snapshot.exists) throw revisionUnavailable()
         const raw = snapshot.get("raw")
-        return validatedChapterShape(raw, corpusRevisionId, revision.bookId)
+        return validatedChapterShape(raw, corpusRevisionId, chapterIds[index], revision.bookId)
       })
     })
   }
@@ -517,32 +565,67 @@ export class FirestoreCorpusImportRepository implements CorpusImportRepository {
 }
 
 function chapterDocRef(db: Firestore, corpusRevisionId: string, chapterId: string) {
+  validatedCorpusRevisionId(corpusRevisionId)
+  validatedChapterId(chapterId)
   return db.collection(CORPUS_REVISIONS_COLLECTION)
     .doc(corpusRevisionId)
     .collection("chapters")
     .doc(chapterId)
 }
 
-export async function isCanonicalRevisionComplete(corpusRevisionId: string): Promise<boolean> {
-  const revision = await new FirestoreCorpusImportRepository().getRevision(corpusRevisionId)
-  return revision?.status === "complete"
+function createRepository(
+  dependencies: CanonicalReadDependencies = {},
+): FirestoreCorpusImportRepository {
+  return new FirestoreCorpusImportRepository(dependencies)
+}
+
+export async function isCanonicalRevisionComplete(
+  corpusRevisionId: string,
+  dependencies: CanonicalReadDependencies = {},
+): Promise<boolean> {
+  try {
+    const revision = await createRepository(dependencies).getRevision(corpusRevisionId)
+    return revision?.status === "complete"
+  } catch (error) {
+    if (error instanceof CorpusImportError && error.code === "revision_unavailable") {
+      return false
+    }
+    throw error
+  }
 }
 
 export async function loadCanonicalRawChapter(
   corpusRevisionId: string,
   chapterId: string,
+  dependencies: CanonicalReadDependencies = {},
 ): Promise<RawChapter | null> {
-  const repository = new FirestoreCorpusImportRepository()
+  validatedCorpusRevisionId(corpusRevisionId)
+  const validatedRequestedChapterId = validatedChapterId(chapterId)
+  const repository = createRepository(dependencies)
   const revision = await repository.getRevision(corpusRevisionId)
   if (!revision || revision.status !== "complete") return null
+  const chapterIds = validatedOrderedChapterIds(revision.chapterIds ?? [])
+  if (!chapterIds.includes(validatedRequestedChapterId)) return null
 
   return withAdminErrorContext(async () => {
-    const snapshot = await chapterDocRef(getAdminDb(), corpusRevisionId, chapterId).get()
-    if (!snapshot.exists) return null
-    return validatedChapterShape(snapshot.get("raw"), corpusRevisionId, revision.bookId)
+    const snapshot = await chapterDocRef(
+      (dependencies.getDb ?? getAdminDb)(),
+      corpusRevisionId,
+      validatedRequestedChapterId,
+    ).get()
+    if (!snapshot.exists) throw revisionUnavailable()
+    return validatedChapterShape(
+      snapshot.get("raw"),
+      corpusRevisionId,
+      validatedRequestedChapterId,
+      revision.bookId,
+    )
   })
 }
 
-export async function listCanonicalRawChapters(corpusRevisionId: string): Promise<RawChapter[]> {
-  return new FirestoreCorpusImportRepository().listChapters(corpusRevisionId)
+export async function listCanonicalRawChapters(
+  corpusRevisionId: string,
+  dependencies: CanonicalReadDependencies = {},
+): Promise<RawChapter[]> {
+  return createRepository(dependencies).listChapters(corpusRevisionId)
 }
