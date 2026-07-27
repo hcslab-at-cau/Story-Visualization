@@ -144,6 +144,7 @@ The coordinator owns this lifecycle behind narrow repository and blob interfaces
 - Invalid EPUB: `500` with the existing route error shape, no persistent write.
 - Explicit book conflict for a known revision: `409`, no relinking or write.
 - Another active claim for the same revision: `409` with the revision ID; no second blob or chapter writer.
+- A canonical chapter above the conservative 750 KiB estimated document budget: `413 canonical_chapter_too_large`, before any chapter write.
 - Persistence failure after claim: revision becomes `failed`; it is not listable as complete.
 - Retry after failure: same revision ID and book ID, fixed blob key, deterministic chapter IDs, and manifest-last completion.
 

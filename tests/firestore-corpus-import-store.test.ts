@@ -351,6 +351,36 @@ test("saveChapters splits multibyte chapter payloads before the Firestore reques
   assert.ok(fakeDb.transactionWriteCounts.every((count) => count <= 20))
 })
 
+test("saveChapters rejects a chapter above the conservative Firestore document budget before writing", async () => {
+  const identity = deriveCorpusIdentity(Buffer.from("oversized canonical chapter"))
+  const fakeDb = new FakeFirestore()
+  fakeDb.seed(revisionPath(identity.corpusRevisionId), pendingRevisionDoc(identity, "claim-token"))
+  const text = "가".repeat(150_000)
+  const chapter = {
+    ...rawChapter(identity, "ch01"),
+    text,
+    paragraphs: [{
+      ...validParagraph(),
+      end: text.length,
+      text,
+    }],
+  }
+
+  await assert.rejects(
+    createRepository(fakeDb).saveChapters(
+      identity.corpusRevisionId,
+      "claim-token",
+      [chapter] as never,
+    ),
+    (error: unknown) => error instanceof CorpusImportError &&
+      error.statusCode === 413 &&
+      error.code === "canonical_chapter_too_large",
+  )
+
+  assert.deepEqual(fakeDb.transactionWriteCounts, [])
+  assert.equal(fakeDb.docs.has(chapterPath(identity.corpusRevisionId, "ch01")), false)
+})
+
 test("production adapter completes a claimed revision and creates a source-specific workspace", async () => {
   const identity = deriveCorpusIdentity(Buffer.from("successful canonical adapter lifecycle"), "explicit-book")
   const fakeDb = new FakeFirestore()
