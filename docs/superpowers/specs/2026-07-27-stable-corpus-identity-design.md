@@ -83,7 +83,7 @@ corpus_revisions/{corpusRevisionId}/chapters/{chapterId}
 
 Storage: corpus_revisions/{corpusRevisionId}/source.epub
 
-documents_v2/{corpusRevisionId} or documents_v3/{corpusRevisionId}
+documents_v2/{corpusRevisionId}, documents_v3/{corpusRevisionId}, or legacy documents/{corpusRevisionId}
   title
   bookId
   corpusRevisionId
@@ -91,7 +91,7 @@ documents_v2/{corpusRevisionId} or documents_v3/{corpusRevisionId}
   createdAt / updatedAt
 ```
 
-New workspace `docId` values equal `corpusRevisionId` so existing routes can continue passing a single `docId`. Code that needs book semantics must use `bookId`; it must not assume `docId === bookId`.
+New workspace `docId` values equal `corpusRevisionId` so existing routes can continue passing a single `docId`. The existing `source` selector still chooses current, V3, or legacy workspace metadata and run trees, while all three reference the same canonical corpus. Code that needs book semantics must use `bookId`; it must not assume `docId === bookId`.
 
 `RawChapter` gains additive `book_id` and `corpus_revision_id` fields. `ChapterSource` gains `source_item_ids`. Each `Paragraph` keeps `pid`, `start`, `end`, and `text`, and gains `paragraph_id`, `source_item_id`, `source_paragraph_ordinal`, and `global_ordinal`.
 
@@ -126,6 +126,7 @@ Short-chapter merge, long-chapter split, and duplicate suppression preserve thes
 9. On failure after a claim, mark the revision `failed` with the failed step and a bounded diagnostic. Failed revisions remain hidden and reuse the same identity on retry.
 
 Completion and failure transitions compare the claim token transactionally. A timed-out writer cannot complete or fail a revision after a newer retry has reclaimed it. The coordinator receives its clock and token factory as dependencies so lease behavior remains deterministic in tests.
+
 The coordinator owns this lifecycle behind narrow repository and blob interfaces. Firebase modules implement the production adapters; tests use maps and fault injection.
 
 ## Read Compatibility
