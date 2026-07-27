@@ -1,47 +1,70 @@
 /**
- * POST /api/epub — upload an EPUB file to Firebase Storage,
- * parse it, and save raw chapters to Firestore.
- * Returns { docId, chapters: ChapterMeta[] }
+ * POST /api/epub — import an EPUB into canonical corpus storage and ensure a
+ * source-specific workspace points at the completed revision.
  */
 
+import { randomUUID } from "node:crypto"
+import {
+  CorpusImportError,
+  importCorpusEpub,
+  type CorpusImportDependencies,
+} from "@/lib/corpus-import"
+import { parseFirestoreDataSource } from "@/lib/data-source"
 import { parseEpub } from "@/lib/epub"
-import { createDocument, saveRawChapter, listChapters, setDocumentSourceFile } from "@/lib/firestore"
-import { parseFirestoreDataSource, parseStorageDataSource } from "@/lib/data-source"
-import { uploadSourceEpub } from "@/lib/storage"
+import { chapterMetaFromRawChapters } from "@/lib/firestore"
+import { FirestoreCorpusImportRepository } from "@/lib/server/firestore-corpus-import-store"
+import { FirebaseCorpusBlobStore } from "@/lib/storage"
 
 export const maxDuration = 120
+
+function importDependencies(): CorpusImportDependencies {
+  return {
+    repository: new FirestoreCorpusImportRepository(),
+    blobStore: new FirebaseCorpusBlobStore(),
+    parseEpub,
+    now: () => new Date(),
+    createClaimToken: () => randomUUID(),
+  }
+}
+
+function formString(formData: FormData, name: string): string | undefined {
+  const value = formData.get(name)
+  return typeof value === "string" ? value : undefined
+}
 
 export async function POST(request: Request): Promise<Response> {
   try {
     const formData = await request.formData()
-    const file = formData.get("file") as File | null
-    const title = (formData.get("title") as string | null) ?? "Untitled"
-    const source = parseFirestoreDataSource(formData.get("source") as string | null)
-    const storageSource = parseStorageDataSource(formData.get("source") as string | null)
-
-    if (!file) {
+    const fileValue = formData.get("file")
+    if (!(fileValue instanceof File)) {
       return Response.json({ error: "No file provided" }, { status: 400 })
     }
 
-    const buffer = Buffer.from(await file.arrayBuffer())
-    const docId = await createDocument(title, undefined, { source })
-    const sourceFile = await uploadSourceEpub(
-      docId,
-      file.name,
-      buffer,
-      file.type || "application/epub+zip",
-      { source: storageSource },
-    )
-    await setDocumentSourceFile(docId, sourceFile, { source })
+    const sourceValue = formString(formData, "source")
+    const result = await importCorpusEpub({
+      buffer: Buffer.from(await fileValue.arrayBuffer()),
+      fileName: fileValue.name,
+      contentType: fileValue.type || "application/epub+zip",
+      title: formString(formData, "title") ?? "Untitled",
+      bookId: formString(formData, "bookId"),
+      source: parseFirestoreDataSource(sourceValue),
+    }, importDependencies())
 
-    const chapters = await parseEpub(buffer, docId)
-
-    // Save all chapters in parallel
-    await Promise.all(chapters.map((ch) => saveRawChapter(docId, ch, { source })))
-
-    const chapterMeta = await listChapters(docId, { source })
-    return Response.json({ docId, chapters: chapterMeta, sourceFile })
-  } catch (e) {
-    return Response.json({ error: e instanceof Error ? e.message : String(e) }, { status: 500 })
+    return Response.json({
+      docId: result.docId,
+      chapters: chapterMetaFromRawChapters(result.chapters),
+      sourceFile: result.sourceFile,
+      bookId: result.bookId,
+      corpusRevisionId: result.corpusRevisionId,
+      reused: result.reused,
+    })
+  } catch (error) {
+    if (error instanceof CorpusImportError) {
+      return Response.json(
+        { error: error.message, code: error.code },
+        { status: error.statusCode },
+      )
+    }
+    return Response.json({ error: "Failed to import EPUB" }, { status: 500 })
   }
 }
