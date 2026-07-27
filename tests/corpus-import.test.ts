@@ -98,7 +98,7 @@ class FakeCorpusBlobStore implements CorpusBlobStore {
   }
 }
 
-interface WorkspaceRecord extends EnsureWorkspaceInput {}
+type WorkspaceRecord = EnsureWorkspaceInput
 
 class FakeCorpusImportRepository implements CorpusImportRepository {
   readonly books = new Set<string>()
