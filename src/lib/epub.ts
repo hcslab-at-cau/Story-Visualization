@@ -139,8 +139,9 @@ function candidateToRawChapter(
       start: pos,
       end: pos + text.length,
       text,
-      global_ordinal: nextGlobalOrdinal,
     }
+
+    if (context.corpusRevisionId) paragraph.global_ordinal = nextGlobalOrdinal
 
     if (sourceParagraph.sourceItemId) paragraph.source_item_id = sourceParagraph.sourceItemId
     if (sourceParagraph.sourceParagraphOrdinal !== undefined) {
