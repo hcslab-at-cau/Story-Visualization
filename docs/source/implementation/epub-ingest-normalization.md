@@ -30,6 +30,8 @@ EPUB upload는 `RawChapter`를 저장하기 전에 rule-based normalization laye
 - 원본 EPUB byte의 SHA-256을 `sourceSha256`으로 사용하고, revision ID는 `cr_v1_<sourceSha256>`로 고정한다.
 - caller가 `bookId`를 명시하지 않으면 `book_v1_<sourceSha256>`를 사용한다. 유효한 `bookId`를 명시하면 byte가 다른 revision도 같은 logical book에 연결할 수 있다.
 - title과 file name은 corpus identity에 포함되지 않는다. 따라서 byte가 같은 파일을 이름만 바꾸어 다시 올려도 완료된 revision과 source blob을 재사용한다.
+- 각 retained spine/source item에는 revision, 원래 spine index, manifest ID, 정규화된 href에서 계산한 안정적인 `source_item_id`를 부여한다.
+- 각 retained paragraph에는 `source_item_id`와 원본 item 내부의 `source_paragraph_ordinal`에서 계산한 안정적인 `paragraph_id`를 부여하고, 최종 정규화된 책 전체 읽기 순서에 따라 0부터 시작하는 `global_ordinal`을 부여한다. 기존 chapter-local 숫자 `pid`는 downstream 호환성을 위해 유지한다.
 - canonical revision manifest와 raw chapter는 `corpus_revisions/{corpusRevisionId}` 아래에 저장하고, source EPUB은 `corpus_revisions/{corpusRevisionId}/source.epub` 경로에 create-only 방식으로 저장한다.
 - source별 workspace document에는 `bookId`와 `corpusRevisionId` marker를 기록한다. `/api/epub` 응답은 기존 `docId`, `chapters`, `sourceFile`에 `bookId`, `corpusRevisionId`, `reused`를 추가한다.
 
