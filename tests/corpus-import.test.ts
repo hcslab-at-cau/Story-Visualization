@@ -127,6 +127,7 @@ class FakeCorpusImportRepository implements CorpusImportRepository {
     record: CorpusRevisionRecord
     chapters: RawChapter[]
   }
+  revisionOnNextClaim?: CorpusRevisionRecord
 
   async getRevision(revisionId: string): Promise<CorpusRevisionRecord | null> {
     this.getRevisionCalls += 1
@@ -148,8 +149,17 @@ class FakeCorpusImportRepository implements CorpusImportRepository {
       return { outcome: "complete" }
     }
 
+    if (this.revisionOnNextClaim) {
+      this.revisions.set(input.corpusRevisionId, this.revisionOnNextClaim)
+      this.revisionOnNextClaim = undefined
+    }
+
     const existing = this.revisions.get(input.corpusRevisionId)
-    if (existing?.bookId !== undefined && existing.bookId !== input.bookId) {
+    if (
+      existing?.bookId !== undefined &&
+      input.requestedBookId !== undefined &&
+      existing.bookId !== input.requestedBookId
+    ) {
       throw new CorpusImportError(
         "corpus revision belongs to another book",
         409,
@@ -165,16 +175,17 @@ class FakeCorpusImportRepository implements CorpusImportRepository {
       return { outcome: "in_progress" }
     }
 
-    this.books.add(input.bookId)
+    const selectedBookId = existing?.bookId ?? input.bookId
+    this.books.add(selectedBookId)
     this.revisions.set(input.corpusRevisionId, {
       corpusRevisionId: input.corpusRevisionId,
       sourceSha256: input.sourceSha256,
-      bookId: input.bookId,
+      bookId: selectedBookId,
       status: "pending",
       claimToken: input.claimToken,
       claimExpiresAtMs: input.claimExpiresAtMs,
     })
-    return { outcome: "claimed" }
+    return { outcome: "claimed", bookId: selectedBookId }
   }
 
   async saveChapters(
@@ -583,6 +594,67 @@ test("a claim race that reports complete returns the stored manifest without blo
   assert.equal(blobStore.putCalls, 0)
   assert.equal(repository.saveChapterCalls, 0)
   assert.equal(repository.completeCalls, 0)
+})
+
+test("an omitted book ID adopts an explicit association completed during the claim race", async () => {
+  const buffer = Buffer.from("explicit book completed during omitted claim race")
+  const derived = deriveCorpusIdentity(buffer)
+  const storedIdentity = { ...derived, bookId: "stored-explicit-book" }
+  const sourceFile = makeStoredSourceFile({
+    ...storedIdentity,
+    buffer,
+    fileName: "winner.epub",
+    contentType: "application/epub+zip",
+  })
+  const storedChapters = await fakeParser()(buffer, {
+    docId: storedIdentity.corpusRevisionId,
+    bookId: storedIdentity.bookId,
+    corpusRevisionId: storedIdentity.corpusRevisionId,
+  })
+  const repository = new FakeCorpusImportRepository()
+  repository.completeOnNextClaim = {
+    record: {
+      ...storedIdentity,
+      status: "complete",
+      sourceFile,
+      chapterIds: storedChapters.map((chapter) => chapter.chapter_id),
+    },
+    chapters: storedChapters,
+  }
+  const blobStore = new FakeCorpusBlobStore()
+  const { dependencies } = makeDependencies(repository, blobStore)
+
+  const result = await importCorpusEpub(makeInput(buffer), dependencies)
+
+  assert.equal(result.reused, true)
+  assert.equal(result.bookId, storedIdentity.bookId)
+  assert.equal(result.chapters[0]?.book_id, storedIdentity.bookId)
+  assert.equal(repository.lastClaimInput?.requestedBookId, undefined)
+  assert.equal(blobStore.putCalls, 0)
+})
+
+test("an omitted book ID adopts an explicit failed association created during the claim race", async () => {
+  const buffer = Buffer.from("explicit failed book during omitted claim race")
+  const derived = deriveCorpusIdentity(buffer)
+  const repository = new FakeCorpusImportRepository()
+  repository.revisionOnNextClaim = {
+    ...derived,
+    bookId: "stored-explicit-book",
+    status: "failed",
+    failedStep: "chapters",
+    failureMessage: "retryable",
+  }
+  const blobStore = new FakeCorpusBlobStore()
+  const { dependencies } = makeDependencies(repository, blobStore)
+
+  const result = await importCorpusEpub(makeInput(buffer), dependencies)
+
+  assert.equal(result.reused, false)
+  assert.equal(result.bookId, "stored-explicit-book")
+  assert.equal(result.chapters[0]?.book_id, "stored-explicit-book")
+  assert.equal(repository.lastClaimInput?.requestedBookId, undefined)
+  assert.equal(repository.revisions.get(derived.corpusRevisionId)?.bookId, "stored-explicit-book")
+  assert.equal(repository.revisions.get(derived.corpusRevisionId)?.status, "complete")
 })
 
 test("blob persistence failure marks the blob step and preserves the original error", async () => {

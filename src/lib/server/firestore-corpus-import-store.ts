@@ -27,6 +27,10 @@ const PARAGRAPH_ID_PATTERN = /^p_v1_[a-f0-9]{64}$/
 const SOURCE_ITEM_ID_PATTERN = /^si_v1_[a-f0-9]{64}$/
 const STORAGE_VERSION = 2
 const FAILURE_MESSAGE_MAX_LENGTH = 500
+const CHAPTER_TRANSACTION_MAX_WRITES = 20
+const CHAPTER_TRANSACTION_MAX_ESTIMATED_BYTES = 3 * 1024 * 1024
+const CHAPTER_DOCUMENT_MAX_ESTIMATED_BYTES = 750 * 1024
+const CHAPTER_WRITE_FIXED_OVERHEAD_BYTES = 1024
 
 export interface FirestoreCorpusImportRepositoryDependencies {
   getDb?: () => Firestore
@@ -382,6 +386,54 @@ function sanitizedFailureMessage(message: string): string {
     .slice(0, FAILURE_MESSAGE_MAX_LENGTH)
 }
 
+interface CanonicalChapterWrite {
+  chapterId: string
+  raw: DocumentData
+}
+
+function estimatedChapterWriteBytes(chapter: CanonicalChapterWrite): number {
+  return Buffer.byteLength(JSON.stringify({ raw: chapter.raw }), "utf8") +
+    Buffer.byteLength(chapter.chapterId, "utf8") +
+    CHAPTER_WRITE_FIXED_OVERHEAD_BYTES
+}
+
+function chunkCanonicalChapterWrites(
+  chapters: CanonicalChapterWrite[],
+): CanonicalChapterWrite[][] {
+  const chunks: CanonicalChapterWrite[][] = []
+  let current: CanonicalChapterWrite[] = []
+  let currentBytes = 0
+
+  for (const chapter of chapters) {
+    const chapterBytes = estimatedChapterWriteBytes(chapter)
+    if (chapterBytes > CHAPTER_DOCUMENT_MAX_ESTIMATED_BYTES) {
+      throw new CorpusImportError(
+        "canonical chapter exceeds the safe Firestore document budget",
+        413,
+        "canonical_chapter_too_large",
+      )
+    }
+
+    if (
+      current.length > 0 &&
+      (
+        current.length >= CHAPTER_TRANSACTION_MAX_WRITES ||
+        currentBytes + chapterBytes > CHAPTER_TRANSACTION_MAX_ESTIMATED_BYTES
+      )
+    ) {
+      chunks.push(current)
+      current = []
+      currentBytes = 0
+    }
+
+    current.push(chapter)
+    currentBytes += chapterBytes
+  }
+
+  if (current.length > 0) chunks.push(current)
+  return chunks
+}
+
 export class FirestoreCorpusImportRepository implements CorpusImportRepository {
   constructor(
     private readonly dependencies: FirestoreCorpusImportRepositoryDependencies = {},
@@ -422,21 +474,29 @@ export class FirestoreCorpusImportRepository implements CorpusImportRepository {
 
   async claimRevision(input: ClaimRevisionInput): Promise<ClaimRevisionResult> {
     validateBookId(input.bookId)
+    if (
+      input.requestedBookId !== undefined &&
+      validateBookId(input.requestedBookId) !== input.bookId
+    ) {
+      throw new Error("requestedBookId must equal bookId when provided")
+    }
     const sourceSha256 = validateCanonicalIdentity(input.corpusRevisionId, input.sourceSha256)
 
     return withAdminErrorContext(async () => this.db().runTransaction(async (transaction) => {
       const revisionRef = this.revisionRef(input.corpusRevisionId)
-      const bookRef = this.bookRef(input.bookId)
-      const [revisionSnapshot, bookSnapshot] = await Promise.all([
-        transaction.get(revisionRef),
-        transaction.get(bookRef),
-      ])
+      const revisionSnapshot = await transaction.get(revisionRef)
 
       const existing = revisionSnapshot.exists
         ? validatedRevisionRecord(input.corpusRevisionId, revisionSnapshot.data())
         : null
 
-      if (existing && existing.bookId !== input.bookId) throw bookConflict()
+      if (
+        existing &&
+        input.requestedBookId !== undefined &&
+        existing.bookId !== input.requestedBookId
+      ) {
+        throw bookConflict()
+      }
       if (existing?.status === "complete") return { outcome: "complete" }
       if (
         existing?.status === "pending" &&
@@ -446,10 +506,14 @@ export class FirestoreCorpusImportRepository implements CorpusImportRepository {
         return { outcome: "in_progress" }
       }
 
+      const selectedBookId = existing?.bookId ?? input.bookId
+      const bookRef = this.bookRef(selectedBookId)
+      const bookSnapshot = await transaction.get(bookRef)
+
       const revisionPayload: DocumentData = {
         schemaVersion: 1,
         ingestSchemaVersion: 1,
-        bookId: input.bookId,
+        bookId: selectedBookId,
         sourceSha256,
         status: "pending",
         claimToken: input.claimToken,
@@ -482,7 +546,7 @@ export class FirestoreCorpusImportRepository implements CorpusImportRepository {
         }, { merge: true })
       }
 
-      return { outcome: "claimed" }
+      return { outcome: "claimed", bookId: selectedBookId }
     }))
   }
 
@@ -515,8 +579,7 @@ export class FirestoreCorpusImportRepository implements CorpusImportRepository {
     })
 
     await withAdminErrorContext(async () => {
-      for (let index = 0; index < sanitizedChapters.length; index += 400) {
-        const chunk = sanitizedChapters.slice(index, index + 400)
+      for (const chunk of chunkCanonicalChapterWrites(sanitizedChapters)) {
         await this.db().runTransaction(async (transaction) => {
           const revisionSnapshot = await transaction.get(this.revisionRef(corpusRevisionId))
           const activeRevision = revisionSnapshot.exists
@@ -713,4 +776,15 @@ export async function listCanonicalRawChapters(
   dependencies: CanonicalReadDependencies = {},
 ): Promise<RawChapter[]> {
   return createRepository(dependencies).listChapters(corpusRevisionId)
+}
+
+export async function listCanonicalChapterIds(
+  corpusRevisionId: string,
+  dependencies: CanonicalReadDependencies = {},
+): Promise<string[]> {
+  const revision = await createRepository(dependencies).getRevision(corpusRevisionId)
+  if (!revision || revision.status !== "complete" || !revision.chapterIds) {
+    throw revisionUnavailable()
+  }
+  return [...validatedOrderedChapterIds(revision.chapterIds)]
 }

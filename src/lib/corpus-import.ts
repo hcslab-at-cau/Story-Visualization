@@ -35,13 +35,14 @@ export interface CorpusRevisionRecord extends CorpusIdentity {
 }
 
 export interface ClaimRevisionInput extends CorpusIdentity {
+  requestedBookId?: string
   claimToken: string
   nowMs: number
   claimExpiresAtMs: number
 }
 
 export type ClaimRevisionResult =
-  | { outcome: "claimed" }
+  | { outcome: "claimed"; bookId: string }
   | { outcome: "complete" }
   | { outcome: "in_progress" }
 
@@ -268,7 +269,7 @@ export async function importCorpusEpub(
     }
   }
 
-  const chapters = await dependencies.parseEpub(input.buffer, {
+  let chapters = await dependencies.parseEpub(input.buffer, {
     docId: identity.corpusRevisionId,
     bookId: identity.bookId,
     corpusRevisionId: identity.corpusRevisionId,
@@ -278,6 +279,7 @@ export async function importCorpusEpub(
   const claimToken = dependencies.createClaimToken()
   const claim = await dependencies.repository.claimRevision({
     ...identity,
+    requestedBookId: input.bookId,
     claimToken,
     nowMs,
     claimExpiresAtMs: nowMs + CORPUS_CLAIM_LEASE_MS,
@@ -302,6 +304,14 @@ export async function importCorpusEpub(
       409,
       "import_in_progress",
     )
+  }
+
+  if (claim.bookId !== identity.bookId) {
+    identity = { ...identity, bookId: claim.bookId }
+    chapters = chapters.map((chapter) => ({
+      ...chapter,
+      book_id: claim.bookId,
+    }))
   }
 
   let completed = false

@@ -6,6 +6,7 @@ import { CorpusImportError } from "../src/lib/corpus-import.ts"
 import {
   FirestoreCorpusImportRepository,
   isCanonicalRevisionComplete,
+  listCanonicalChapterIds,
   loadCanonicalRawChapter,
 } from "../src/lib/server/firestore-corpus-import-store.ts"
 
@@ -33,6 +34,7 @@ class FakeDocSnapshot {
 class FakeFirestore {
   readonly docs = new Map<string, StoredRecord>()
   readonly reads = new Map<string, number>()
+  readonly transactionWriteCounts: number[] = []
   private timestampCounter = 0
 
   collection(path: string): FakeCollectionRef {
@@ -42,7 +44,10 @@ class FakeFirestore {
   async runTransaction<T>(
     operation: (transaction: FakeTransaction) => Promise<T>,
   ): Promise<T> {
-    return operation(new FakeTransaction(this))
+    const transaction = new FakeTransaction(this)
+    const result = await operation(transaction)
+    this.transactionWriteCounts.push(transaction.writeCount)
+    return result
   }
 
   seed(path: string, value: StoredRecord): void {
@@ -136,6 +141,8 @@ class FakeDocRef {
 }
 
 class FakeTransaction {
+  writeCount = 0
+
   constructor(private readonly db: FakeFirestore) {}
 
   async get(ref: FakeDocRef): Promise<FakeDocSnapshot> {
@@ -143,6 +150,7 @@ class FakeTransaction {
   }
 
   set(ref: FakeDocRef, value: StoredRecord, options?: { merge?: boolean }): void {
+    this.writeCount += 1
     ref.set(value, options)
   }
 }
@@ -239,6 +247,144 @@ test("FirestoreCorpusImportRepository does not initialize Firestore until a meth
   assert.equal(getDbCalls, 1)
 })
 
+test("claimRevision adopts an existing explicit book when an omitted claimant loses the first-import race", async (t) => {
+  for (const status of ["complete", "failed"] as const) {
+    await t.test(status, async () => {
+      const derived = deriveCorpusIdentity(Buffer.from(`omitted claim race ${status}`))
+      const storedIdentity = { ...derived, bookId: "stored-explicit-book" }
+      const fakeDb = new FakeFirestore()
+      fakeDb.seed(revisionPath(derived.corpusRevisionId), status === "complete"
+        ? completeRevisionDoc(storedIdentity)
+        : {
+          schemaVersion: 1,
+          ingestSchemaVersion: 1,
+          bookId: storedIdentity.bookId,
+          sourceSha256: storedIdentity.sourceSha256,
+          status: "failed",
+          failedStep: "chapters",
+          failureMessage: "retryable",
+        })
+
+      const result = await createRepository(fakeDb).claimRevision({
+        ...derived,
+        requestedBookId: undefined,
+        claimToken: "claim-token",
+        nowMs: 20_000,
+        claimExpiresAtMs: 30_000,
+      })
+
+      if (status === "complete") {
+        assert.deepEqual(result, { outcome: "complete" })
+      } else {
+        assert.deepEqual(result, { outcome: "claimed", bookId: storedIdentity.bookId })
+        const claimed = fakeDb.docs.get(revisionPath(derived.corpusRevisionId))
+        assert.equal(claimed?.bookId, storedIdentity.bookId)
+        assert.ok(fakeDb.docs.has(`corpus_books/${storedIdentity.bookId}`))
+      }
+    })
+  }
+})
+
+test("claimRevision still rejects a conflicting explicit book after a first-import race", async () => {
+  const derived = deriveCorpusIdentity(Buffer.from("explicit claim race conflict"))
+  const storedIdentity = { ...derived, bookId: "winning-book" }
+  const fakeDb = new FakeFirestore()
+  fakeDb.seed(revisionPath(derived.corpusRevisionId), completeRevisionDoc(storedIdentity))
+
+  await assert.rejects(
+    createRepository(fakeDb).claimRevision({
+      ...derived,
+      bookId: "losing-book",
+      requestedBookId: "losing-book",
+      claimToken: "claim-token",
+      nowMs: 20_000,
+      claimExpiresAtMs: 30_000,
+    }),
+    (error: unknown) => error instanceof CorpusImportError &&
+      error.statusCode === 409 &&
+      error.code === "book_conflict",
+  )
+})
+
+test("saveChapters keeps each transaction within the conservative write-count boundary", async () => {
+  const identity = deriveCorpusIdentity(Buffer.from("chapter count chunk boundary"))
+  const fakeDb = new FakeFirestore()
+  fakeDb.seed(revisionPath(identity.corpusRevisionId), pendingRevisionDoc(identity, "claim-token"))
+  const chapters = Array.from({ length: 21 }, (_, index) => rawChapter(
+    identity,
+    `ch${String(index + 1).padStart(2, "0")}`,
+  ))
+
+  await createRepository(fakeDb).saveChapters(
+    identity.corpusRevisionId,
+    "claim-token",
+    chapters as never,
+  )
+
+  assert.deepEqual(fakeDb.transactionWriteCounts, [20, 1])
+})
+
+test("saveChapters splits multibyte chapter payloads before the Firestore request-size limit", async () => {
+  const identity = deriveCorpusIdentity(Buffer.from("chapter byte chunk boundary"))
+  const fakeDb = new FakeFirestore()
+  fakeDb.seed(revisionPath(identity.corpusRevisionId), pendingRevisionDoc(identity, "claim-token"))
+  const text = "가".repeat(30_000)
+  const chapters = Array.from({ length: 20 }, (_, index) => ({
+    ...rawChapter(identity, `ch${String(index + 1).padStart(2, "0")}`),
+    text,
+    paragraphs: [{
+      ...validParagraph(),
+      end: text.length,
+      text,
+      global_ordinal: index,
+    }],
+  }))
+
+  await createRepository(fakeDb).saveChapters(
+    identity.corpusRevisionId,
+    "claim-token",
+    chapters as never,
+  )
+
+  assert.ok(fakeDb.transactionWriteCounts.length > 1)
+  assert.equal(fakeDb.transactionWriteCounts.reduce((total, count) => total + count, 0), chapters.length)
+  assert.ok(fakeDb.transactionWriteCounts.every((count) => count <= 20))
+})
+
+test("production adapter completes a claimed revision and creates a source-specific workspace", async () => {
+  const identity = deriveCorpusIdentity(Buffer.from("successful canonical adapter lifecycle"), "explicit-book")
+  const fakeDb = new FakeFirestore()
+  const repository = createRepository(fakeDb)
+  const claim = await repository.claimRevision({
+    ...identity,
+    requestedBookId: identity.bookId,
+    claimToken: "claim-token",
+    nowMs: 1_000,
+    claimExpiresAtMs: 2_000,
+  })
+  assert.deepEqual(claim, { outcome: "claimed", bookId: identity.bookId })
+
+  const chapter = rawChapter(identity) as never
+  await repository.saveChapters(identity.corpusRevisionId, "claim-token", [chapter])
+  await repository.completeRevision({
+    ...identity,
+    claimToken: "claim-token",
+    sourceFile: storedSourceFile(identity) as never,
+    chapterIds: ["ch01"],
+  })
+  await repository.ensureWorkspace({
+    ...identity,
+    title: "Lifecycle fixture",
+    source: "v3",
+    sourceFile: storedSourceFile(identity) as never,
+  })
+
+  assert.equal((await repository.getRevision(identity.corpusRevisionId))?.status, "complete")
+  assert.deepEqual((await repository.listChapters(identity.corpusRevisionId)).map((item) => item.chapter_id), ["ch01"])
+  assert.equal(fakeDb.docs.get(`documents_v3/${identity.corpusRevisionId}`)?.corpusRevisionId, identity.corpusRevisionId)
+  assert.equal(fakeDb.docs.get(`documents_v3/${identity.corpusRevisionId}`)?.bookId, identity.bookId)
+})
+
 test("loadCanonicalRawChapter returns null for non-manifest chapter IDs without reading stale docs", async () => {
   const identity = deriveCorpusIdentity(Buffer.from("manifest authoritative read"))
   const fakeDb = new FakeFirestore()
@@ -251,6 +397,20 @@ test("loadCanonicalRawChapter returns null for non-manifest chapter IDs without 
 
   assert.equal(result, null)
   assert.equal(fakeDb.readCount(chapterPath(identity.corpusRevisionId, "ch99")), 0)
+})
+
+test("listCanonicalChapterIds returns the authoritative complete manifest without reading chapter rows", async () => {
+  const identity = deriveCorpusIdentity(Buffer.from("canonical manifest IDs"))
+  const fakeDb = new FakeFirestore()
+  fakeDb.seed(revisionPath(identity.corpusRevisionId), completeRevisionDoc(identity, ["ch01", "ch02"]))
+
+  const chapterIds = await listCanonicalChapterIds(identity.corpusRevisionId, {
+    getDb: () => fakeDb as never,
+  })
+
+  assert.deepEqual(chapterIds, ["ch01", "ch02"])
+  assert.equal(fakeDb.readCount(chapterPath(identity.corpusRevisionId, "ch01")), 0)
+  assert.equal(fakeDb.readCount(chapterPath(identity.corpusRevisionId, "ch02")), 0)
 })
 
 test("loadCanonicalRawChapter returns a valid canonical chapter when the manifest row matches", async () => {
