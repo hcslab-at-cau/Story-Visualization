@@ -319,8 +319,9 @@ test("archive preflight rejects excessive compression before entry extraction", 
 
 Cover non-ZIP bytes, omitted/duplicate required entries, invalid mimetype
 content or compression, traversal/absolute/backslash/NUL paths, duplicate
-normalized paths, encrypted flag, unsupported method, too many entries, one
-oversized entry, and oversized aggregate declared output.
+normalized paths, encrypted flag, unsupported method, per-entry ZIP64 metadata,
+mismatched STORE sizes, a nonzero DEFLATE payload declaring zero output, too
+many entries, one oversized entry, and oversized aggregate declared output.
 
 - [ ] **Step 2: Run the archive tests to verify RED**
 
@@ -357,7 +358,12 @@ backslash names rather than normalizing them; reject `/`, `//`, drive-prefixed,
 empty-segment, `.`, and `..` paths. Permit one trailing empty segment only for a
 directory entry. Build a case-sensitive duplicate key from `/`-joined segments
 with the directory slash removed so file/directory aliases collide. Reject
-encrypted flags, methods other than STORE/DEFLATE, and every policy excess.
+encrypted flags, methods other than STORE/DEFLATE, per-entry ZIP64 metadata,
+STORE entries whose declared compressed and uncompressed sizes differ, DEFLATE
+entries with nonzero compressed bytes but zero declared output, and every policy
+excess. The zero-output DEFLATE rule intentionally fails closed because the
+selected reader disables its inflate output cap when the declared output is
+zero; metadata alone cannot safely distinguish an empty stream from a bomb.
 Only after confirming that the sole root `mimetype` entry uses STORE and
 declares compressed and uncompressed sizes of exactly 20 bytes may the function
 read it and compare the bytes exactly with ASCII `application/epub+zip`.

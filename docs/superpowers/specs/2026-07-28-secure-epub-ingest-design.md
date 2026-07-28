@@ -157,7 +157,18 @@ Preflight validation checks:
   uncompressed sizes of exactly 20 bytes, followed by a byte-exact ASCII
   comparison with `application/epub+zip`;
 - exactly one `META-INF/container.xml` entry;
-- only stored or deflate compression methods.
+- only stored or deflate compression methods;
+- no per-entry ZIP64 metadata. The selected reader coerces ZIP64 sizes through
+  JavaScript numbers and 32-bit setters, while every accepted resource is far
+  below the ZIP32 ceiling;
+- STORE entries whose declared compressed and uncompressed sizes differ are
+  rejected as inconsistent; and
+- DEFLATE entries with a nonzero compressed payload and declared zero output
+  are rejected as unsupported structure. This intentionally fails closed on a
+  rare valid empty-DEFLATE representation because `adm-zip@0.6.0` omits zlib's
+  output cap when the declared output is zero, making metadata-only validation
+  unable to distinguish the empty representation from a declared-zero
+  decompression bomb.
 
 Container failures are stable public errors and do not expose filenames,
 archive paths, parser messages, credentials, or stack traces.
@@ -225,8 +236,9 @@ Tests must demonstrate the rejection order, not only response codes:
 - oversized `File` stops before `arrayBuffer`, ZIP parsing, canonical import,
   repository, or blob calls;
 - invalid signature, missing/duplicate required entries, unsafe paths,
-  encryption, entry-count, entry-size, aggregate-size, and ratio violations are
-  rejected with stable public codes;
+  encryption, ZIP64 or inconsistent compression metadata, entry-count,
+  entry-size, aggregate-size, and ratio violations are rejected with stable
+  public codes;
 - a held import slot causes a second request to return 429 without body reads;
 - for a new or incomplete revision, spine/chapter/paragraph/text limits fail
   before an import claim or any persistence write. The coordinator may read
