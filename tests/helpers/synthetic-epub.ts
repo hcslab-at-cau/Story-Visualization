@@ -12,10 +12,19 @@ export interface SyntheticEpubChapter {
   includeInToc?: boolean
 }
 
+export interface SyntheticEpubExtraEntry {
+  path: string
+  content: string | Buffer
+  compression?: "STORE" | "DEFLATE"
+}
+
 export interface SyntheticEpubOptions {
   editionLabel?: string
   chapters?: SyntheticEpubChapter[]
   spineIdRefs?: string[]
+  omitMimetype?: boolean
+  omitContainer?: boolean
+  extraEntries?: SyntheticEpubExtraEntry[]
 }
 
 const DEFAULT_CHAPTERS: SyntheticEpubChapter[] = [
@@ -144,18 +153,26 @@ export async function buildSyntheticEpub(options: SyntheticEpubOptions = {}): Pr
   const spineIdRefs = options.spineIdRefs ?? chapters.map((chapter) => chapter.manifestId)
 
   const zip = new JSZip()
-  zip.file("mimetype", "application/epub+zip", { compression: "STORE" })
-  zip.file("META-INF/container.xml", `<?xml version="1.0" encoding="UTF-8"?>
+  if (!options.omitMimetype) {
+    zip.file("mimetype", "application/epub+zip", { compression: "STORE" })
+  }
+  if (!options.omitContainer) {
+    zip.file("META-INF/container.xml", `<?xml version="1.0" encoding="UTF-8"?>
 <container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
   <rootfiles>
     <rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/>
   </rootfiles>
 </container>`)
+  }
   zip.file("OEBPS/content.opf", buildOpf(chapters, spineIdRefs))
   zip.file("OEBPS/toc.ncx", buildToc(chapters))
 
   for (const chapter of chapters) {
     zip.file(`OEBPS/${chapter.href}`, buildChapterDocument(chapter, editionLabel))
+  }
+
+  for (const entry of options.extraEntries ?? []) {
+    zip.file(entry.path, entry.content, { compression: entry.compression })
   }
 
   return zip.generateAsync({ type: "nodebuffer", compression: "DEFLATE" })
