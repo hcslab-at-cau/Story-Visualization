@@ -45,3 +45,29 @@ EPUB upload는 `RawChapter`를 저장하기 전에 rule-based normalization laye
 ### No automatic backfill
 
 이 변경은 기존 Firestore document, raw chapter, downstream artifact를 자동으로 복사하거나 다시 쓰지 않는다. marker가 없는 document는 legacy read path에 남으며, canonical storage로 전환하려면 EPUB을 새 import path로 다시 업로드해야 한다. 따라서 배포 시점에 대규모 backfill job이나 기존 ID 변환은 실행하지 않는다.
+
+## 2026-07-28 secure ingest boundary 업데이트
+
+`POST /api/epub`은 canonical import 앞에 인증과 자원 한도를 적용한다. 프로덕션에서는 32 UTF-8 byte 이상의 서버 전용 `EPUB_INGEST_ADMIN_TOKEN`과 정확한 Bearer credential이 필요하다. 인증, multipart content type, 선언된 `Content-Length`, process-local import slot을 차례로 확인한 뒤에만 request body를 읽는다. 본문은 제한된 byte buffer에서 multipart로 변환하고, `File.size`, ZIP metadata, parser output을 통과한 경우에만 Firebase adapter와 canonical import를 초기화한다.
+
+기본 한도:
+
+- multipart request: 51 MiB
+- 추출된 EPUB file: 50 MiB
+- ZIP entry: 최대 5,000개, entry당 uncompressed 16 MiB, 전체 uncompressed 256 MiB, compression ratio 100:1
+- parser: raw spine item 1,000개, source item당 paragraph 10,000개, normalized chapter 1,500개, 전체 paragraph 100,000개, paragraph당 UTF-8 1 MiB, 전체 normalized text 64 MiB
+- 동시 import: Node process당 1개. 추가 요청은 body를 읽지 않고 `429 ingest_busy`, `Retry-After: 5`를 반환한다.
+
+ZIP reader는 직접 pin과 `epub2` override를 통해 patched `adm-zip@0.6.0`을 사용한다. preflight는 EPUB 필수 entry, path traversal·중복 path, encryption, 지원하지 않는 compression, ZIP64 metadata, 선언 크기와 compression ratio를 parser 실행 전에 검사한다. 검증은 source byte를 다시 쓰지 않으므로 SHA-256 corpus identity에 사용되는 byte는 업로드된 내용과 동일하다. 저장 object의 MIME metadata만 검증된 형식인 `application/epub+zip`으로 고정한다.
+
+안정적인 boundary error code는 다음과 같다.
+
+- `400`: `invalid_content_length`, `malformed_multipart`, `missing_file`
+- `401`: `unauthorized` (`WWW-Authenticate: Bearer`)
+- `413`: `request_too_large`, `epub_too_large`, `epub_resource_limit`
+- `415`: `invalid_content_type`
+- `422`: `invalid_epub`
+- `429`: `ingest_busy`
+- `503`: `ingest_not_configured`
+
+이 process-local boundary는 배포 perimeter를 대체하지 않는다. 프로덕션에는 HTTPS, host-level raw request 크기와 request-rate 제한, slow-client 보호와 timeout, 인증된 연구자 session/UI 또는 Bearer header를 주입하는 신뢰된 server proxy가 여전히 필요하다. 현재 browser uploader에는 서버 secret을 저장하거나 노출하지 않는다. 로컬 개발에서 토큰이 없을 때의 bypass는 비배포 편의 동작이다. Firestore·Storage·corpus schema 변경이나 기존 data backfill은 없다.
