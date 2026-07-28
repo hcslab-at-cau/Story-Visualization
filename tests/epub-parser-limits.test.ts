@@ -1,5 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
+import { EPub } from "epub2"
 import {
   DEFAULT_EPUB_PARSE_LIMITS,
   EpubParseLimitError,
@@ -117,6 +118,172 @@ test("parseEpub rejects excessive total normalized text in UTF-8 bytes", async (
   await assert.rejects(
     parseEpub(buffer, "doc-total-byte-limit", parseLimits({ maxTextBytes: 600 })),
     isParseLimit("text_bytes"),
+  )
+})
+
+test("parseEpub counts filtered source units against extraction budgets", async (t) => {
+  const contentTitle = "Harbor Watch"
+  const contentBody = (
+    "Harbor Watch follows a synthetic lookout across a rainlit pier, records an invented signal, " +
+    "and closes the patrol ledger without using any published story text. "
+  ).repeat(5)
+  const filteredTitle = "Copyright Notice"
+  const filteredBody = "All rights reserved by a wholly synthetic publisher for this test fixture."
+  const buffer = await buildSyntheticEpub({
+    chapters: [
+      {
+        manifestId: "harbor-watch",
+        href: "Text/harbor-watch.xhtml",
+        title: contentTitle,
+        bodyParagraphs: [contentBody],
+      },
+      {
+        manifestId: "copyright-notice",
+        href: "Text/copyright-notice.xhtml",
+        title: filteredTitle,
+        bodyParagraphs: [filteredBody],
+      },
+    ],
+  })
+  const retainedTextBytes = Buffer.byteLength(contentTitle, "utf8") +
+    Buffer.byteLength(contentBody.trim(), "utf8")
+
+  await t.test("paragraph work exceeds the final retained paragraph count", async () => {
+    await assert.rejects(
+      parseEpub(buffer, "doc-filtered-paragraph-work", parseLimits({ maxParagraphs: 2 })),
+      isParseLimit("paragraphs"),
+    )
+  })
+
+  await t.test("text work exceeds the final retained text bytes", async () => {
+    await assert.rejects(
+      parseEpub(buffer, "doc-filtered-text-work", parseLimits({ maxTextBytes: retainedTextBytes })),
+      isParseLimit("text_bytes"),
+    )
+  })
+})
+
+test("parseEpub reads a successful duplicate spine source only once", async () => {
+  const title = "Single Read"
+  const body = (
+    "Single Read follows an invented survey crew through a quiet lock gate and records a synthetic " +
+    "checkpoint detail for parser testing. "
+  ).repeat(5)
+  const buffer = await buildSyntheticEpub({
+    chapters: [{
+      manifestId: "single-read",
+      href: "Text/single-read.xhtml",
+      title,
+      bodyParagraphs: [body],
+    }],
+    spineIdRefs: ["single-read", "single-read"],
+  })
+  const originalGetChapter = EPub.prototype.getChapter
+  let getChapterCalls = 0
+  EPub.prototype.getChapter = function (
+    chapterId: string,
+    callback: (error: Error, text?: string) => void,
+  ): void {
+    getChapterCalls += 1
+    originalGetChapter.call(this, chapterId, callback)
+  }
+
+  let parsed: Awaited<ReturnType<typeof parseEpub>> | undefined
+  try {
+    parsed = await parseEpub(buffer, "doc-single-read", parseLimits({
+      maxSpineItems: 2,
+      maxParagraphsPerSourceItem: 2,
+      maxParagraphs: 2,
+      maxTextBytes: Buffer.byteLength(title, "utf8") + Buffer.byteLength(body.trim(), "utf8"),
+    }))
+  } finally {
+    EPub.prototype.getChapter = originalGetChapter
+  }
+
+  assert.equal(getChapterCalls, 1)
+  assert.equal(parsed?.length, 1)
+})
+
+test("parseEpub retries a duplicate alias when its first source read is unreadable", async () => {
+  const title = "Readable Alias"
+  const body = (
+    "Readable Alias follows an invented harbor clerk through a synthetic handoff and preserves a " +
+    "neutral checkpoint record for parser testing. "
+  ).repeat(5)
+  const buffer = await buildSyntheticEpub({
+    chapters: [{
+      manifestId: "readable-alias",
+      href: "Text/readable-alias.xhtml",
+      title,
+      bodyParagraphs: [body],
+    }],
+    spineIdRefs: ["readable-alias", "readable-alias"],
+  })
+  const originalGetChapter = EPub.prototype.getChapter
+  let getChapterCalls = 0
+  EPub.prototype.getChapter = function (
+    chapterId: string,
+    callback: (error: Error, text?: string) => void,
+  ): void {
+    getChapterCalls += 1
+    if (getChapterCalls === 1) {
+      callback(new Error("synthetic unreadable first alias"))
+      return
+    }
+    originalGetChapter.call(this, chapterId, callback)
+  }
+
+  let parsed: Awaited<ReturnType<typeof parseEpub>> | undefined
+  try {
+    parsed = await parseEpub(buffer, "doc-readable-alias", parseLimits({
+      maxSpineItems: 2,
+      maxParagraphsPerSourceItem: 2,
+      maxParagraphs: 2,
+      maxTextBytes: Buffer.byteLength(title, "utf8") + Buffer.byteLength(body.trim(), "utf8"),
+    }))
+  } finally {
+    EPub.prototype.getChapter = originalGetChapter
+  }
+
+  assert.equal(getChapterCalls, 2)
+  assert.equal(parsed?.length, 1)
+  assert.equal(parsed?.[0]?.source?.manifest_id, "readable-alias")
+  assert.ok(parsed?.[0]?.paragraphs.some((paragraph) => paragraph.text === body.trim()))
+})
+
+test("parseEpub applies the chapter limit after splitting one oversized source", async () => {
+  const oversizedParagraphs = Array.from(
+    { length: 45 },
+    (_, index) => (
+      `Switchyard oversized paragraph ${index + 1} follows the same invented signal crew through a ` +
+      "synthetic platform survey and repeats enough neutral fixture prose to exercise final chapter splitting. "
+    ).repeat(4),
+  )
+  const buffer = await buildSyntheticEpub({
+    chapters: [{
+      manifestId: "switchyard-oversized",
+      href: "Text/switchyard-oversized.xhtml",
+      title: "Switchyard Run",
+      bodyParagraphs: oversizedParagraphs,
+    }],
+  })
+  const baseline = await parseEpub(buffer, "doc-split-chapter-limit")
+
+  assert.ok(baseline.length > 1, "expected the oversized source to split")
+  const parsedAtLimit = await parseEpub(
+    buffer,
+    "doc-split-chapter-limit",
+    parseLimits({ maxChapters: baseline.length }),
+  )
+  assert.deepEqual(parsedAtLimit, baseline)
+
+  await assert.rejects(
+    parseEpub(
+      buffer,
+      "doc-split-chapter-limit",
+      parseLimits({ maxChapters: baseline.length - 1 }),
+    ),
+    isParseLimit("chapters"),
   )
 })
 

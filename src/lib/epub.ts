@@ -122,15 +122,17 @@ interface EpubSourceUnit {
   tocTitle?: string
   headingTitle?: string
   selectedTitle: string
-  html: string
   paragraphs: SourceParagraphCandidate[]
   textLength: number
+  sourceItemId?: string
+  classification: SourceUnitClassification
+}
+
+type ClassifiableSourceUnit = Omit<EpubSourceUnit, "classification"> & {
   linkTextLength: number
   imageCount: number
   classHints: string[]
   bodyText: string
-  sourceItemId?: string
-  classification: SourceUnitClassification
 }
 
 interface SourceUnitClassification {
@@ -308,15 +310,22 @@ function splitLongChapter(cand: RawChapterCandidate): RawChapterCandidate[] {
 // Some EPUB generators accidentally duplicate spine entries that point to the
 // same manifest item/href. Keep the first readable copy so uploads do not create
 // duplicate chapters for the same source document.
+function sourceUnitDedupeKeys(
+  manifestId: string | undefined,
+  href: string | undefined,
+): string[] {
+  return [
+    manifestId ? `id:${manifestId}` : undefined,
+    href ? `href:${normalizeHrefWithoutFragment(href)}` : undefined,
+  ].filter((value): value is string => Boolean(value))
+}
+
 function dedupeSourceUnits(units: EpubSourceUnit[]): EpubSourceUnit[] {
   const seen = new Set<string>()
   const result: EpubSourceUnit[] = []
 
   for (const unit of units) {
-    const keys = [
-      unit.manifestId ? `id:${unit.manifestId}` : undefined,
-      unit.href ? `href:${normalizeHrefWithoutFragment(unit.href)}` : undefined,
-    ].filter((value): value is string => Boolean(value))
+    const keys = sourceUnitDedupeKeys(unit.manifestId, unit.href)
 
     if (keys.some((key) => seen.has(key))) continue
     for (const key of keys) seen.add(key)
@@ -416,28 +425,48 @@ async function extractCandidates(
 
   const tocTitleByKey = buildTocTitleMap(epub)
   const sourceUnits: EpubSourceUnit[] = []
+  const successfulSourceKeys = new Set<string>()
+  let extractedParagraphCount = 0
+  let extractedTextBytes = 0
 
   for (const [spineIndex, spineItem] of epub.spine.contents.entries()) {
     const id = spineItem.id
     if (!id) continue
+    const item = epub.manifest[id] as { id?: string; title?: string; href?: string; mediaType?: string; "media-type"?: string } | undefined
+    const href = item?.href ?? spineItem.href
+    const originalTitle = item?.title ?? spineItem.title ?? id
+    const sourceKeys = sourceUnitDedupeKeys(id, href)
+    if (sourceKeys.some((key) => successfulSourceKeys.has(key))) continue
+
     try {
       const html = await new Promise<string>((resolve, reject) =>
         epub.getChapter(id, (err: Error, text?: string) =>
           err ? reject(err) : resolve(text ?? ""),
         ),
       )
-      const item = epub.manifest[id] as { id?: string; title?: string; href?: string; mediaType?: string; "media-type"?: string } | undefined
-      const href = item?.href ?? spineItem.href
-      const originalTitle = item?.title ?? spineItem.title ?? id
       const htmlSummary = summarizeHtml(html)
       if (htmlSummary.paragraphs.length > limits.maxParagraphsPerSourceItem) {
         throw new EpubParseLimitError("paragraphs_per_source_item")
       }
-      if (htmlSummary.paragraphs.some((paragraph) => (
-        Buffer.byteLength(paragraph, "utf8") > limits.maxParagraphBytes
-      ))) {
-        throw new EpubParseLimitError("paragraph_bytes")
+
+      let sourceTextBytes = 0
+      for (const paragraph of htmlSummary.paragraphs) {
+        const paragraphBytes = Buffer.byteLength(paragraph, "utf8")
+        if (paragraphBytes > limits.maxParagraphBytes) {
+          throw new EpubParseLimitError("paragraph_bytes")
+        }
+        sourceTextBytes += paragraphBytes
       }
+
+      const nextParagraphCount = extractedParagraphCount + htmlSummary.paragraphs.length
+      if (nextParagraphCount > limits.maxParagraphs) {
+        throw new EpubParseLimitError("paragraphs")
+      }
+      const nextTextBytes = extractedTextBytes + sourceTextBytes
+      if (nextTextBytes > limits.maxTextBytes) {
+        throw new EpubParseLimitError("text_bytes")
+      }
+
       const normalizedHref = normalizeHrefWithoutFragment(href ?? id)
       const sourceItemId = context.corpusRevisionId
         ? deriveSourceItemId(context.corpusRevisionId, spineIndex, id, normalizedHref)
@@ -450,7 +479,7 @@ async function extractCandidates(
         headingTitle: htmlSummary.headingTitle,
         paragraphs: htmlSummary.paragraphs,
       })
-      const baseUnit = {
+      const baseUnit: Omit<EpubSourceUnit, "classification"> = {
         unitId: `spine:${spineIndex}:${id}`,
         spineIndex,
         manifestId: id,
@@ -459,23 +488,28 @@ async function extractCandidates(
         tocTitle,
         headingTitle: htmlSummary.headingTitle,
         selectedTitle,
-        html,
         paragraphs: htmlSummary.paragraphs.map((text, index) => ({
           text,
           sourceItemId,
           sourceParagraphOrdinal: sourceItemId ? index : undefined,
         })),
         textLength: htmlSummary.textLength,
+        sourceItemId,
+      }
+      const classification = classifySourceUnit({
+        ...baseUnit,
         linkTextLength: htmlSummary.linkTextLength,
         imageCount: htmlSummary.imageCount,
         classHints: htmlSummary.classHints,
         bodyText: htmlSummary.bodyText,
-        sourceItemId,
-      }
+      })
       sourceUnits.push({
         ...baseUnit,
-        classification: classifySourceUnit(baseUnit),
+        classification,
       })
+      extractedParagraphCount = nextParagraphCount
+      extractedTextBytes = nextTextBytes
+      for (const key of sourceKeys) successfulSourceKeys.add(key)
     } catch (error) {
       if (error instanceof EpubParseLimitError) throw error
       // skip unreadable items
@@ -590,7 +624,7 @@ function selectSourceUnitTitle(params: {
   return `Chapter ${params.spineIndex + 1}`
 }
 
-function classifySourceUnit(unit: Omit<EpubSourceUnit, "classification">): SourceUnitClassification {
+function classifySourceUnit(unit: ClassifiableSourceUnit): SourceUnitClassification {
   const signal = [
     unit.manifestId,
     unit.href,
