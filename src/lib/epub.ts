@@ -72,6 +72,31 @@ export interface ParseEpubContext {
   corpusRevisionId?: string
 }
 
+export interface EpubParseLimits {
+  maxSpineItems: number
+  maxParagraphsPerSourceItem: number
+  maxChapters: number
+  maxParagraphs: number
+  maxParagraphBytes: number
+  maxTextBytes: number
+}
+
+export const DEFAULT_EPUB_PARSE_LIMITS: EpubParseLimits = {
+  maxSpineItems: 1_000,
+  maxParagraphsPerSourceItem: 10_000,
+  maxChapters: 1_500,
+  maxParagraphs: 100_000,
+  maxParagraphBytes: 1024 * 1024,
+  maxTextBytes: 64 * 1024 * 1024,
+}
+
+export class EpubParseLimitError extends Error {
+  constructor(public readonly limit: string) {
+    super("EPUB content exceeds the configured resource budget")
+    this.name = "EpubParseLimitError"
+  }
+}
+
 interface RawChapterCandidate {
   title: string
   paragraphs: SourceParagraphCandidate[]
@@ -335,6 +360,7 @@ function dedupeDuplicateCandidates(candidates: RawChapterCandidate[]): RawChapte
 export async function parseEpub(
   buffer: Buffer,
   docIdOrContext: string | ParseEpubContext,
+  limits: EpubParseLimits = DEFAULT_EPUB_PARSE_LIMITS,
 ): Promise<RawChapter[]> {
   // epub2 expects a file path; write to a temp location
   const { tmpdir } = await import("os")
@@ -347,8 +373,9 @@ export async function parseEpub(
 
   try {
     const epub = await EPub.createAsync(tmpPath)
-    const candidates = await extractCandidates(epub, context)
+    const candidates = await extractCandidates(epub, context, limits)
     const normalized = normalizeCandidates(candidates)
+    assertFinalParseLimits(normalized, limits)
     return materializeRawChapters(normalized, context)
   } finally {
     unlinkSync(tmpPath)
@@ -381,7 +408,12 @@ function materializeRawChapters(
 async function extractCandidates(
   epub: EPub,
   context: ParseEpubContext,
+  limits: EpubParseLimits,
 ): Promise<RawChapterCandidate[]> {
+  if (epub.spine.contents.length > limits.maxSpineItems) {
+    throw new EpubParseLimitError("spine_items")
+  }
+
   const tocTitleByKey = buildTocTitleMap(epub)
   const sourceUnits: EpubSourceUnit[] = []
 
@@ -398,6 +430,14 @@ async function extractCandidates(
       const href = item?.href ?? spineItem.href
       const originalTitle = item?.title ?? spineItem.title ?? id
       const htmlSummary = summarizeHtml(html)
+      if (htmlSummary.paragraphs.length > limits.maxParagraphsPerSourceItem) {
+        throw new EpubParseLimitError("paragraphs_per_source_item")
+      }
+      if (htmlSummary.paragraphs.some((paragraph) => (
+        Buffer.byteLength(paragraph, "utf8") > limits.maxParagraphBytes
+      ))) {
+        throw new EpubParseLimitError("paragraph_bytes")
+      }
       const normalizedHref = normalizeHrefWithoutFragment(href ?? id)
       const sourceItemId = context.corpusRevisionId
         ? deriveSourceItemId(context.corpusRevisionId, spineIndex, id, normalizedHref)
@@ -436,7 +476,8 @@ async function extractCandidates(
         ...baseUnit,
         classification: classifySourceUnit(baseUnit),
       })
-    } catch {
+    } catch (error) {
+      if (error instanceof EpubParseLimitError) throw error
       // skip unreadable items
     }
   }
@@ -663,4 +704,29 @@ function normalizeCandidates(
     }
   }
   return dedupeDuplicateCandidates(split)
+}
+
+function assertFinalParseLimits(
+  candidates: RawChapterCandidate[],
+  limits: EpubParseLimits,
+): void {
+  if (candidates.length > limits.maxChapters) {
+    throw new EpubParseLimitError("chapters")
+  }
+
+  let paragraphCount = 0
+  let textBytes = 0
+  for (const candidate of candidates) {
+    paragraphCount += candidate.paragraphs.length
+    for (const paragraph of candidate.paragraphs) {
+      textBytes += Buffer.byteLength(paragraph.text, "utf8")
+    }
+  }
+
+  if (paragraphCount > limits.maxParagraphs) {
+    throw new EpubParseLimitError("paragraphs")
+  }
+  if (textBytes > limits.maxTextBytes) {
+    throw new EpubParseLimitError("text_bytes")
+  }
 }

@@ -19,7 +19,7 @@ import {
   type FailRevisionInput,
   type PutCorpusBlobInput,
 } from "../src/lib/corpus-import.ts"
-import { parseEpub } from "../src/lib/epub.ts"
+import { EpubParseLimitError, parseEpub } from "../src/lib/epub.ts"
 import type { StoredSourceFile } from "../src/lib/storage.ts"
 import type { RawChapter } from "../src/types/schema.ts"
 import { buildSyntheticEpub } from "./helpers/synthetic-epub.ts"
@@ -492,6 +492,66 @@ test("an invalid EPUB fails in the real parser before any claim or persistence w
   assert.equal(state.parserCalls, 1)
   assert.equal(blobStore.putCalls, 0)
   assert.equal(blobStore.objects.size, 0)
+})
+
+test("a parser resource-limit failure leaves new and incomplete revisions untouched", async (t) => {
+  const cases: Array<{
+    name: string
+    seed(repository: FakeCorpusImportRepository, identity: ReturnType<typeof deriveCorpusIdentity>): void
+  }> = [
+    { name: "new revision", seed: () => undefined },
+    {
+      name: "failed revision",
+      seed: (repository, identity) => repository.revisions.set(identity.corpusRevisionId, {
+        ...identity,
+        status: "failed",
+        failedStep: "chapters",
+        failureMessage: "retryable",
+      }),
+    },
+    {
+      name: "expired pending revision",
+      seed: (repository, identity) => repository.revisions.set(identity.corpusRevisionId, {
+        ...identity,
+        status: "pending",
+        claimToken: "expired-writer",
+        claimExpiresAtMs: NOW.getTime(),
+      }),
+    },
+  ]
+
+  for (const testCase of cases) {
+    await t.test(testCase.name, async () => {
+      const buffer = Buffer.from(`parser resource limit: ${testCase.name}`)
+      const identity = deriveCorpusIdentity(buffer)
+      const repository = new FakeCorpusImportRepository()
+      testCase.seed(repository, identity)
+      const revisionBeforeImport = structuredClone(repository.revisions.get(identity.corpusRevisionId))
+      const blobStore = new FakeCorpusBlobStore()
+      const parserError = new EpubParseLimitError("paragraphs")
+      const parser: CorpusEpubParser = async () => {
+        throw parserError
+      }
+      const { dependencies, state } = makeDependencies(repository, blobStore, parser)
+
+      await assert.rejects(importCorpusEpub(makeInput(buffer), dependencies), (error: unknown) => {
+        assert.strictEqual(error, parserError)
+        return true
+      })
+
+      assert.equal(repository.getRevisionCalls, 1)
+      assert.equal(state.parserCalls, 1)
+      assert.equal(repository.claimCalls, 0)
+      assert.equal(state.tokenCalls, 0)
+      assert.equal(blobStore.putCalls, 0)
+      assert.equal(blobStore.writeCount, 0)
+      assert.equal(repository.saveChapterCalls, 0)
+      assert.equal(repository.completeCalls, 0)
+      assert.equal(repository.failCalls, 0)
+      assert.equal(repository.workspaceCalls, 0)
+      assert.deepEqual(repository.revisions.get(identity.corpusRevisionId), revisionBeforeImport)
+    })
+  }
 })
 
 test("an active five-minute claim returns an import-in-progress conflict without a second writer", async () => {
