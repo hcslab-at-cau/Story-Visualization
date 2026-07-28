@@ -97,10 +97,6 @@ export function validateDeclaredRequestSize(
   if (!/^\d+$/.test(contentLength)) throw invalidContentLength()
 
   const declaredBytes = BigInt(contentLength)
-  if (declaredBytes > BigInt(Number.MAX_SAFE_INTEGER)) {
-    throw invalidContentLength()
-  }
-
   if (declaredBytes > BigInt(maxBytes)) throw requestTooLarge()
 }
 

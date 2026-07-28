@@ -180,14 +180,14 @@ test("non-decimal or negative Content-Length values are rejected", () => {
   }
 })
 
-test("an unsafe integer Content-Length is rejected", () => {
+test("a very large decimal Content-Length is classified as request too large", () => {
   const request = new Request("http://local/api/epub", {
-    headers: { "content-length": "9007199254740992" },
+    headers: { "content-length": "9".repeat(128) },
   })
 
   assert.throws(
-    () => validateDeclaredRequestSize(request, Number.MAX_SAFE_INTEGER),
-    matchesGuardError(400, "invalid_content_length"),
+    () => validateDeclaredRequestSize(request, SMALL_POLICY.maxRequestBytes),
+    matchesGuardError(413, "request_too_large"),
   )
 })
 
