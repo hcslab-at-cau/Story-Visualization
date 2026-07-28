@@ -83,9 +83,10 @@ required second layer, not the only application guard.
 The server reads `EPUB_INGEST_ADMIN_TOKEN`; it is never exposed through a
 `NEXT_PUBLIC_*` variable, response, log, query string, or form field.
 
-- In `NODE_ENV=production`, a missing or invalidly short token returns
+- In `NODE_ENV=production`, a missing token returns
   `503 ingest_not_configured` before reading the body.
-- A configured token must contain at least 32 UTF-8 bytes.
+- A configured token must contain at least 32 UTF-8 bytes. A present token that
+  is shorter than this returns `503 ingest_not_configured` in every environment.
 - When configured, callers must send `Authorization: Bearer <token>`.
 - Missing or mismatching credentials return `401 unauthorized` with a generic
   body and `WWW-Authenticate: Bearer`.
@@ -146,10 +147,15 @@ Preflight validation checks:
 - ZIP signatures and parsability;
 - entry count, declared compressed/uncompressed sizes, aggregate size, and
   compression ratio before reading entry contents;
-- no encrypted entries, absolute paths, traversal segments, NUL names, or
-  duplicate normalized names;
-- exactly one root `mimetype` entry whose small stored content equals
-  `application/epub+zip`;
+- no encrypted entries or unsafe names. Names containing NUL or `\\` are
+  rejected rather than normalized. Names beginning with `/`, `//`, or a Windows
+  drive prefix are rejected. `/`-separated empty, `.`, and `..` segments are
+  rejected, except for one final empty segment on a directory entry. The
+  case-sensitive duplicate key is the remaining segments joined with `/`, with
+  the directory's final slash removed so a file/directory alias also conflicts;
+- exactly one root `mimetype` entry using STORE with declared compressed and
+  uncompressed sizes of exactly 20 bytes, followed by a byte-exact ASCII
+  comparison with `application/epub+zip`;
 - exactly one `META-INF/container.xml` entry;
 - only stored or deflate compression methods.
 
@@ -221,7 +227,10 @@ Tests must demonstrate the rejection order, not only response codes:
   encryption, entry-count, entry-size, aggregate-size, and ratio violations are
   rejected with stable public codes;
 - a held import slot causes a second request to return 429 without body reads;
-- spine/chapter/paragraph/text limits fail before persistence;
+- for a new or incomplete revision, spine/chapter/paragraph/text limits fail
+  before an import claim or any persistence write. The coordinator may read
+  revision metadata first so a complete byte-identical reimport can retain its
+  parser short-circuit;
 - `epub2@3.0.2` parses the existing synthetic fixture with overridden
   `adm-zip@0.6.0`;
 - valid synthetic import, deterministic reuse, provenance, merge/split, and
