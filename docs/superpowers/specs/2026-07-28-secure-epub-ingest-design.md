@@ -181,6 +181,15 @@ source item, single-paragraph UTF-8 bytes, final chapter count, final paragraph
 count, and total normalized text bytes. A typed parser-limit error is never
 swallowed by the existing per-spine unreadable-item fallback.
 
+Extraction uses the same paragraph and UTF-8 text ceilings as incremental work
+budgets before retaining each successfully read source unit, including units
+that classification may later filter from the normalized result. Successfully
+read manifest/href aliases are also skipped before a second `getChapter` call;
+an unreadable first alias does not mark the key, so a later readable alias still
+gets one attempt. Final normalized totals remain checked after dedupe,
+merge, and split. This bounds repeated decompression and filtered-source work
+without changing the first-readable-source provenance used by accepted books.
+
 These checks apply to every `parseEpub` caller, not only the HTTP route, so an
 internal caller cannot accidentally bypass the parser work budget.
 
@@ -244,6 +253,9 @@ Tests must demonstrate the rejection order, not only response codes:
   before an import claim or any persistence write. The coordinator may read
   revision metadata first so a complete byte-identical reimport can retain its
   parser short-circuit;
+- duplicate successful spine aliases are read once, failed first aliases remain
+  retryable, and filtered-source extraction still consumes the aggregate work
+  budget;
 - `epub2@3.0.2` parses the existing synthetic fixture with overridden
   `adm-zip@0.6.0`;
 - valid synthetic import, deterministic reuse, provenance, merge/split, and

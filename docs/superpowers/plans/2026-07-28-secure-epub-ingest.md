@@ -433,6 +433,10 @@ assert that it propagates rather than silently skipping the item. Coordinator
 coverage must assert that a new or incomplete revision performs no claim or
 persistence write after a parser-limit failure; an initial revision metadata
 read remains allowed so complete reimports retain their parser short-circuit.
+Add regressions showing that a successfully read duplicate manifest/href is not
+read twice, a failed first alias does not suppress a later readable alias,
+filtered units consume the incremental extraction budget, and chapter limits
+count parts created by long-chapter splitting.
 
 - [ ] **Step 2: Run parser-limit tests to verify RED**
 
@@ -480,6 +484,12 @@ the limits into extraction/materialization. Check spine count before the loop,
 source paragraph counts and paragraph bytes after HTML summarization, and final
 chapter/paragraph/text totals before returning. In the per-spine catch, rethrow
 `EpubParseLimitError`; continue skipping only genuinely unreadable items.
+Before `getChapter`, skip manifest/href keys that already produced a successful
+source unit, but do not mark failed reads. Incrementally enforce aggregate
+paragraph and UTF-8 text budgets across unique successful source units before
+retention, even when classification later filters a unit; retain the final
+post-normalization checks after dedupe, merge, and split. Do not retain raw HTML
+or classification-only body text in the source-unit collection.
 
 - [ ] **Step 4: Verify parser GREEN and identity invariance**
 
