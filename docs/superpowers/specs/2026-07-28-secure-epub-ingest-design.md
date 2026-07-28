@@ -185,6 +185,7 @@ rate limiting and slow-request protection.
 
 | Status | Code | Meaning |
 | ---: | --- | --- |
+| 400 | `invalid_content_length` | Present `Content-Length` is not a non-negative decimal integer |
 | 400 | `malformed_multipart` | Bounded body is not valid multipart data |
 | 400 | `missing_file` | `file` is absent or not a `File` |
 | 401 | `unauthorized` | Bearer credential missing or mismatched |
@@ -243,10 +244,12 @@ LLM credentials, commercial EPUBs, or participant data.
 ## Branch and Rollout
 
 This branch must stack on PR #6 because `main` does not yet contain the canonical
-coordinator or route. If PR #6 merges before completion, the final PR can target
-`main` cleanly. Otherwise the PR dependency must be explicit and the base should
-be retargeted to `main` only after PR #6 merges; duplicating its 26 commits in a
-review diff is not acceptable.
+coordinator or route. If PR #6 merges before publication, replay only this
+branch's new commits onto the resulting `main` and open the requested clean
+`main` PR. If PR #6 remains open, push this branch but stop before creating a PR:
+report the dependency and request that PR #6 be merged. Opening either a
+non-`main` PR or a `main` review containing its 26 unrelated commits would
+violate the requested workflow or produce an unusable review diff.
 
 No deployment is performed. Production must not expose the route until the
 admin token, HTTPS, host-level request/rate limits, and protected researcher UI
