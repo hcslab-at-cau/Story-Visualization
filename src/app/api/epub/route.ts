@@ -11,7 +11,7 @@ import {
 } from "@/lib/corpus-import"
 import { validateBookId } from "@/lib/corpus-identity"
 import { parseFirestoreDataSource } from "@/lib/data-source"
-import { EpubParseLimitError, parseEpub } from "@/lib/epub"
+import { EpubParseError, EpubParseLimitError, parseEpub } from "@/lib/epub"
 import { chapterMetaFromRawChapters } from "@/lib/firestore"
 import {
   authorizeEpubIngestRequest,
@@ -220,6 +220,12 @@ export function createEpubPostHandler(
             code: "epub_resource_limit",
           },
           { status: 413 },
+        )
+      }
+      if (error instanceof EpubParseError) {
+        return Response.json(
+          { error: error.message, code: "invalid_epub" },
+          { status: 422 },
         )
       }
       if (error instanceof CorpusImportError) {

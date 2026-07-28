@@ -5,8 +5,8 @@
  * Uses: epub2 (EPub), cheerio (BeautifulSoup equivalent)
  */
 
-import { createHash, randomUUID } from "crypto"
-import { EPub } from "epub2"
+import { createHash } from "crypto"
+import { posix as pathPosix } from "node:path"
 import * as cheerio from "cheerio"
 import {
   displayChapterTitle,
@@ -15,6 +15,13 @@ import {
   normalizeChapterTitle,
 } from "@/lib/chapter-normalization"
 import { deriveParagraphId, deriveSourceItemId } from "@/lib/corpus-identity"
+import {
+  EpubParserWorkerError,
+  EpubParserWorkerLimitError,
+  openIsolatedEpubReader,
+  type EpubParserWorkerOptions,
+  type EpubReaderDocument,
+} from "@/lib/server/epub-parser-worker"
 import type { RawChapter, Paragraph, ChapterSource } from "@/types/schema"
 
 const BLOCK_TAGS = [
@@ -74,6 +81,9 @@ export interface ParseEpubContext {
 
 export interface EpubParseLimits {
   maxSpineItems: number
+  maxManifestItems: number
+  maxTocItems: number
+  maxArchiveEntries: number
   maxParagraphsPerSourceItem: number
   maxChapters: number
   maxParagraphs: number
@@ -83,6 +93,9 @@ export interface EpubParseLimits {
 
 export const DEFAULT_EPUB_PARSE_LIMITS: EpubParseLimits = {
   maxSpineItems: 1_000,
+  maxManifestItems: 5_000,
+  maxTocItems: 5_000,
+  maxArchiveEntries: 5_000,
   maxParagraphsPerSourceItem: 10_000,
   maxChapters: 1_500,
   maxParagraphs: 100_000,
@@ -95,6 +108,20 @@ export class EpubParseLimitError extends Error {
     super("EPUB content exceeds the configured resource budget")
     this.name = "EpubParseLimitError"
   }
+}
+
+export class EpubParseError extends Error {
+  constructor() {
+    super("Invalid EPUB archive")
+    this.name = "EpubParseError"
+  }
+}
+
+export type EpubParseIsolationOptions = EpubParserWorkerOptions
+
+export interface EpubDocumentReader extends EpubReaderDocument {
+  getChapter(chapterId: string): Promise<string>
+  assertHealthy?(): void
 }
 
 interface RawChapterCandidate {
@@ -310,6 +337,8 @@ function splitLongChapter(cand: RawChapterCandidate): RawChapterCandidate[] {
 // Some EPUB generators accidentally duplicate spine entries that point to the
 // same manifest item/href. Keep the first readable copy so uploads do not create
 // duplicate chapters for the same source document.
+const MAX_SOURCE_READ_ATTEMPTS_PER_KEY = 2
+
 function sourceUnitDedupeKeys(
   manifestId: string | undefined,
   href: string | undefined,
@@ -318,6 +347,29 @@ function sourceUnitDedupeKeys(
     manifestId ? `id:${manifestId}` : undefined,
     href ? `href:${normalizeHrefWithoutFragment(href)}` : undefined,
   ].filter((value): value is string => Boolean(value))
+}
+
+function sourceReadAttemptKeys(
+  manifestId: string | undefined,
+  href: string | undefined,
+  archiveEntryNames: ReadonlySet<string>,
+): string[] {
+  const keys = new Set(sourceUnitDedupeKeys(manifestId, href))
+  if (!href) return [...keys]
+
+  const archiveCandidates = [href]
+  try {
+    archiveCandidates.push(decodeURIComponent(href))
+  } catch {
+    // epub2 may still read the raw path; its decode fallback remains isolated.
+  }
+
+  for (const candidate of archiveCandidates) {
+    const normalized = pathPosix.normalize(candidate)
+    if (archiveEntryNames.has(normalized)) keys.add(`archive:${normalized}`)
+  }
+
+  return [...keys]
 }
 
 function dedupeSourceUnits(units: EpubSourceUnit[]): EpubSourceUnit[] {
@@ -370,24 +422,87 @@ export async function parseEpub(
   buffer: Buffer,
   docIdOrContext: string | ParseEpubContext,
   limits: EpubParseLimits = DEFAULT_EPUB_PARSE_LIMITS,
+  isolationOptions: EpubParseIsolationOptions = {},
 ): Promise<RawChapter[]> {
-  // epub2 expects a file path; write to a temp location
-  const { tmpdir } = await import("os")
-  const { join } = await import("path")
-  const { writeFileSync, unlinkSync } = await import("fs")
   const context = normalizeParseEpubContext(docIdOrContext)
-
-  const tmpPath = join(tmpdir(), `epub-${randomUUID()}.epub`)
-  writeFileSync(tmpPath, buffer)
+  let reader: Awaited<ReturnType<typeof openIsolatedEpubReader>> | undefined
+  let result: RawChapter[] | undefined
+  let failure: unknown
 
   try {
-    const epub = await EPub.createAsync(tmpPath)
-    const candidates = await extractCandidates(epub, context, limits)
-    const normalized = normalizeCandidates(candidates)
-    assertFinalParseLimits(normalized, limits)
-    return materializeRawChapters(normalized, context)
-  } finally {
-    unlinkSync(tmpPath)
+    reader = await openIsolatedEpubReader(
+      buffer,
+      {
+        maxSpineItems: limits.maxSpineItems,
+        maxManifestItems: limits.maxManifestItems,
+        maxTocItems: limits.maxTocItems,
+        maxArchiveEntries: limits.maxArchiveEntries,
+      },
+      isolationOptions,
+    )
+    result = await parseEpubDocument(reader, context, limits)
+    reader.assertHealthy()
+  } catch (error) {
+    failure = error
+  }
+
+  try {
+    await reader?.close()
+  } catch (error) {
+    failure ??= error
+  }
+
+  if (failure !== undefined) {
+    if (failure instanceof EpubParseLimitError) throw failure
+    if (failure instanceof EpubParserWorkerLimitError) {
+      throw new EpubParseLimitError(failure.limit)
+    }
+    if (failure instanceof EpubParseError) throw failure
+    throw new EpubParseError()
+  }
+  if (result === undefined) throw new EpubParseError()
+  return result
+}
+
+/** @internal Test seam for normalization logic after a reader is already open. */
+export async function parseEpubDocumentForTesting(
+  reader: EpubDocumentReader,
+  docIdOrContext: string | ParseEpubContext,
+  limits: EpubParseLimits = DEFAULT_EPUB_PARSE_LIMITS,
+): Promise<RawChapter[]> {
+  const context = normalizeParseEpubContext(docIdOrContext)
+  return parseEpubDocument(reader, context, limits)
+}
+
+async function parseEpubDocument(
+  epub: EpubDocumentReader,
+  context: ParseEpubContext,
+  limits: EpubParseLimits,
+): Promise<RawChapter[]> {
+  assertDocumentMetadataLimits(epub, limits)
+  const candidates = await extractCandidates(epub, context, limits)
+  epub.assertHealthy?.()
+  const normalized = normalizeCandidates(candidates)
+  if (normalized.length === 0) throw new EpubParseError()
+  assertFinalParseLimits(normalized, limits)
+  return materializeRawChapters(normalized, context)
+}
+
+function assertDocumentMetadataLimits(
+  epub: EpubDocumentReader,
+  limits: EpubParseLimits,
+): void {
+  if (epub.spine.contents.length > limits.maxSpineItems) {
+    throw new EpubParseLimitError("spine_items")
+  }
+  if (Object.keys(epub.manifest).length > limits.maxManifestItems) {
+    throw new EpubParseLimitError("manifest_items")
+  }
+  if (epub.toc.length > limits.maxTocItems) {
+    throw new EpubParseLimitError("toc_items")
+  }
+  if (epub.archiveEntryNames.length > limits.maxArchiveEntries) {
+    throw new EpubParseLimitError("archive_entries")
   }
 }
 
@@ -415,17 +530,15 @@ function materializeRawChapters(
 }
 
 async function extractCandidates(
-  epub: EPub,
+  epub: EpubDocumentReader,
   context: ParseEpubContext,
   limits: EpubParseLimits,
 ): Promise<RawChapterCandidate[]> {
-  if (epub.spine.contents.length > limits.maxSpineItems) {
-    throw new EpubParseLimitError("spine_items")
-  }
-
   const tocTitleByKey = buildTocTitleMap(epub)
   const sourceUnits: EpubSourceUnit[] = []
   const successfulSourceKeys = new Set<string>()
+  const sourceReadAttemptsByKey = new Map<string, number>()
+  const archiveEntryNames = new Set(epub.archiveEntryNames)
   let extractedParagraphCount = 0
   let extractedTextBytes = 0
 
@@ -435,15 +548,17 @@ async function extractCandidates(
     const item = epub.manifest[id] as { id?: string; title?: string; href?: string; mediaType?: string; "media-type"?: string } | undefined
     const href = item?.href ?? spineItem.href
     const originalTitle = item?.title ?? spineItem.title ?? id
-    const sourceKeys = sourceUnitDedupeKeys(id, href)
+    const sourceKeys = sourceReadAttemptKeys(id, href, archiveEntryNames)
     if (sourceKeys.some((key) => successfulSourceKeys.has(key))) continue
+    if (sourceKeys.some((key) => (
+      sourceReadAttemptsByKey.get(key) ?? 0
+    ) >= MAX_SOURCE_READ_ATTEMPTS_PER_KEY)) continue
+    for (const key of sourceKeys) {
+      sourceReadAttemptsByKey.set(key, (sourceReadAttemptsByKey.get(key) ?? 0) + 1)
+    }
 
     try {
-      const html = await new Promise<string>((resolve, reject) =>
-        epub.getChapter(id, (err: Error, text?: string) =>
-          err ? reject(err) : resolve(text ?? ""),
-        ),
-      )
+      const html = await epub.getChapter(id)
       const htmlSummary = summarizeHtml(html)
       if (htmlSummary.paragraphs.length > limits.maxParagraphsPerSourceItem) {
         throw new EpubParseLimitError("paragraphs_per_source_item")
@@ -512,6 +627,7 @@ async function extractCandidates(
       for (const key of sourceKeys) successfulSourceKeys.add(key)
     } catch (error) {
       if (error instanceof EpubParseLimitError) throw error
+      if (error instanceof EpubParserWorkerError) throw error
       // skip unreadable items
     }
   }
@@ -531,7 +647,7 @@ async function extractCandidates(
   )
 }
 
-function buildTocTitleMap(epub: EPub): Map<string, string> {
+function buildTocTitleMap(epub: EpubDocumentReader): Map<string, string> {
   const map = new Map<string, string>()
   const tocItems = epub.toc as Array<{ id?: string; title?: string; href?: string }> | undefined
   for (const item of tocItems ?? []) {

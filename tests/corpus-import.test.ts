@@ -19,7 +19,8 @@ import {
   type FailRevisionInput,
   type PutCorpusBlobInput,
 } from "../src/lib/corpus-import.ts"
-import { EpubParseLimitError, parseEpub } from "../src/lib/epub.ts"
+import { EpubParseError, EpubParseLimitError, parseEpub } from "../src/lib/epub.ts"
+import { DEFAULT_EPUB_INGEST_POLICY, validateEpubArchive } from "../src/lib/server/epub-ingest-guard.ts"
 import type { StoredSourceFile } from "../src/lib/storage.ts"
 import type { RawChapter } from "../src/types/schema.ts"
 import { buildSyntheticEpub } from "./helpers/synthetic-epub.ts"
@@ -481,7 +482,10 @@ test("an invalid EPUB fails in the real parser before any claim or persistence w
   const blobStore = new FakeCorpusBlobStore()
   const { dependencies, state } = makeDependencies(repository, blobStore, parseEpub)
 
-  await assert.rejects(importCorpusEpub(makeInput(Buffer.from("not an epub")), dependencies))
+  await assert.rejects(
+    importCorpusEpub(makeInput(Buffer.from("not an epub")), dependencies),
+    EpubParseError,
+  )
 
   assert.equal(repository.getRevisionCalls, 1)
   assert.equal(repository.claimCalls, 0)
@@ -493,6 +497,38 @@ test("an invalid EPUB fails in the real parser before any claim or persistence w
   assert.equal(blobStore.putCalls, 0)
   assert.equal(blobStore.objects.size, 0)
 })
+
+test("a preflight-valid parser crash performs no claim or persistence write", async () => {
+  const malformed = await buildSyntheticEpub({
+    extraEntries: [{
+      path: "META-INF/container.xml",
+      content: "not xml",
+      compression: "DEFLATE",
+    }],
+  })
+  const repository = new FakeCorpusImportRepository()
+  const blobStore = new FakeCorpusBlobStore()
+  const { dependencies, state } = makeDependencies(repository, blobStore, parseEpub)
+
+  assert.doesNotThrow(() => validateEpubArchive(malformed, DEFAULT_EPUB_INGEST_POLICY))
+  await assert.rejects(
+    importCorpusEpub(makeInput(malformed), dependencies),
+    EpubParseError,
+  )
+
+  assert.equal(repository.getRevisionCalls, 1)
+  assert.equal(repository.claimCalls, 0)
+  assert.equal(repository.saveChapterCalls, 0)
+  assert.equal(repository.completeCalls, 0)
+  assert.equal(repository.failCalls, 0)
+  assert.equal(repository.workspaceCalls, 0)
+  assert.equal(repository.revisions.size, 0)
+  assert.equal(state.parserCalls, 1)
+  assert.equal(state.tokenCalls, 0)
+  assert.equal(blobStore.putCalls, 0)
+  assert.equal(blobStore.objects.size, 0)
+})
+
 
 test("a parser resource-limit failure leaves new and incomplete revisions untouched", async (t) => {
   const cases: Array<{

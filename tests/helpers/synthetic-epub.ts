@@ -10,6 +10,7 @@ export interface SyntheticEpubChapter {
   bodyParagraphs?: string[]
   headingTitle?: string
   includeInToc?: boolean
+  includeArchiveEntry?: boolean
 }
 
 export interface SyntheticEpubExtraEntry {
@@ -168,6 +169,7 @@ export async function buildSyntheticEpub(options: SyntheticEpubOptions = {}): Pr
   zip.file("OEBPS/toc.ncx", buildToc(chapters))
 
   for (const chapter of chapters) {
+    if (chapter.includeArchiveEntry === false) continue
     zip.file(`OEBPS/${chapter.href}`, buildChapterDocument(chapter, editionLabel))
   }
 

@@ -9,7 +9,7 @@ import type {
   CorpusImportInput,
   CorpusImportResult,
 } from "../src/lib/corpus-import.ts"
-import { EpubParseLimitError } from "../src/lib/epub.ts"
+import { EpubParseError, EpubParseLimitError } from "../src/lib/epub.ts"
 import {
   createEpubPostHandler,
   maxDuration,
@@ -124,7 +124,10 @@ function makeGate(state: GateState): { tryAcquire: () => (() => void) | undefine
 
 type HandlerOverrides = NonNullable<Parameters<typeof createEpubPostHandler>[0]>
 
-function makeHandler(overrides: HandlerOverrides = {}) {
+function makeHandler(
+  overrides: HandlerOverrides = {},
+  options: { useDefaultMultipart?: boolean } = {},
+) {
   const counters = {
     importDependencies: 0,
     parseMultipart: 0,
@@ -133,18 +136,23 @@ function makeHandler(overrides: HandlerOverrides = {}) {
     importCorpus: 0,
   }
 
+  const multipartOverride: HandlerOverrides = options.useDefaultMultipart
+    ? {}
+    : {
+        parseMultipart: async (body: Uint8Array, request: Request) => {
+          counters.parseMultipart += 1
+          return new Request(request.url, {
+            method: "POST",
+            headers: { "content-type": request.headers.get("content-type") ?? "" },
+            body: body as BodyInit,
+          }).formData()
+        },
+      }
   const handler = createEpubPostHandler({
     runtimeConfig: () => ({ production: true, adminToken: ADMIN_TOKEN }),
     policy: SMALL_POLICY,
     gate: makeGate({ active: false, acquired: 0, released: 0 }) as HandlerOverrides["gate"],
-    parseMultipart: async (body: Uint8Array, request: Request) => {
-      counters.parseMultipart += 1
-      return new Request(request.url, {
-        method: "POST",
-        headers: { "content-type": request.headers.get("content-type") ?? "" },
-        body: body as BodyInit,
-      }).formData()
-    },
+    ...multipartOverride,
     readFileBytes: async (file: File) => {
       counters.readFileBytes += 1
       return Buffer.from(await file.arrayBuffer())
@@ -345,6 +353,30 @@ test("malformed multipart is mapped before read/copy/archive/dependency init", a
   assert.equal(counters.importDependencies, 0)
 })
 
+test("default multipart parsing accepts FormData and rejects malformed bytes", async () => {
+  const { handler, counters } = makeHandler({}, { useDefaultMultipart: true })
+  const form = new FormData()
+  form.set("file", new File(["content"], "novel.epub", {
+    type: "application/epub+zip",
+  }))
+
+  const accepted = await handler(formRequest(form))
+  assert.equal(accepted.status, 200)
+  assert.equal(counters.importCorpus, 1)
+
+  const malformed = streamRequest(
+    makeStream([new TextEncoder().encode("not multipart")], { count: 0 }),
+    "multipart/form-data; boundary=broken-boundary",
+  )
+  const rejected = await handler(malformed)
+  assert.equal(rejected.status, 400)
+  assert.deepEqual(await rejected.json(), {
+    error: "Malformed multipart form data",
+    code: "malformed_multipart",
+  })
+  assert.equal(counters.importCorpus, 1)
+})
+
 test("missing or non-File upload returns missing_file", async () => {
   const { handler, counters } = makeHandler({
     runtimeConfig: () => ({ production: true, adminToken: ADMIN_TOKEN }),
@@ -454,6 +486,28 @@ test("EpubParseLimitError maps to 413 epub_resource_limit", async () => {
   assert.deepEqual(await response.json(), {
     error: "EPUB content exceeds the configured resource budget",
     code: "epub_resource_limit",
+  })
+  assert.equal(counters.importCorpus, 1)
+})
+
+test("EpubParseError maps to 422 invalid_epub", async () => {
+  const { handler, counters } = makeHandler({
+    runtimeConfig: () => ({ production: true, adminToken: ADMIN_TOKEN }),
+    importCorpus: async () => {
+      counters.importCorpus += 1
+      throw new EpubParseError()
+    },
+  })
+  const form = new FormData()
+  form.set("file", new File(["content"], "novel.epub", {
+    type: "application/epub+zip",
+  }))
+
+  const response = await handler(formRequest(form, ADMIN_TOKEN))
+  assert.equal(response.status, 422)
+  assert.deepEqual(await response.json(), {
+    error: "Invalid EPUB archive",
+    code: "invalid_epub",
   })
   assert.equal(counters.importCorpus, 1)
 })

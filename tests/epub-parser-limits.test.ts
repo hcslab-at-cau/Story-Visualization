@@ -1,12 +1,14 @@
 import assert from "node:assert/strict"
 import test from "node:test"
+import AdmZip from "adm-zip"
 import { EPub } from "epub2"
 import {
   DEFAULT_EPUB_PARSE_LIMITS,
+  EpubParseError,
   EpubParseLimitError,
-  parseEpub,
   type EpubParseLimits,
 } from "../src/lib/epub.ts"
+import { parseEpubInProcessForTesting as parseEpub } from "./helpers/in-process-epub-parser.ts"
 import { buildSyntheticEpub } from "./helpers/synthetic-epub.ts"
 
 const LIMIT_ERROR_MESSAGE = "EPUB content exceeds the configured resource budget"
@@ -251,6 +253,80 @@ test("parseEpub retries a duplicate alias when its first source read is unreadab
   assert.ok(parsed?.[0]?.paragraphs.some((paragraph) => paragraph.text === body.trim()))
 })
 
+test("parseEpub caps repeated unreadable aliases at one follow-up attempt", async () => {
+  const repeatedAliases = 1_000
+  const buffer = await buildSyntheticEpub({
+    chapters: [{
+      manifestId: "unreadable-alias",
+      href: "Text/unreadable-alias.xhtml",
+      title: "Unreadable Alias",
+      bodyParagraphs: ["This synthetic source is replaced by a forced read failure."],
+    }],
+    spineIdRefs: Array.from({ length: repeatedAliases }, () => "unreadable-alias"),
+  })
+  const originalGetChapter = EPub.prototype.getChapter
+  let getChapterCalls = 0
+  EPub.prototype.getChapter = function (
+    _chapterId: string,
+    callback: (error: Error, text?: string) => void,
+  ): void {
+    getChapterCalls += 1
+    callback(new Error("synthetic persistent read failure"))
+  }
+
+  try {
+    await assert.rejects(
+      parseEpub(buffer, "doc-unreadable-alias", parseLimits({
+        maxSpineItems: repeatedAliases,
+      })),
+      EpubParseError,
+    )
+  } finally {
+    EPub.prototype.getChapter = originalGetChapter
+  }
+
+  assert.equal(getChapterCalls, 2)
+})
+
+test("parseEpub caps normalized and percent-decoded aliases of one archive entry", async () => {
+  const repeatedAliases = 1_000
+  const chapters = Array.from({ length: repeatedAliases }, (_, index) => ({
+    manifestId: `archive-alias-${index}`,
+    href: index === 0
+      ? "Text/shared.xhtml"
+      : index === 1
+        ? "Text/%73hared.xhtml"
+        : `Text/alias-${index}/../shared.xhtml`,
+    title: `Archive Alias ${index}`,
+    bodyParagraphs: ["This synthetic source is replaced by a forced read failure."],
+    includeInToc: false,
+    includeArchiveEntry: index === 0,
+  }))
+  const buffer = await buildSyntheticEpub({ chapters })
+  const originalGetChapter = EPub.prototype.getChapter
+  let getChapterCalls = 0
+  EPub.prototype.getChapter = function (
+    _chapterId: string,
+    callback: (error: Error, text?: string) => void,
+  ): void {
+    getChapterCalls += 1
+    callback(new Error("synthetic persistent archive alias failure"))
+  }
+
+  try {
+    await assert.rejects(
+      parseEpub(buffer, "doc-archive-alias", parseLimits({
+        maxSpineItems: repeatedAliases,
+      })),
+      EpubParseError,
+    )
+  } finally {
+    EPub.prototype.getChapter = originalGetChapter
+  }
+
+  assert.equal(getChapterCalls, 2)
+})
+
 test("parseEpub applies the chapter limit after splitting one oversized source", async () => {
   const oversizedParagraphs = Array.from(
     { length: 45 },
@@ -292,9 +368,13 @@ test("parseEpub accepts exact limits without changing normalized output", async 
   const baseline = await parseEpub(buffer, "doc-exact-limits")
   const paragraphs = baseline.flatMap((chapter) => chapter.paragraphs)
   const paragraphBytes = paragraphs.map((paragraph) => Buffer.byteLength(paragraph.text, "utf8"))
+  const archiveEntryCount = new AdmZip(buffer).getEntries().length
 
   const parsedAtLimits = await parseEpub(buffer, "doc-exact-limits", {
     maxSpineItems: 2,
+    maxManifestItems: 3,
+    maxTocItems: 2,
+    maxArchiveEntries: archiveEntryCount,
     maxParagraphsPerSourceItem: Math.max(...baseline.map((chapter) => chapter.paragraphs.length)),
     maxChapters: baseline.length,
     maxParagraphs: paragraphs.length,
