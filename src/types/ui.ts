@@ -11,6 +11,8 @@ export interface ChapterMeta {
 export interface DocumentMeta {
   docId: string
   title: string
+  bookId?: string
+  corpusRevisionId?: string
   createdAt?: unknown
   sourceFile?: {
     bucket: string

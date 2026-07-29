@@ -9,10 +9,13 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "test": "node scripts/run-tests.mjs",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@types/cheerio": "^0.22.35",
+    "adm-zip": "0.6.0",
     "cheerio": "^1.2.0",
     "epub2": "^3.0.2",
     "firebase": "^12.11.0",
@@ -31,7 +34,14 @@
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.2.2",
+    "jszip": "3.10.1",
     "tailwindcss": "^4",
+    "tsx": "4.22.3",
     "typescript": "^5"
+  },
+  "overrides": {
+    "epub2": {
+      "adm-zip": "0.6.0"
+    }
   }
 }

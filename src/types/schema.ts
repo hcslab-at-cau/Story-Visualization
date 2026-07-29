@@ -65,6 +65,10 @@ export interface Paragraph {
   start: number;
   end: number;
   text: string;
+  paragraph_id?: string;
+  source_item_id?: string;
+  source_paragraph_ordinal?: number;
+  global_ordinal?: number;
 }
 
 export interface ChapterSource {
@@ -77,10 +81,13 @@ export interface ChapterSource {
   classification?: string;
   classification_reason?: string;
   source_unit_ids?: string[];
+  source_item_ids?: string[];
 }
 
 export interface RawChapter {
   doc_id: string;
+  book_id?: string;
+  corpus_revision_id?: string;
   chapter_id: string;
   title: string;
   source?: ChapterSource;

@@ -43,6 +43,10 @@ NEXT_PUBLIC_FIREBASE_APP_ID=
 
 # OpenRouter
 OPENROUTER_API_KEY=
+
+# POST /api/epub 전용 서버 측 관리자 자격 증명
+# 32 random bytes 이상을 사용하고 NEXT_PUBLIC_* 변수로 노출하지 마세요.
+EPUB_INGEST_ADMIN_TOKEN=
 ```
 
 > `NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET`가 비어 있으면 코드 기본 버킷 값으로 동작할 수 있지만, 명시 설정을 권장합니다.
@@ -55,6 +59,19 @@ npm run dev
 ```
 
 브라우저에서 `http://localhost:3000`을 열어 확인합니다.
+
+### 보호된 EPUB 업로드
+
+프로덕션의 `POST /api/epub`은 `EPUB_INGEST_ADMIN_TOKEN`이 없거나 32 UTF-8 byte보다 짧으면 `503 ingest_not_configured`로 닫힌 상태를 유지합니다. 토큰이 설정된 경우 `Authorization: Bearer <token>`이 필요합니다. 현재 브라우저 업로더는 서버 비밀값을 번들에 포함하지 않으므로, 프로덕션에서는 인증된 연구자 UI나 신뢰할 수 있는 서버 프록시가 이 헤더를 추가해야 합니다.
+
+PowerShell에서는 비밀값을 명령 기록에 직접 쓰지 않고 환경 변수에서 읽어 호출할 수 있습니다.
+
+```powershell
+$headers = @{ Authorization = "Bearer $env:EPUB_INGEST_ADMIN_TOKEN" }
+Invoke-RestMethod -Method Post -Uri http://localhost:3000/api/epub -Headers $headers -Form @{ file = Get-Item .\book.epub }
+```
+
+`npm run dev`에서 토큰을 설정하지 않은 경우에만 기존 로컬 업로드 흐름을 위해 인증을 생략합니다. 이는 개발 편의 동작이며 배포 가능한 보안 설정이 아닙니다. 검증된 EPUB은 90초 제한의 격리된 parser worker에서 처리되며 worker crash·비정상 종료·timeout은 `422 invalid_epub`으로 닫힙니다. 프로덕션 노출 전에는 HTTPS, 호스트 수준의 원시 요청 크기·요청률 제한, 느린 클라이언트 타임아웃도 함께 구성해야 합니다.
 
 ## 파이프라인 스테이지
 

@@ -6,7 +6,7 @@
  */
 
 import { createHash } from "crypto"
-import { EPub } from "epub2"
+import { posix as pathPosix } from "node:path"
 import * as cheerio from "cheerio"
 import {
   displayChapterTitle,
@@ -14,6 +14,15 @@ import {
   isGenericChapterTitle,
   normalizeChapterTitle,
 } from "@/lib/chapter-normalization"
+import { deriveParagraphId, deriveSourceItemId } from "@/lib/corpus-identity"
+import {
+  EpubParserWorkerError,
+  EpubParserWorkerInternalError,
+  EpubParserWorkerLimitError,
+  openIsolatedEpubReader,
+  type EpubParserWorkerOptions,
+  type EpubReaderDocument,
+} from "@/lib/server/epub-parser-worker"
 import type { RawChapter, Paragraph, ChapterSource } from "@/types/schema"
 
 const BLOCK_TAGS = [
@@ -59,13 +68,78 @@ function htmlToParagraphs(html: string): string[] {
 // Internal candidate type
 // ---------------------------------------------------------------------------
 
+interface SourceParagraphCandidate {
+  text: string
+  sourceItemId?: string
+  sourceParagraphOrdinal?: number
+}
+
+export interface ParseEpubContext {
+  docId: string
+  bookId?: string
+  corpusRevisionId?: string
+}
+
+export interface EpubParseLimits {
+  maxSpineItems: number
+  maxManifestItems: number
+  maxTocItems: number
+  maxArchiveEntries: number
+  maxParagraphsPerSourceItem: number
+  maxChapters: number
+  maxParagraphs: number
+  maxParagraphBytes: number
+  maxTextBytes: number
+}
+
+export const DEFAULT_EPUB_PARSE_LIMITS: EpubParseLimits = {
+  maxSpineItems: 1_000,
+  maxManifestItems: 5_000,
+  maxTocItems: 5_000,
+  maxArchiveEntries: 5_000,
+  maxParagraphsPerSourceItem: 10_000,
+  maxChapters: 1_500,
+  maxParagraphs: 100_000,
+  maxParagraphBytes: 1024 * 1024,
+  maxTextBytes: 64 * 1024 * 1024,
+}
+
+export class EpubParseLimitError extends Error {
+  constructor(public readonly limit: string) {
+    super("EPUB content exceeds the configured resource budget")
+    this.name = "EpubParseLimitError"
+  }
+}
+
+export class EpubParseError extends Error {
+  constructor() {
+    super("Invalid EPUB archive")
+    this.name = "EpubParseError"
+  }
+}
+
+export class EpubParseInternalError extends Error {
+  constructor() {
+    super("EPUB parser failed")
+    this.name = "EpubParseInternalError"
+  }
+}
+
+export type EpubParseIsolationOptions = EpubParserWorkerOptions
+
+export interface EpubDocumentReader extends EpubReaderDocument {
+  getChapter(chapterId: string): Promise<string>
+  assertHealthy?(): void
+}
+
 interface RawChapterCandidate {
   title: string
-  paragraphs: string[]
+  paragraphs: SourceParagraphCandidate[]
   textLength: number
   sourceType: string
   hrefs: string[]
   sourceUnitIds: string[]
+  sourceItemIds: string[]
   manifestId?: string
   originalTitle?: string
   tocTitle?: string
@@ -83,14 +157,17 @@ interface EpubSourceUnit {
   tocTitle?: string
   headingTitle?: string
   selectedTitle: string
-  html: string
-  paragraphs: string[]
+  paragraphs: SourceParagraphCandidate[]
   textLength: number
+  sourceItemId?: string
+  classification: SourceUnitClassification
+}
+
+type ClassifiableSourceUnit = Omit<EpubSourceUnit, "classification"> & {
   linkTextLength: number
   imageCount: number
   classHints: string[]
   bodyText: string
-  classification: SourceUnitClassification
 }
 
 interface SourceUnitClassification {
@@ -98,17 +175,59 @@ interface SourceUnitClassification {
   reason: string
 }
 
+function uniqueStrings(values: Array<string | undefined>): string[] {
+  return Array.from(new Set(values.filter((value): value is string => Boolean(value))))
+}
+
+function candidateTexts(candidate: RawChapterCandidate): string[] {
+  return candidate.paragraphs.map((paragraph) => paragraph.text)
+}
+
+function sourceItemIdsFromParagraphs(paragraphs: SourceParagraphCandidate[]): string[] {
+  return uniqueStrings(paragraphs.map((paragraph) => paragraph.sourceItemId))
+}
+
 function candidateToRawChapter(
   candidate: RawChapterCandidate,
-  docId: string,
+  context: ParseEpubContext,
   chapterId: string,
-): RawChapter {
+  startingGlobalOrdinal: number,
+): { chapter: RawChapter; nextGlobalOrdinal: number } {
   const paras: Paragraph[] = []
   let pos = 0
+  let nextGlobalOrdinal = startingGlobalOrdinal
+
   for (let i = 0; i < candidate.paragraphs.length; i++) {
-    const text = candidate.paragraphs[i]
-    paras.push({ pid: i, start: pos, end: pos + text.length, text })
+    const sourceParagraph = candidate.paragraphs[i]
+    const text = sourceParagraph.text
+    const paragraph: Paragraph = {
+      pid: i,
+      start: pos,
+      end: pos + text.length,
+      text,
+    }
+
+    if (context.corpusRevisionId) paragraph.global_ordinal = nextGlobalOrdinal
+
+    if (sourceParagraph.sourceItemId) paragraph.source_item_id = sourceParagraph.sourceItemId
+    if (sourceParagraph.sourceParagraphOrdinal !== undefined) {
+      paragraph.source_paragraph_ordinal = sourceParagraph.sourceParagraphOrdinal
+    }
+    if (
+      context.corpusRevisionId &&
+      sourceParagraph.sourceItemId &&
+      sourceParagraph.sourceParagraphOrdinal !== undefined
+    ) {
+      paragraph.paragraph_id = deriveParagraphId(
+        context.corpusRevisionId,
+        sourceParagraph.sourceItemId,
+        sourceParagraph.sourceParagraphOrdinal,
+      )
+    }
+
+    paras.push(paragraph)
     pos += text.length + 1
+    nextGlobalOrdinal += 1
   }
   const source: ChapterSource = {
     type: candidate.sourceType,
@@ -121,13 +240,23 @@ function candidateToRawChapter(
   if (candidate.classification) source.classification = candidate.classification
   if (candidate.classificationReason) source.classification_reason = candidate.classificationReason
   if (candidate.sourceUnitIds.length > 0) source.source_unit_ids = candidate.sourceUnitIds
-  return {
-    doc_id: docId,
+  const sourceItemIds = sourceItemIdsFromParagraphs(candidate.paragraphs)
+  if (sourceItemIds.length > 0) source.source_item_ids = sourceItemIds
+
+  const chapter: RawChapter = {
+    doc_id: context.docId,
     chapter_id: chapterId,
     title: candidate.title,
     source,
-    text: candidate.paragraphs.join(" "),
+    text: candidateTexts(candidate).join(" "),
     paragraphs: paras,
+  }
+  if (context.bookId) chapter.book_id = context.bookId
+  if (context.corpusRevisionId) chapter.corpus_revision_id = context.corpusRevisionId
+
+  return {
+    chapter,
+    nextGlobalOrdinal,
   }
 }
 
@@ -149,12 +278,14 @@ function mergeShortChapters(
       prev.textLength += cand.textLength
       prev.hrefs.push(...cand.hrefs)
       prev.sourceUnitIds.push(...cand.sourceUnitIds)
+      prev.sourceItemIds.push(...cand.sourceItemIds)
     } else {
       merged.push({
         ...cand,
-        paragraphs: [...cand.paragraphs],
+        paragraphs: cand.paragraphs.map((paragraph) => ({ ...paragraph })),
         hrefs: [...cand.hrefs],
         sourceUnitIds: [...cand.sourceUnitIds],
+        sourceItemIds: [...cand.sourceItemIds],
       })
     }
   }
@@ -163,12 +294,12 @@ function mergeShortChapters(
 
 function splitLongChapter(cand: RawChapterCandidate): RawChapterCandidate[] {
   const result: RawChapterCandidate[] = []
-  let current: string[] = []
+  let current: SourceParagraphCandidate[] = []
   let currentLen = 0
   let partIdx = 1
 
   for (const para of cand.paragraphs) {
-    if (currentLen + para.length > MAX_CHARS && current.length > 0) {
+    if (currentLen + para.text.length > MAX_CHARS && current.length > 0) {
       result.push({
         title: `${cand.title} (${partIdx})`,
         paragraphs: current,
@@ -176,6 +307,7 @@ function splitLongChapter(cand: RawChapterCandidate): RawChapterCandidate[] {
         sourceType: cand.sourceType,
         hrefs: cand.hrefs,
         sourceUnitIds: cand.sourceUnitIds,
+        sourceItemIds: sourceItemIdsFromParagraphs(current),
         manifestId: cand.manifestId,
         originalTitle: cand.originalTitle,
         tocTitle: cand.tocTitle,
@@ -187,8 +319,8 @@ function splitLongChapter(cand: RawChapterCandidate): RawChapterCandidate[] {
       currentLen = 0
       partIdx++
     }
-    current.push(para)
-    currentLen += para.length
+    current.push({ ...para })
+    currentLen += para.text.length
   }
   if (current.length > 0) {
     result.push({
@@ -198,6 +330,7 @@ function splitLongChapter(cand: RawChapterCandidate): RawChapterCandidate[] {
       sourceType: cand.sourceType,
       hrefs: cand.hrefs,
       sourceUnitIds: cand.sourceUnitIds,
+      sourceItemIds: sourceItemIdsFromParagraphs(current),
       manifestId: cand.manifestId,
       originalTitle: cand.originalTitle,
       tocTitle: cand.tocTitle,
@@ -212,15 +345,47 @@ function splitLongChapter(cand: RawChapterCandidate): RawChapterCandidate[] {
 // Some EPUB generators accidentally duplicate spine entries that point to the
 // same manifest item/href. Keep the first readable copy so uploads do not create
 // duplicate chapters for the same source document.
+const MAX_SOURCE_READ_ATTEMPTS_PER_KEY = 2
+
+function sourceUnitDedupeKeys(
+  manifestId: string | undefined,
+  href: string | undefined,
+): string[] {
+  return [
+    manifestId ? `id:${manifestId}` : undefined,
+    href ? `href:${normalizeHrefWithoutFragment(href)}` : undefined,
+  ].filter((value): value is string => Boolean(value))
+}
+
+function sourceReadAttemptKeys(
+  manifestId: string | undefined,
+  href: string | undefined,
+  archiveEntryNames: ReadonlySet<string>,
+): string[] {
+  const keys = new Set(sourceUnitDedupeKeys(manifestId, href))
+  if (!href) return [...keys]
+
+  const archiveCandidates = [href]
+  try {
+    archiveCandidates.push(decodeURIComponent(href))
+  } catch {
+    // epub2 may still read the raw path; its decode fallback remains isolated.
+  }
+
+  for (const candidate of archiveCandidates) {
+    const normalized = pathPosix.normalize(candidate)
+    if (archiveEntryNames.has(normalized)) keys.add(`archive:${normalized}`)
+  }
+
+  return [...keys]
+}
+
 function dedupeSourceUnits(units: EpubSourceUnit[]): EpubSourceUnit[] {
   const seen = new Set<string>()
   const result: EpubSourceUnit[] = []
 
   for (const unit of units) {
-    const keys = [
-      unit.manifestId ? `id:${unit.manifestId}` : undefined,
-      unit.href ? `href:${normalizeHrefWithoutFragment(unit.href)}` : undefined,
-    ].filter((value): value is string => Boolean(value))
+    const keys = sourceUnitDedupeKeys(unit.manifestId, unit.href)
 
     if (keys.some((key) => seen.has(key))) continue
     for (const key of keys) seen.add(key)
@@ -233,7 +398,7 @@ function dedupeSourceUnits(units: EpubSourceUnit[]): EpubSourceUnit[] {
 const DUPLICATE_CANDIDATE_MIN_CHARS = 400
 
 function candidateContentFingerprint(candidate: RawChapterCandidate): string | undefined {
-  const normalized = candidate.paragraphs.join("\n").replace(/\s+/g, " ").trim()
+  const normalized = candidateTexts(candidate).join("\n").replace(/\s+/g, " ").trim()
   if (normalized.length < DUPLICATE_CANDIDATE_MIN_CHARS) return undefined
   return createHash("sha256").update(normalized).digest("hex")
 }
@@ -263,45 +428,178 @@ function dedupeDuplicateCandidates(candidates: RawChapterCandidate[]): RawChapte
  */
 export async function parseEpub(
   buffer: Buffer,
-  docId: string,
+  docIdOrContext: string | ParseEpubContext,
+  limits: EpubParseLimits = DEFAULT_EPUB_PARSE_LIMITS,
+  isolationOptions: EpubParseIsolationOptions = {},
 ): Promise<RawChapter[]> {
-  // epub2 expects a file path; write to a temp location
-  const { tmpdir } = await import("os")
-  const { join } = await import("path")
-  const { writeFileSync, unlinkSync } = await import("fs")
-
-  const tmpPath = join(tmpdir(), `epub-${Date.now()}.epub`)
-  writeFileSync(tmpPath, buffer)
+  const context = normalizeParseEpubContext(docIdOrContext)
+  let reader: Awaited<ReturnType<typeof openIsolatedEpubReader>> | undefined
+  let result: RawChapter[] | undefined
+  let failure: unknown
 
   try {
-    const epub = await EPub.createAsync(tmpPath)
-    const candidates = await extractCandidates(epub)
-    const normalized = normalizeCandidates(candidates)
-    return normalized.map((c, i) =>
-      candidateToRawChapter(c, docId, `ch${String(i + 1).padStart(2, "0")}`),
+    reader = await openIsolatedEpubReader(
+      buffer,
+      {
+        maxSpineItems: limits.maxSpineItems,
+        maxManifestItems: limits.maxManifestItems,
+        maxTocItems: limits.maxTocItems,
+        maxArchiveEntries: limits.maxArchiveEntries,
+      },
+      isolationOptions,
     )
-  } finally {
-    unlinkSync(tmpPath)
+    result = await parseEpubDocument(reader, context, limits)
+    reader.assertHealthy()
+  } catch (error) {
+    failure = error
+  }
+
+  try {
+    await reader?.close()
+  } catch (error) {
+    failure = error
+  }
+
+  if (failure !== undefined) {
+    if (failure instanceof EpubParseLimitError) throw failure
+    if (failure instanceof EpubParserWorkerLimitError) {
+      throw new EpubParseLimitError(failure.limit)
+    }
+    if (
+      failure instanceof EpubParseInternalError ||
+      failure instanceof EpubParserWorkerInternalError
+    ) {
+      throw new EpubParseInternalError()
+    }
+    if (failure instanceof EpubParseError) throw failure
+    throw new EpubParseError()
+  }
+  if (result === undefined) throw new EpubParseInternalError()
+  return result
+}
+
+/** @internal Test seam for normalization logic after a reader is already open. */
+export async function parseEpubDocumentForTesting(
+  reader: EpubDocumentReader,
+  docIdOrContext: string | ParseEpubContext,
+  limits: EpubParseLimits = DEFAULT_EPUB_PARSE_LIMITS,
+): Promise<RawChapter[]> {
+  const context = normalizeParseEpubContext(docIdOrContext)
+  return parseEpubDocument(reader, context, limits)
+}
+
+async function parseEpubDocument(
+  epub: EpubDocumentReader,
+  context: ParseEpubContext,
+  limits: EpubParseLimits,
+): Promise<RawChapter[]> {
+  assertDocumentMetadataLimits(epub, limits)
+  const candidates = await extractCandidates(epub, context, limits)
+  epub.assertHealthy?.()
+  const normalized = normalizeCandidates(candidates)
+  if (normalized.length === 0) throw new EpubParseError()
+  assertFinalParseLimits(normalized, limits)
+  return materializeRawChapters(normalized, context)
+}
+
+function assertDocumentMetadataLimits(
+  epub: EpubDocumentReader,
+  limits: EpubParseLimits,
+): void {
+  if (epub.spine.contents.length > limits.maxSpineItems) {
+    throw new EpubParseLimitError("spine_items")
+  }
+  if (Object.keys(epub.manifest).length > limits.maxManifestItems) {
+    throw new EpubParseLimitError("manifest_items")
+  }
+  if (epub.toc.length > limits.maxTocItems) {
+    throw new EpubParseLimitError("toc_items")
+  }
+  if (epub.archiveEntryNames.length > limits.maxArchiveEntries) {
+    throw new EpubParseLimitError("archive_entries")
   }
 }
 
-async function extractCandidates(epub: EPub): Promise<RawChapterCandidate[]> {
+function normalizeParseEpubContext(docIdOrContext: string | ParseEpubContext): ParseEpubContext {
+  return typeof docIdOrContext === "string"
+    ? { docId: docIdOrContext }
+    : docIdOrContext
+}
+
+function materializeRawChapters(
+  candidates: RawChapterCandidate[],
+  context: ParseEpubContext,
+): RawChapter[] {
+  const chapters: RawChapter[] = []
+  let nextGlobalOrdinal = 0
+
+  for (const [index, candidate] of candidates.entries()) {
+    const chapterId = `ch${String(index + 1).padStart(2, "0")}`
+    const materialized = candidateToRawChapter(candidate, context, chapterId, nextGlobalOrdinal)
+    chapters.push(materialized.chapter)
+    nextGlobalOrdinal = materialized.nextGlobalOrdinal
+  }
+
+  return chapters
+}
+
+async function extractCandidates(
+  epub: EpubDocumentReader,
+  context: ParseEpubContext,
+  limits: EpubParseLimits,
+): Promise<RawChapterCandidate[]> {
   const tocTitleByKey = buildTocTitleMap(epub)
   const sourceUnits: EpubSourceUnit[] = []
+  const successfulSourceKeys = new Set<string>()
+  const sourceReadAttemptsByKey = new Map<string, number>()
+  const archiveEntryNames = new Set(epub.archiveEntryNames)
+  let extractedParagraphCount = 0
+  let extractedTextBytes = 0
 
   for (const [spineIndex, spineItem] of epub.spine.contents.entries()) {
     const id = spineItem.id
     if (!id) continue
+    const item = epub.manifest[id] as { id?: string; title?: string; href?: string; mediaType?: string; "media-type"?: string } | undefined
+    const href = item?.href ?? spineItem.href
+    const originalTitle = item?.title ?? spineItem.title ?? id
+    const sourceKeys = sourceReadAttemptKeys(id, href, archiveEntryNames)
+    if (sourceKeys.some((key) => successfulSourceKeys.has(key))) continue
+    if (sourceKeys.some((key) => (
+      sourceReadAttemptsByKey.get(key) ?? 0
+    ) >= MAX_SOURCE_READ_ATTEMPTS_PER_KEY)) continue
+    for (const key of sourceKeys) {
+      sourceReadAttemptsByKey.set(key, (sourceReadAttemptsByKey.get(key) ?? 0) + 1)
+    }
+
     try {
-      const html = await new Promise<string>((resolve, reject) =>
-        epub.getChapter(id, (err: Error, text?: string) =>
-          err ? reject(err) : resolve(text ?? ""),
-        ),
-      )
-      const item = epub.manifest[id] as { id?: string; title?: string; href?: string; mediaType?: string; "media-type"?: string } | undefined
-      const href = item?.href ?? spineItem.href
-      const originalTitle = item?.title ?? spineItem.title ?? id
+      const html = await epub.getChapter(id)
       const htmlSummary = summarizeHtml(html)
+      if (htmlSummary.paragraphs.length > limits.maxParagraphsPerSourceItem) {
+        throw new EpubParseLimitError("paragraphs_per_source_item")
+      }
+
+      let sourceTextBytes = 0
+      for (const paragraph of htmlSummary.paragraphs) {
+        const paragraphBytes = Buffer.byteLength(paragraph, "utf8")
+        if (paragraphBytes > limits.maxParagraphBytes) {
+          throw new EpubParseLimitError("paragraph_bytes")
+        }
+        sourceTextBytes += paragraphBytes
+      }
+
+      const nextParagraphCount = extractedParagraphCount + htmlSummary.paragraphs.length
+      if (nextParagraphCount > limits.maxParagraphs) {
+        throw new EpubParseLimitError("paragraphs")
+      }
+      const nextTextBytes = extractedTextBytes + sourceTextBytes
+      if (nextTextBytes > limits.maxTextBytes) {
+        throw new EpubParseLimitError("text_bytes")
+      }
+
+      const normalizedHref = normalizeHrefWithoutFragment(href ?? id)
+      const sourceItemId = context.corpusRevisionId
+        ? deriveSourceItemId(context.corpusRevisionId, spineIndex, id, normalizedHref)
+        : undefined
       const tocTitle = titleFromToc(tocTitleByKey, id, href)
       const selectedTitle = selectSourceUnitTitle({
         spineIndex,
@@ -310,7 +608,7 @@ async function extractCandidates(epub: EPub): Promise<RawChapterCandidate[]> {
         headingTitle: htmlSummary.headingTitle,
         paragraphs: htmlSummary.paragraphs,
       })
-      const baseUnit = {
+      const baseUnit: Omit<EpubSourceUnit, "classification"> = {
         unitId: `spine:${spineIndex}:${id}`,
         spineIndex,
         manifestId: id,
@@ -319,19 +617,32 @@ async function extractCandidates(epub: EPub): Promise<RawChapterCandidate[]> {
         tocTitle,
         headingTitle: htmlSummary.headingTitle,
         selectedTitle,
-        html,
-        paragraphs: htmlSummary.paragraphs,
+        paragraphs: htmlSummary.paragraphs.map((text, index) => ({
+          text,
+          sourceItemId,
+          sourceParagraphOrdinal: sourceItemId ? index : undefined,
+        })),
         textLength: htmlSummary.textLength,
+        sourceItemId,
+      }
+      const classification = classifySourceUnit({
+        ...baseUnit,
         linkTextLength: htmlSummary.linkTextLength,
         imageCount: htmlSummary.imageCount,
         classHints: htmlSummary.classHints,
         bodyText: htmlSummary.bodyText,
-      }
+      })
       sourceUnits.push({
         ...baseUnit,
-        classification: classifySourceUnit(baseUnit),
+        classification,
       })
-    } catch {
+      extractedParagraphCount = nextParagraphCount
+      extractedTextBytes = nextTextBytes
+      for (const key of sourceKeys) successfulSourceKeys.add(key)
+    } catch (error) {
+      if (error instanceof EpubParseLimitError) throw error
+      if (error instanceof EpubParserWorkerError) throw error
+      if (error instanceof EpubParserWorkerInternalError) throw error
       // skip unreadable items
     }
   }
@@ -351,7 +662,7 @@ async function extractCandidates(epub: EPub): Promise<RawChapterCandidate[]> {
   )
 }
 
-function buildTocTitleMap(epub: EPub): Map<string, string> {
+function buildTocTitleMap(epub: EpubDocumentReader): Map<string, string> {
   const map = new Map<string, string>()
   const tocItems = epub.toc as Array<{ id?: string; title?: string; href?: string }> | undefined
   for (const item of tocItems ?? []) {
@@ -444,7 +755,7 @@ function selectSourceUnitTitle(params: {
   return `Chapter ${params.spineIndex + 1}`
 }
 
-function classifySourceUnit(unit: Omit<EpubSourceUnit, "classification">): SourceUnitClassification {
+function classifySourceUnit(unit: ClassifiableSourceUnit): SourceUnitClassification {
   const signal = [
     unit.manifestId,
     unit.href,
@@ -455,7 +766,7 @@ function classifySourceUnit(unit: Omit<EpubSourceUnit, "classification">): Sourc
   ].join(" ").toLowerCase()
   const bodyLower = unit.bodyText.toLowerCase()
   const linkRatio = unit.textLength > 0 ? unit.linkTextLength / unit.textLength : 0
-  const hasChapterHeading = [unit.headingTitle, ...unit.paragraphs.slice(0, 3)]
+  const hasChapterHeading = [unit.headingTitle, ...unit.paragraphs.slice(0, 3).map((paragraph) => paragraph.text)]
     .some(isChapterHeadingCandidate)
 
   if (unit.textLength < 20 && unit.imageCount === 0) {
@@ -521,14 +832,20 @@ function chaptersFromSourceUnits(units: EpubSourceUnit[]): RawChapterCandidate[]
           classification_reason: unit.classification.reason,
           source_unit_ids: [unit.unitId],
         },
-        text: unit.paragraphs.join(" "),
-        paragraphs: unit.paragraphs.map((text, index) => ({ pid: index, start: 0, end: text.length, text })),
+        text: unit.paragraphs.map((paragraph) => paragraph.text).join(" "),
+        paragraphs: unit.paragraphs.map((paragraph, index) => ({
+          pid: index,
+          start: 0,
+          end: paragraph.text.length,
+          text: paragraph.text,
+        })),
       }, unit.manifestId, unit.spineIndex + 1),
       paragraphs: unit.paragraphs,
       textLength: unit.textLength,
       sourceType: "spine",
       hrefs: unit.href ? [unit.href] : [],
       sourceUnitIds: [unit.unitId],
+      sourceItemIds: unit.sourceItemId ? [unit.sourceItemId] : [],
       manifestId: unit.manifestId,
       originalTitle: unit.originalTitle,
       tocTitle: unit.tocTitle,
@@ -552,4 +869,29 @@ function normalizeCandidates(
     }
   }
   return dedupeDuplicateCandidates(split)
+}
+
+function assertFinalParseLimits(
+  candidates: RawChapterCandidate[],
+  limits: EpubParseLimits,
+): void {
+  if (candidates.length > limits.maxChapters) {
+    throw new EpubParseLimitError("chapters")
+  }
+
+  let paragraphCount = 0
+  let textBytes = 0
+  for (const candidate of candidates) {
+    paragraphCount += candidate.paragraphs.length
+    for (const paragraph of candidate.paragraphs) {
+      textBytes += Buffer.byteLength(paragraph.text, "utf8")
+    }
+  }
+
+  if (paragraphCount > limits.maxParagraphs) {
+    throw new EpubParseLimitError("paragraphs")
+  }
+  if (textBytes > limits.maxTextBytes) {
+    throw new EpubParseLimitError("text_bytes")
+  }
 }
