@@ -61,6 +61,7 @@ function documentSnapshot(epub) {
 
 function fatal() {
   parentPort.postMessage({ type: "fatal" })
+  parentPort.on("message", () => {})
 }
 
 EPub.createAsync(workerData.tempPath).then((epub) => {
@@ -168,6 +169,13 @@ export class EpubParserWorkerError extends Error {
   }
 }
 
+export class EpubParserWorkerInternalError extends Error {
+  constructor() {
+    super("EPUB parser worker failed")
+    this.name = "EpubParserWorkerInternalError"
+  }
+}
+
 export class EpubParserWorkerLimitError extends Error {
   constructor(public readonly limit: string) {
     super("EPUB content exceeds the configured resource budget")
@@ -253,16 +261,25 @@ export async function openIsolatedEpubReader(
       throw new RangeError(`EPUB parser ${name} limit must be a non-negative safe integer`)
     }
   }
-  const tempRoot = mkdtempSync(join(
-    options.tempDirectory ?? tmpdir(),
-    "story-epub-worker-",
-  ))
+  let tempRoot: string
+  try {
+    tempRoot = mkdtempSync(join(
+      options.tempDirectory ?? tmpdir(),
+      "story-epub-worker-",
+    ))
+  } catch {
+    throw new EpubParserWorkerInternalError()
+  }
   const tempPath = join(tempRoot, "book.epub")
   try {
     writeFileSync(tempPath, buffer, { flag: "wx" })
   } catch {
-    rmSync(tempRoot, { recursive: true, force: true })
-    throw new EpubParserWorkerError()
+    try {
+      rmSync(tempRoot, { recursive: true, force: true })
+    } catch {
+      // The public error remains an internal parser failure.
+    }
+    throw new EpubParserWorkerInternalError()
   }
 
   let worker: EpubParserWorkerHandle
@@ -281,12 +298,16 @@ export async function openIsolatedEpubReader(
       },
     })
   } catch {
-    rmSync(tempRoot, { recursive: true, force: true })
-    throw new EpubParserWorkerError()
+    try {
+      rmSync(tempRoot, { recursive: true, force: true })
+    } catch {
+      // The public error remains an internal parser failure.
+    }
+    throw new EpubParserWorkerInternalError()
   }
 
   let closed = false
-  let fatalError: EpubParserWorkerError | undefined
+  let fatalError: EpubParserWorkerError | EpubParserWorkerInternalError | undefined
   let nextRequestId = 1
   const pendingChapters = new Map<number, PendingChapter>()
 
@@ -297,20 +318,31 @@ export async function openIsolatedEpubReader(
     rejectReady = reject
   })
 
-  const fail = (): void => {
+  const fail = (
+    error: EpubParserWorkerError | EpubParserWorkerInternalError =
+      new EpubParserWorkerError(),
+  ): void => {
     if (fatalError) return
-    fatalError = new EpubParserWorkerError()
+    fatalError = error
     rejectReady(fatalError)
     for (const pending of pendingChapters.values()) pending.reject(fatalError)
     pendingChapters.clear()
   }
 
   const timeout = setTimeout(() => {
-    fail()
+    fail(new EpubParserWorkerError())
     void worker.terminate().catch(() => undefined)
   }, timeoutMs)
 
   worker.on("message", (message: unknown) => {
+    if (
+      typeof message === "object" &&
+      message !== null &&
+      (message as { type?: unknown }).type === "fatal"
+    ) {
+      fail(new EpubParserWorkerError())
+      return
+    }
     if (
       typeof message === "object" &&
       message !== null &&
@@ -339,8 +371,8 @@ export async function openIsolatedEpubReader(
     }
     fail()
   })
-  worker.once("error", fail)
-  worker.once("messageerror", fail)
+  worker.once("error", () => fail())
+  worker.once("messageerror", () => fail())
   worker.once("exit", () => {
     if (!closed) fail()
   })
@@ -349,14 +381,21 @@ export async function openIsolatedEpubReader(
     if (closed) return
     closed = true
     clearTimeout(timeout)
-    const closeError = fatalError ?? new EpubParserWorkerError()
+    const closeError = fatalError ?? new EpubParserWorkerInternalError()
     for (const pending of pendingChapters.values()) pending.reject(closeError)
     pendingChapters.clear()
+    let closeFailed = false
     try {
       await worker.terminate()
-    } finally {
-      rmSync(tempRoot, { recursive: true, force: true })
+    } catch {
+      closeFailed = true
     }
+    try {
+      rmSync(tempRoot, { recursive: true, force: true })
+    } catch {
+      closeFailed = true
+    }
+    if (closeFailed) throw new EpubParserWorkerInternalError()
   }
 
   let document: EpubReaderDocument

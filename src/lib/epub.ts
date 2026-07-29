@@ -17,6 +17,7 @@ import {
 import { deriveParagraphId, deriveSourceItemId } from "@/lib/corpus-identity"
 import {
   EpubParserWorkerError,
+  EpubParserWorkerInternalError,
   EpubParserWorkerLimitError,
   openIsolatedEpubReader,
   type EpubParserWorkerOptions,
@@ -114,6 +115,13 @@ export class EpubParseError extends Error {
   constructor() {
     super("Invalid EPUB archive")
     this.name = "EpubParseError"
+  }
+}
+
+export class EpubParseInternalError extends Error {
+  constructor() {
+    super("EPUB parser failed")
+    this.name = "EpubParseInternalError"
   }
 }
 
@@ -449,7 +457,7 @@ export async function parseEpub(
   try {
     await reader?.close()
   } catch (error) {
-    failure ??= error
+    failure = error
   }
 
   if (failure !== undefined) {
@@ -457,10 +465,16 @@ export async function parseEpub(
     if (failure instanceof EpubParserWorkerLimitError) {
       throw new EpubParseLimitError(failure.limit)
     }
+    if (
+      failure instanceof EpubParseInternalError ||
+      failure instanceof EpubParserWorkerInternalError
+    ) {
+      throw new EpubParseInternalError()
+    }
     if (failure instanceof EpubParseError) throw failure
     throw new EpubParseError()
   }
-  if (result === undefined) throw new EpubParseError()
+  if (result === undefined) throw new EpubParseInternalError()
   return result
 }
 
@@ -628,6 +642,7 @@ async function extractCandidates(
     } catch (error) {
       if (error instanceof EpubParseLimitError) throw error
       if (error instanceof EpubParserWorkerError) throw error
+      if (error instanceof EpubParserWorkerInternalError) throw error
       // skip unreadable items
     }
   }

@@ -7,6 +7,7 @@ import test from "node:test"
 import {
   DEFAULT_EPUB_PARSE_LIMITS,
   EpubParseError,
+  EpubParseInternalError,
   EpubParseLimitError,
   parseEpub,
 } from "../src/lib/epub.ts"
@@ -29,6 +30,10 @@ function isInvalidEpub(error: unknown): boolean {
   return error instanceof EpubParseError && error.message === "Invalid EPUB archive"
 }
 
+function isInternalParserFailure(error: unknown): boolean {
+  return error instanceof EpubParseInternalError
+}
+
 class FailingWorker extends EventEmitter implements EpubParserWorkerHandle {
   constructor(mode: "invalid-message" | "abnormal-exit") {
     super()
@@ -49,6 +54,10 @@ function failingWorkerFactory(
   mode: "invalid-message" | "abnormal-exit",
 ): EpubParserWorkerFactory {
   return () => new FailingWorker(mode)
+}
+
+const throwingWorkerFactory: EpubParserWorkerFactory = () => {
+  throw new Error("worker startup failed")
 }
 
 test("isolated parse preserves normalized output from the in-process reference", async () => {
@@ -186,6 +195,26 @@ test("isolated parse terminates on its worker deadline and cleans its temp input
         { tempDirectory, timeoutMs: 0 },
       ),
       isInvalidEpub,
+    )
+    assert.deepEqual(readdirSync(tempDirectory), [])
+  } finally {
+    rmSync(tempDirectory, { recursive: true, force: true })
+  }
+})
+
+test("worker startup failures remain internal and clean the temp input", async () => {
+  const buffer = await buildSyntheticEpub()
+  const tempDirectory = workerTempDirectory()
+
+  try {
+    await assert.rejects(
+      parseEpub(
+        buffer,
+        "doc-worker-startup-failure",
+        DEFAULT_EPUB_PARSE_LIMITS,
+        { tempDirectory, workerFactory: throwingWorkerFactory },
+      ),
+      isInternalParserFailure,
     )
     assert.deepEqual(readdirSync(tempDirectory), [])
   } finally {

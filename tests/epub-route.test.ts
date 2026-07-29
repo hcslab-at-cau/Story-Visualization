@@ -512,6 +512,25 @@ test("EpubParseError maps to 422 invalid_epub", async () => {
   assert.equal(counters.importCorpus, 1)
 })
 
+test("internal EPUB parser failures map to a generic 500", async () => {
+  const { handler, counters } = makeHandler({
+    runtimeConfig: () => ({ production: true, adminToken: ADMIN_TOKEN }),
+    importCorpus: async () => {
+      counters.importCorpus += 1
+      throw new Error("worker bootstrap failed")
+    },
+  })
+  const form = new FormData()
+  form.set("file", new File(["content"], "novel.epub", {
+    type: "application/epub+zip",
+  }))
+
+  const response = await handler(formRequest(form, ADMIN_TOKEN))
+  assert.equal(response.status, 500)
+  assert.deepEqual(await response.json(), { error: "Failed to import EPUB" })
+  assert.equal(counters.importCorpus, 1)
+})
+
 test("held gate returns 429 and does not consume highWaterMark:0 stream; released gate allows next request", async () => {
   const gateState = makeGateState()
   const gate = makeGate(gateState)
