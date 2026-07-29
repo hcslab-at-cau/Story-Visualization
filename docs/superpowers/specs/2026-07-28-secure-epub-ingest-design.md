@@ -31,6 +31,8 @@ to a temporary research-administration mechanism.
 - Reject malformed or resource-exhausting ZIP/EPUB containers before invoking
   `epub2` or any persistence method.
 - Bound parser work and normalized chapter/paragraph output.
+- Contain malformed-document callback failures, abnormal exits, and timeouts so
+  third-party parser faults cannot terminate the application process.
 - Limit concurrent imports within one application process.
 - Upgrade the vulnerable transitive ZIP reader to the patched
   `adm-zip@0.6.0` while retaining full synthetic-EPUB compatibility.
@@ -57,7 +59,8 @@ to a temporary research-administration mechanism.
 This is selected. A narrow server module verifies a shared administrator token,
 reads the request through a byte-counting stream, validates ZIP metadata with a
 patched reader, and exposes typed public errors. The route owns composition and
-the parser retains domain-level chapter/paragraph limits.
+the parser runs all `epub2` callbacks in an isolated worker while the parent
+retains domain-level chapter/paragraph limits.
 
 This approach is small, can be proven without credentials, and checks access in
 the Route Handler itself rather than trusting UI hiding or Proxy behavior. Its
@@ -112,11 +115,14 @@ configuration can refer to the exact contract.
 | Total declared uncompressed ZIP bytes | 256 MiB |
 | Per-entry compression ratio | 100:1 |
 | Spine items | 1,000 |
+| Manifest items | 5,000 |
+| TOC items | 5,000 |
 | Final normalized chapters | 1,500 |
 | Paragraphs per source item | 10,000 |
 | Total normalized paragraphs | 100,000 |
 | One normalized paragraph | 1 MiB UTF-8 |
 | Total normalized text | 64 MiB UTF-8 |
+| Parser worker deadline | 90 seconds |
 | Concurrent imports per process | 1 |
 
 The order is security-significant:
@@ -129,8 +135,8 @@ The order is security-significant:
 6. Validate `File.size`, then copy the exact file bytes once.
 7. Inspect the ZIP/EPUB container before deriving identity or creating Firebase
    adapters.
-8. Invoke canonical import with a parser wrapper that enforces final output
-   limits.
+8. Invoke canonical import with a parser wrapper that hands the validated bytes
+   to an isolated worker and enforces final output limits in the parent.
 9. Release the import slot in `finally` on every outcome.
 
 The `Content-Length` header is an optimization, never the authoritative check.
@@ -173,20 +179,40 @@ Preflight validation checks:
 Container failures are stable public errors and do not expose filenames,
 archive paths, parser messages, credentials, or stack traces.
 
-## Parser Limits
+## Parser Isolation and Limits
 
-The archive preflight protects the vulnerable boundary before `epub2` opens the
-file. `parseEpub` additionally rejects excessive spine count, paragraphs per
-source item, single-paragraph UTF-8 bytes, final chapter count, final paragraph
-count, and total normalized text bytes. A typed parser-limit error is never
-swallowed by the existing per-spine unreadable-item fallback.
+The archive preflight protects the vulnerable ZIP boundary before `epub2` opens
+the file. It cannot, however, make every asynchronous callback in `epub2` safe.
+`parseEpub` therefore writes the validated bytes into a parent-owned temporary
+directory and runs `EPub.createAsync` plus every `getChapter` callback in a
+Node worker. The worker receives only the trusted resolved module path, the
+temporary input path, and the spine limit; it returns plain metadata and chapter
+result messages. The parent always terminates the worker and recursively removes
+the temporary directory on success, rejection, crash, or timeout.
+
+The overall worker deadline is 90 seconds, below the route's 120-second handler
+limit. A callback exception, malformed worker message, abnormal exit, or deadline
+failure aborts parsing as stable `422 invalid_epub`. A worker-reported spine
+limit remains the same typed `EpubParseLimitError` used for `413
+epub_resource_limit`; parser crashes are never treated as skippable source-read
+errors.
+
+Parent-side temporary-file creation, worker startup, termination, or cleanup
+failures are operational faults, not invalid client input. They therefore fall
+through to the fixed generic `500` response without exposing upstream details.
+
+In the parent, `parseEpub` additionally rejects excessive spine count,
+paragraphs per source item, single-paragraph UTF-8 bytes, final chapter count,
+final paragraph count, and total normalized text bytes. A typed parser-limit
+error is never swallowed by the per-spine unreadable-item fallback.
 
 Extraction uses the same paragraph and UTF-8 text ceilings as incremental work
 budgets before retaining each successfully read source unit, including units
-that classification may later filter from the normalized result. Successfully
-read manifest/href aliases are also skipped before a second `getChapter` call;
-an unreadable first alias does not mark the key, so a later readable alias still
-gets one attempt. Final normalized totals remain checked after dedupe,
+that classification may later filter from the normalized result. A successfully
+read manifest, href, or resolved archive-entry key is never read again. Failed
+reads receive at most one follow-up attempt per semantic or actual archive key;
+path-normalized and one-pass percent-decoded aliases share that two-attempt
+budget. Final normalized totals remain checked after dedupe,
 merge, and split. This bounds repeated decompression and filtered-source work
 without changing the first-readable-source provenance used by accepted books.
 
@@ -213,9 +239,10 @@ rate limiting and slow-request protection.
 | 413 | `epub_too_large` | Extracted file limit exceeded |
 | 413 | `epub_resource_limit` | ZIP or parsed-content budget exceeded |
 | 415 | `invalid_content_type` | Request is not multipart form data |
-| 422 | `invalid_epub` | ZIP/EPUB structure is invalid or unsupported |
+| 422 | `invalid_epub` | ZIP/EPUB structure is invalid/unsupported, or the isolated parser crashes, exits, or times out |
 | 429 | `ingest_busy` | This process is already importing an EPUB |
 | 503 | `ingest_not_configured` | Production administrator token is unusable |
+| 500 | none | Parent-side parser setup or cleanup failed |
 
 Existing `CorpusImportError` status/code pairs remain unchanged. Unknown errors
 continue returning a fixed generic 500 response.
@@ -254,8 +281,11 @@ Tests must demonstrate the rejection order, not only response codes:
   revision metadata first so a complete byte-identical reimport can retain its
   parser short-circuit;
 - duplicate successful spine aliases are read once, failed first aliases remain
-  retryable, and filtered-source extraction still consumes the aggregate work
-  budget;
+  retryable only once per actual archive entry, and filtered-source extraction
+  still consumes the aggregate work budget;
+- malformed parser callbacks, abnormal worker completion, and the parser
+  deadline return a stable invalid-EPUB error, leave the parent usable for the
+  next import, and remove the parent-owned temporary input;
 - `epub2@3.0.2` parses the existing synthetic fixture with overridden
   `adm-zip@0.6.0`;
 - valid synthetic import, deterministic reuse, provenance, merge/split, and

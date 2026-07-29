@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Protect `POST /api/epub` with a production-only fail-closed administrator boundary, exact request and EPUB resource budgets, a patched ZIP reader, and parser-output limits before canonical persistence.
+**Goal:** Protect `POST /api/epub` with a production-only fail-closed administrator boundary, exact request and EPUB resource budgets, a patched ZIP reader, and an isolated, bounded parser before canonical persistence.
 
-**Architecture:** A focused server guard module owns bearer verification, bounded request streaming, ZIP/EPUB preflight, typed public failures, and a process-local concurrency slot. The Route Handler composes those guards before lazily constructing Firebase adapters, while `parseEpub` enforces domain-level spine and normalized-output limits for every caller. The exact validated bytes continue unchanged into the canonical SHA-256 import coordinator.
+**Architecture:** A focused server guard module owns bearer verification, bounded request streaming, ZIP/EPUB preflight, typed public failures, and a process-local concurrency slot. The Route Handler composes those guards before lazily constructing Firebase adapters. `parseEpub` isolates all `epub2` callbacks in a worker, retains normalization and output limits in the parent, and removes its parent-owned temporary input on every outcome. The exact validated bytes continue unchanged into the canonical SHA-256 import coordinator.
 
 **Tech Stack:** Next.js 16.2.2 Route Handlers, TypeScript 5, Node.js 20.19 Web Request streams and crypto, `node:test`, `tsx`, `adm-zip@0.6.0`, `epub2@3.0.2`, JSZip synthetic fixtures.
 
@@ -15,10 +15,14 @@
 - Create `src/lib/server/epub-ingest-guard.ts`: server-only authentication, request-byte reader, ZIP metadata preflight, typed errors, and process-local single-flight gate.
 - Modify `src/app/api/epub/route.ts`: injectable handler composition, lazy Firebase initialization, exact rejection order, and stable public errors.
 - Modify `src/lib/epub.ts`: typed spine/paragraph/chapter/text limits that cannot be swallowed by unreadable-item fallback.
+- Create `src/lib/server/epub-parser-worker.ts`: bounded worker RPC, parser deadline, failure containment, and parent-owned temporary-file cleanup.
+- Modify `next.config.ts`: externalize `epub2` and `adm-zip` for worker runtime resolution.
 - Modify `package.json` and `package-lock.json`: direct pin and `epub2` override for patched `adm-zip@0.6.0`.
 - Create `tests/epub-ingest-guard.test.ts`: pure authentication, stream, archive, path, ratio, and concurrency tests.
 - Modify `tests/epub-route.test.ts`: hostile-body ordering and no-Firebase route tests using an injected handler.
 - Create `tests/epub-parser-limits.test.ts`: small-limit synthetic parser tests and typed limit propagation.
+- Create `tests/epub-parser-worker.test.ts`: output equivalence, crash containment, timeout, limit identity, recovery, and cleanup.
+- Create `tests/helpers/in-process-epub-parser.ts`: valid-fixture-only reader adapter for focused normalization tests without exposing an in-process byte parser in production.
 - Modify `tests/helpers/synthetic-epub.ts`: optional required-entry omission and extra-entry support without committing binaries.
 - Modify `README.md`: server-only admin token and production upload behavior.
 - Modify `docs/source/implementation/epub-ingest-normalization.md`: security pipeline, limits, and remaining deployment controls.
@@ -392,11 +396,14 @@ git diff --cached --check
 git commit -m "feat: validate EPUB archive budgets"
 ```
 
-### Task 4: Enforce Parser Output Limits
+### Task 4: Isolate the Parser and Enforce Output Limits
 
 **Files:**
 - Modify: `src/lib/epub.ts`
+- Create: `src/lib/server/epub-parser-worker.ts`
+- Modify: `next.config.ts`
 - Create: `tests/epub-parser-limits.test.ts`
+- Create: `tests/epub-parser-worker.test.ts`
 - Modify: `tests/corpus-import.test.ts`
 
 - [ ] **Step 1: Write failing small-policy parser tests**
@@ -436,7 +443,15 @@ read remains allowed so complete reimports retain their parser short-circuit.
 Add regressions showing that a successfully read duplicate manifest/href is not
 read twice, a failed first alias does not suppress a later readable alias,
 filtered units consume the incremental extraction budget, and chapter limits
-count parts created by long-chapter splitting.
+count parts created by long-chapter splitting. Also prove that normalized and
+percent-decoded href aliases resolving to one archive entry cause no more than
+two failed source-read attempts in total.
+
+Add worker-boundary regressions showing that malformed parser callbacks cannot
+terminate the parent, a valid parse succeeds immediately afterward, the 90
+second deadline maps to the stable invalid-EPUB error, typed limits retain their
+identity, and the dedicated temporary directory is empty after success and
+failure.
 
 - [ ] **Step 2: Run parser-limit tests to verify RED**
 
@@ -455,6 +470,9 @@ Add:
 ```ts
 export interface EpubParseLimits {
   maxSpineItems: number
+  maxManifestItems: number
+  maxTocItems: number
+  maxArchiveEntries: number
   maxParagraphsPerSourceItem: number
   maxChapters: number
   maxParagraphs: number
@@ -464,6 +482,9 @@ export interface EpubParseLimits {
 
 export const DEFAULT_EPUB_PARSE_LIMITS: EpubParseLimits = {
   maxSpineItems: 1_000,
+  maxManifestItems: 5_000,
+  maxTocItems: 5_000,
+  maxArchiveEntries: 5_000,
   maxParagraphsPerSourceItem: 10_000,
   maxChapters: 1_500,
   maxParagraphs: 100_000,
@@ -480,12 +501,26 @@ export class EpubParseLimitError extends Error {
 ```
 
 Extend `parseEpub(buffer, context, limits = DEFAULT_EPUB_PARSE_LIMITS)` and pass
-the limits into extraction/materialization. Check spine count before the loop,
+the limits into extraction/materialization. Parent code creates a unique
+temporary directory, starts a constant-source `eval` worker with the trusted
+resolved `epub2` module path, and owns termination plus recursive cleanup. The
+worker owns `EPub.createAsync` and every `getChapter` callback, enforces the
+spine limit before sending metadata, and uses request-ID-tagged plain messages.
+Crash, exit, malformed protocol, or timeout becomes `EpubParseError`; worker
+limit messages become `EpubParseLimitError`. Parent-side temporary-file,
+worker-startup, termination, and cleanup failures remain internal errors for the
+generic `500` route response. Externalize `epub2` and `adm-zip`
+through `serverExternalPackages` so the built route can resolve the same runtime
+packages.
+
+Check spine count before the loop,
 source paragraph counts and paragraph bytes after HTML summarization, and final
 chapter/paragraph/text totals before returning. In the per-spine catch, rethrow
 `EpubParseLimitError`; continue skipping only genuinely unreadable items.
-Before `getChapter`, skip manifest/href keys that already produced a successful
-source unit, but do not mark failed reads. Incrementally enforce aggregate
+Before `getChapter`, skip manifest/href/archive keys that already produced a
+successful source unit. Cap failed reads at two attempts for each semantic or
+resolved archive-entry key, including path-normalized and percent-decoded
+aliases. Incrementally enforce aggregate
 paragraph and UTF-8 text budgets across unique successful source units before
 retention, even when classification later filters a unit; retain the final
 post-normalization checks after dedupe, merge, and split. Do not retain raw HTML
@@ -496,7 +531,7 @@ or classification-only body text in the source-unit collection.
 Run:
 
 ```powershell
-node --import tsx --test tests/epub-parser-limits.test.ts tests/epub-corpus-coordinates.test.ts tests/corpus-import.test.ts
+node --import tsx --test tests/epub-parser-worker.test.ts tests/epub-parser-limits.test.ts tests/epub-corpus-coordinates.test.ts tests/corpus-import.test.ts
 ```
 
 Expected: new limit tests pass; existing deterministic IDs, merge/split, and
@@ -505,7 +540,7 @@ retry behavior remain unchanged.
 - [ ] **Step 5: Commit**
 
 ```powershell
-git add -- src/lib/epub.ts tests/epub-parser-limits.test.ts tests/corpus-import.test.ts
+git add -- next.config.ts src/lib/epub.ts src/lib/server/epub-parser-worker.ts tests/epub-parser-worker.test.ts tests/epub-parser-limits.test.ts tests/corpus-import.test.ts
 git diff --cached --check
 git commit -m "feat: bound EPUB parser output"
 ```
@@ -530,6 +565,8 @@ function. Cover:
 - oversized `File.size` before `arrayBuffer` and import;
 - invalid archive before `importDependencies()`;
 - parser-limit error mapping to 413;
+- isolated parser failure mapping to 422 without parser details;
+- native bounded multipart parsing for both valid and malformed bodies;
 - first held import and second 429 response without second-body reads;
 - valid authorized form preserving every existing and PR #6 response field.
 
@@ -593,9 +630,10 @@ exact file bytes; `validateEpubArchive`; call canonical import; map response;
 release in `finally`.
 
 Create Firebase repository/blob adapters only inside the final import call.
-Catch `EpubIngestGuardError`, `EpubParseLimitError`, and `CorpusImportError`
-before the generic 500. Add `WWW-Authenticate` and `Retry-After` only on their
-specified responses.
+Catch `EpubIngestGuardError`, `EpubParseLimitError`, `EpubParseError`, and
+`CorpusImportError` before the generic 500. Map `EpubParseError` to stable `422
+invalid_epub`; do not convert parser setup or cleanup faults into client errors.
+Add `WWW-Authenticate` and `Retry-After` only on their specified responses.
 
 The production export uses:
 
@@ -660,7 +698,9 @@ uploader does not embed the server secret.
 In the ingest implementation guide, record the exact default limits, stable
 error codes, patched ZIP version, unchanged SHA-256 bytes, and the remaining
 need for HTTPS, host-level raw request/rate limits, slow-client protection, and
-an authenticated researcher session/UI.
+an authenticated researcher session/UI. Also record isolated parser execution,
+the 90-second deadline, stable crash/exit/timeout mapping, and parent-owned
+temporary-directory cleanup.
 
 - [ ] **Step 3: Verify docs and commit**
 
@@ -687,7 +727,7 @@ git commit -m "docs: describe secure EPUB ingest"
 - [ ] **Step 1: Run focused security invariants**
 
 ```powershell
-node --import tsx --test tests/epub-ingest-guard.test.ts tests/epub-route.test.ts tests/epub-parser-limits.test.ts tests/epub-corpus-coordinates.test.ts tests/corpus-import.test.ts tests/firestore-corpus-import-store.test.ts
+node --import tsx --test tests/epub-ingest-guard.test.ts tests/epub-route.test.ts tests/epub-parser-worker.test.ts tests/epub-parser-limits.test.ts tests/epub-corpus-coordinates.test.ts tests/corpus-import.test.ts tests/firestore-corpus-import-store.test.ts
 npm ls epub2 adm-zip
 ```
 

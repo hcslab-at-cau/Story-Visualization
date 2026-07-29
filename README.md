@@ -71,7 +71,7 @@ $headers = @{ Authorization = "Bearer $env:EPUB_INGEST_ADMIN_TOKEN" }
 Invoke-RestMethod -Method Post -Uri http://localhost:3000/api/epub -Headers $headers -Form @{ file = Get-Item .\book.epub }
 ```
 
-`npm run dev`에서 토큰을 설정하지 않은 경우에만 기존 로컬 업로드 흐름을 위해 인증을 생략합니다. 이는 개발 편의 동작이며 배포 가능한 보안 설정이 아닙니다. 프로덕션 노출 전에는 HTTPS, 호스트 수준의 원시 요청 크기·요청률 제한, 느린 클라이언트 타임아웃도 함께 구성해야 합니다.
+`npm run dev`에서 토큰을 설정하지 않은 경우에만 기존 로컬 업로드 흐름을 위해 인증을 생략합니다. 이는 개발 편의 동작이며 배포 가능한 보안 설정이 아닙니다. 검증된 EPUB은 90초 제한의 격리된 parser worker에서 처리되며 worker crash·비정상 종료·timeout은 `422 invalid_epub`으로 닫힙니다. 프로덕션 노출 전에는 HTTPS, 호스트 수준의 원시 요청 크기·요청률 제한, 느린 클라이언트 타임아웃도 함께 구성해야 합니다.
 
 ## 파이프라인 스테이지
 
