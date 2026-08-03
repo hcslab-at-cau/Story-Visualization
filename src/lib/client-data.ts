@@ -16,6 +16,8 @@ import type {
   V3QAHistoryPage,
 } from "@/lib/v3-qa-history-types"
 import type { StoredV3BookQACorpus } from "@/lib/server/v3-book-qa-corpus-store"
+import type { V3BookQAAnswerResult } from "@/lib/pipeline/v3-book-qa-answer-types"
+import type { V3BookReaderPosition } from "@/lib/pipeline/v3-book-qa-types"
 
 export { stageKey }
 
@@ -236,6 +238,20 @@ export async function buildV3BookQACorpus(params: {
       docId: params.docId,
       ...(params.chapterRunIds ? { chapterRunIds: params.chapterRunIds } : {}),
     }),
+  })
+}
+
+export async function answerV3BookQuestion(params: {
+  docId: string
+  qaCorpusId: string
+  question: string
+  readerPosition: V3BookReaderPosition
+  limit?: number
+  model?: string
+}): Promise<V3BookQAAnswerResult> {
+  return requestJson<V3BookQAAnswerResult>("/api/pipeline/v3-book-qa-answer", {
+    method: "POST",
+    body: JSON.stringify({ source: "v3", ...params }),
   })
 }
 

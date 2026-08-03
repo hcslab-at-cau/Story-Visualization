@@ -6,6 +6,8 @@ import {
 } from "../src/lib/pipeline/v3-book-qa-answer.ts"
 import { buildV3BookQACorpusManifest } from "../src/lib/pipeline/v3-book-qa-corpus.ts"
 import type { V3BookQARetrievalHit } from "../src/lib/pipeline/v3-book-qa-retrieval.ts"
+import { parseV3BookQAAnswerRequest } from "../src/app/api/pipeline/v3-book-qa-answer/route.ts"
+import { V3BookQARequestError } from "../src/lib/server/v3-book-qa-retrieval-service.ts"
 
 function manifest() {
   return buildV3BookQACorpusManifest({
@@ -255,5 +257,37 @@ test("downgrades the entire answer for unknown, future, cross-associated, or mal
         used_evidence: [],
       })
     })
+  }
+})
+
+test("accepts only the exact v3 book-answer request contract", () => {
+  assert.deepEqual(parseV3BookQAAnswerRequest({
+    source: "v3",
+    docId: "doc-one",
+    qaCorpusId: "BOOK1_abc",
+    question: "What happened?",
+    readerPosition: { chapter_id: "ch-two", pid: 1 },
+    limit: 4,
+    model: "openai/gpt-4o-mini",
+  }), {
+    source: "v3",
+    docId: "doc-one",
+    qaCorpusId: "BOOK1_abc",
+    question: "What happened?",
+    readerPosition: { chapter_id: "ch-two", pid: 1 },
+    limit: 4,
+    model: "openai/gpt-4o-mini",
+  })
+
+  for (const invalid of [
+    { source: "current", docId: "doc-one", qaCorpusId: "BOOK1_abc", question: "Q", readerPosition: { chapter_id: "ch-two", pid: 1 } },
+    { source: "v3", docId: "doc-one", qaCorpusId: "BOOK1_abc", question: "Q", readerPosition: { chapter_id: "ch-two", pid: 1 }, extra: true },
+    { source: "v3", docId: "doc-one", qaCorpusId: "BOOK1_abc", question: "Q", readerPosition: { chapter_id: "ch-two", pid: 1, scene_id: "future" } },
+    { source: "v3", docId: "doc-one", qaCorpusId: "BOOK1_abc", question: "Q", readerPosition: { chapter_id: "ch-two", pid: 1 }, limit: 0 },
+  ]) {
+    assert.throws(
+      () => parseV3BookQAAnswerRequest(invalid),
+      (error: unknown) => error instanceof V3BookQARequestError && error.status === 400,
+    )
   }
 })
