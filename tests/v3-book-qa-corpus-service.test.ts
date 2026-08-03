@@ -368,3 +368,21 @@ test("records deterministic readiness diagnostics for missing and incompatible p
     "IDX.1",
   ])
 })
+
+test("propagates operational artifact load failures without saving an immutable readiness manifest", async () => {
+  const { service, saves } = createHarness({
+    orderedChapters: chapters("chapter"),
+    runsByChapter: { chapter: runs(["run-chapter", 1]) },
+    refsBySelection: { "chapter:run-chapter": refs("chapter") },
+    mutateArtifact(value, stageId) {
+      if (stageId === "MEM.0") throw new Error("Firestore unavailable")
+      return value
+    },
+  })
+
+  await assert.rejects(
+    service.build({ source: "v3", docId: "doc-one" }),
+    /Firestore unavailable/,
+  )
+  assert.equal(saves.length, 0)
+})

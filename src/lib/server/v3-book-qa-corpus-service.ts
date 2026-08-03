@@ -367,18 +367,13 @@ export class V3BookQACorpusService {
         }
         artifactIds[stageId] = artifactId
 
-        let artifact: PipelineArtifact | null = null
-        try {
-          artifact = await this.dependencies.loadStageResultByArtifactId(
-            request.docId,
-            chapter.chapterId,
-            artifactId,
-            stageKey(stageId),
-            { source: "v3" },
-          )
-        } catch {
-          artifact = null
-        }
+        const artifact = await this.dependencies.loadStageResultByArtifactId(
+          request.docId,
+          chapter.chapterId,
+          artifactId,
+          stageKey(stageId),
+          { source: "v3" },
+        )
         if (!artifact || !isArtifactIdentityValid(artifact, {
           docId: request.docId,
           chapterId: chapter.chapterId,
