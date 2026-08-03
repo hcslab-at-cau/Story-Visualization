@@ -74,7 +74,7 @@ export {
   parseFirestoreDataSource,
 }
 
-interface FirestoreReadOptions {
+export interface FirestoreReadOptions {
   source?: FirestoreDataSource
 }
 
@@ -880,6 +880,67 @@ export async function loadStageResult<T extends PipelineArtifact>(
 
     if (!runSnap.exists) return null
     return (runData?.[stageKeyValue] as T) ?? null
+  })
+}
+
+/**
+ * Resolves only content-addressed artifact references pinned by the requested
+ * run. Legacy inline artifacts and run-local artifact documents are
+ * intentionally excluded so callers can construct immutable corpus manifests.
+ */
+export async function resolveRunStageArtifactRefs(
+  docId: string,
+  chapterId: string,
+  runId: string,
+  options: FirestoreReadOptions = {},
+): Promise<Record<string, string>> {
+  return withAdminErrorContext(async () => {
+    const runSnapshot = await runDocRef(docId, chapterId, runId, options.source).get()
+    if (!runSnapshot.exists) return {}
+    return readStageRefs(runSnapshot.data())
+  })
+}
+
+/**
+ * Loads a shared content-addressed artifact directly, with fail-closed stage
+ * identity validation. It never falls back to a run-local or inline payload.
+ */
+export async function loadStageResultByArtifactId<T extends PipelineArtifact>(
+  docId: string,
+  chapterId: string,
+  artifactId: string,
+  expectedStageKey: string,
+  options: FirestoreReadOptions = {},
+): Promise<T | null> {
+  return withAdminErrorContext(async () => {
+    const artifactSnapshot = await sharedArtifactDocRef(
+      docId,
+      chapterId,
+      artifactId,
+      options.source,
+    ).get()
+    if (!artifactSnapshot.exists) return null
+
+    const stored = artifactSnapshot.data()
+    const payload = stored?.payload
+    const storedStageKey = stored?.stageKey
+    const storedStageId = stored?.stageId
+    const payloadStageId = payload && typeof payload === "object"
+      ? (payload as Record<string, unknown>).stage_id
+      : undefined
+
+    if (
+      storedStageKey !== expectedStageKey ||
+      typeof storedStageId !== "string" ||
+      stageKey(storedStageId as StageId) !== expectedStageKey ||
+      payloadStageId !== storedStageId
+    ) {
+      throw new Error(
+        `Shared artifact ${artifactId} does not match expected stage ${expectedStageKey}`,
+      )
+    }
+
+    return payload as T
   })
 }
 
