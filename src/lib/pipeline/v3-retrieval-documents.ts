@@ -24,6 +24,29 @@ function compareTextDocumentIds(
   return 0
 }
 
+function validateExistingTextDocuments(
+  retrievalIndex: V3RetrievalIndexArtifact,
+  hydratedParagraphTextDocIds: Set<string>,
+): void {
+  for (const document of retrievalIndex.text_documents) {
+    if (hydratedParagraphTextDocIds.has(document.text_doc_id)) {
+      throw new Error(
+        `IDX.1 text document ID collision for ${document.text_doc_id}: an existing text_documents row conflicts with hydrated paragraph text.`,
+      )
+    }
+    if (document.doc_type === "paragraph") {
+      throw new Error(
+        `IDX.1 text_documents cannot contain doc_type paragraph row ${document.text_doc_id}; paragraph text must be hydrated from PRE.1.`,
+      )
+    }
+    if (document.text_doc_id.startsWith("TEXT_PARAGRAPH_")) {
+      throw new Error(
+        `IDX.1 text document ${document.text_doc_id} uses the reserved paragraph text_doc_id prefix.`,
+      )
+    }
+  }
+}
+
 export function buildV3ParagraphRetrievalRecords(params: {
   chapterId: string
   preparedChapter: PreparedChapter
@@ -164,6 +187,10 @@ export function hydrateV3RetrievalDocuments(params: {
 }): V3RetrievalTextDocument[] {
   const paragraphRecords = params.retrievalIndex.structured_records
     .filter((record) => record.record_type === "paragraph")
+  const hydratedParagraphTextDocIds = new Set(
+    paragraphRecords.map((record) => `TEXT_${record.record_id}`),
+  )
+  validateExistingTextDocuments(params.retrievalIndex, hydratedParagraphTextDocIds)
 
   if (paragraphRecords.length === 0) {
     return [...params.retrievalIndex.text_documents].sort(compareTextDocumentIds)

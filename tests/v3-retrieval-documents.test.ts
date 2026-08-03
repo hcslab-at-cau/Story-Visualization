@@ -244,6 +244,59 @@ test("hydration restores exact PRE.1 text and sorts existing plus paragraph docu
   )
 })
 
+test("current hydration rejects an existing paragraph text document", () => {
+  const index = retrievalIndex({
+    records: paragraphRecords(),
+    textDocuments: [{
+      text_doc_id: "TEXT_STALE_PARAGRAPH",
+      doc_type: "paragraph",
+      text: "Stale embedded source text",
+      evidence_refs: [],
+    }],
+  })
+
+  assert.throws(
+    () => hydrateV3RetrievalDocuments({ retrievalIndex: index, preparedChapter: paragraphFixture() }),
+    /IDX\.1.*text_documents.*doc_type.*paragraph.*TEXT_STALE_PARAGRAPH/i,
+  )
+})
+
+test("current hydration rejects a reserved paragraph text document ID disguised as another type", () => {
+  const index = retrievalIndex({
+    records: paragraphRecords(),
+    textDocuments: [{
+      text_doc_id: "TEXT_PARAGRAPH_unrelated",
+      doc_type: "event",
+      text: "Disguised embedded source text",
+      event_id: "EVENT_STALE",
+      evidence_refs: [],
+    }],
+  })
+
+  assert.throws(
+    () => hydrateV3RetrievalDocuments({ retrievalIndex: index, preparedChapter: paragraphFixture() }),
+    /IDX\.1.*TEXT_PARAGRAPH_unrelated.*reserved.*prefix/i,
+  )
+})
+
+test("current hydration rejects an existing text document ID that collides with hydration", () => {
+  const index = retrievalIndex({
+    records: paragraphRecords(),
+    textDocuments: [{
+      text_doc_id: "TEXT_PARAGRAPH_para_0007",
+      doc_type: "event",
+      text: "Conflicting existing text",
+      event_id: "EVENT_CONFLICT",
+      evidence_refs: [],
+    }],
+  })
+
+  assert.throws(
+    () => hydrateV3RetrievalDocuments({ retrievalIndex: index, preparedChapter: paragraphFixture() }),
+    /IDX\.1.*text document ID collision.*TEXT_PARAGRAPH_para_0007/i,
+  )
+})
+
 test("current paragraph hydration requires PRE.1", () => {
   const index = retrievalIndex({ records: paragraphRecords() })
 
