@@ -780,6 +780,27 @@ export function chapterMetaFromRawChapters(rawChapters: readonly RawChapter[]): 
   })))
 }
 
+function chapterMetaFromCanonicalOrder(rawChapters: readonly RawChapter[]): ChapterMeta[] {
+  const seenFingerprints = new Set<string>()
+
+  return rawChapters
+    .map((raw, manifestIndex) => ({
+      chapterId: raw.chapter_id,
+      title: displayChapterTitle(raw, raw.chapter_id, manifestIndex),
+      index: manifestIndex,
+      raw,
+    }))
+    .filter((chapter) => !isLikelyNonStoryChapter(chapter.raw, chapter.chapterId))
+    .filter((chapter) => {
+      const fingerprint = rawChapterDuplicateFingerprint(chapter.raw)
+      if (!fingerprint) return true
+      if (seenFingerprints.has(fingerprint)) return false
+      seenFingerprints.add(fingerprint)
+      return true
+    })
+    .map(({ chapterId, title, index }) => ({ chapterId, title, index }))
+}
+
 export async function listChapters(
   docId: string,
   options: FirestoreReadOptions = {},
@@ -880,6 +901,26 @@ export async function loadStageResult<T extends PipelineArtifact>(
 
     if (!runSnap.exists) return null
     return (runData?.[stageKeyValue] as T) ?? null
+  })
+}
+
+/**
+ * Lists chapters in the authoritative order used by immutable BOOK.1 corpora.
+ * Canonical revisions retain their manifest order; legacy embedded workspaces
+ * retain the established numeric ordering from listChapters.
+ */
+export async function listBookQAChapters(
+  docId: string,
+  options: FirestoreReadOptions = {},
+): Promise<ChapterMeta[]> {
+  return withAdminErrorContext(async () => {
+    const listing = await corpusAwareFirestoreReads.listChapters(
+      docId,
+      options.source ?? "current",
+    )
+    return listing.kind === "canonical"
+      ? chapterMetaFromCanonicalOrder(listing.chapters)
+      : chapterMetaFromCandidates(listing.chapters)
   })
 }
 

@@ -15,6 +15,7 @@ import type {
   V3QAHistoryEntry,
   V3QAHistoryPage,
 } from "@/lib/v3-qa-history-types"
+import type { StoredV3BookQACorpus } from "@/lib/server/v3-book-qa-corpus-store"
 
 export { stageKey }
 
@@ -211,6 +212,30 @@ export async function answerV3Question(params: {
   return requestJson<V3QAAnswerResult>("/api/pipeline/v3-qa-answer", {
     method: "POST",
     body: JSON.stringify(params),
+  })
+}
+
+export async function loadV3BookQACorpus(
+  docId: string,
+  qaCorpusId: string,
+): Promise<StoredV3BookQACorpus> {
+  const query = new URLSearchParams({ docId, qaCorpusId })
+  return requestJson<StoredV3BookQACorpus>(
+    `/api/pipeline/v3-book-qa-corpus?${query.toString()}`,
+  )
+}
+
+export async function buildV3BookQACorpus(params: {
+  docId: string
+  chapterRunIds?: Record<string, string>
+}): Promise<StoredV3BookQACorpus> {
+  return requestJson<StoredV3BookQACorpus>("/api/pipeline/v3-book-qa-corpus", {
+    method: "POST",
+    body: JSON.stringify({
+      source: "v3",
+      docId: params.docId,
+      ...(params.chapterRunIds ? { chapterRunIds: params.chapterRunIds } : {}),
+    }),
   })
 }
 
