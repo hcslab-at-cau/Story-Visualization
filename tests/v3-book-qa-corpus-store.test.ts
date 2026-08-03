@@ -186,6 +186,7 @@ test("rejects immutable group or manifest conflicts with HTTP 409", async (t) =>
     const store = new V3BookQACorpusStore({ adapter })
     const bookManifest = manifest()
     const root = corpusPath(bookManifest.qa_corpus_id)
+    const group = entityGroup("group-must-not-be-written")
     adapter.documents.set(root, {
       ...bookManifest,
       fingerprint: "f".repeat(64),
@@ -193,9 +194,11 @@ test("rejects immutable group or manifest conflicts with HTTP 409", async (t) =>
     })
 
     await assert.rejects(
-      store.save(bookManifest, []),
+      store.save(bookManifest, [group]),
       (error: unknown) => error instanceof V3BookQACorpusImmutableConflictError &&
         error.statusCode === 409,
     )
+    assert.deepEqual(adapter.writeCalls, [])
+    assert.equal(adapter.documents.has(`${root}/entity_groups/${group.global_entity_id}`), false)
   })
 })

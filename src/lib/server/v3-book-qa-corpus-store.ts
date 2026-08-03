@@ -190,6 +190,12 @@ export class V3BookQACorpusStore {
     groups: V3BookEntityGroup[],
   ): Promise<void> {
     const canonical = canonicalGroups(groups)
+    const rootPath = manifestPath(manifest.doc_id, manifest.qa_corpus_id)
+    const expectedManifest = manifestDocument(manifest, canonical.length)
+    const existingManifest = await this.adapter.readDocument(rootPath)
+    if (existingManifest && !equivalent(existingManifest, expectedManifest)) {
+      throw new V3BookQACorpusImmutableConflictError(rootPath)
+    }
     const entityGroupDocuments = canonical.map((group) => ({
       path: groupPath(manifest.doc_id, manifest.qa_corpus_id, group.global_entity_id),
       data: groupDocument(manifest, group),
@@ -202,8 +208,8 @@ export class V3BookQACorpusStore {
     }
 
     await this.adapter.writeImmutableDocuments([{
-      path: manifestPath(manifest.doc_id, manifest.qa_corpus_id),
-      data: manifestDocument(manifest, canonical.length),
+      path: rootPath,
+      data: expectedManifest,
     }])
   }
 
