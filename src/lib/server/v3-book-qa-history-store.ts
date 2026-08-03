@@ -334,16 +334,17 @@ export class V3BookQAHistoryStore {
   async delete(input: V3BookQAHistoryDeleteRequest): Promise<boolean> {
     const rootPath = scopePath(input.docId, input.qaCorpusId)
     const scope = await this.adapter.readDocument(rootPath)
-    if (!scope || !scopeMatches(scope, input.docId, input.qaCorpusId)) return false
+    if (!scope) return false
+    assertScope(scope, input.docId, input.qaCorpusId, rootPath)
 
     const targetPath = entryPath(input.docId, input.qaCorpusId, input.entryId)
     const entry = await this.adapter.readDocument(targetPath)
-    if (!entry
-      || entry.schema_version !== V3_BOOK_QA_HISTORY_SCHEMA_VERSION
-      || entry.entry_id !== input.entryId
-      || entry.doc_id !== input.docId
-      || entry.qa_corpus_id !== input.qaCorpusId) {
-      return false
+    if (!entry) return false
+    const stored = storedEntryFromDocument({ id: input.entryId, data: entry }, targetPath)
+    if (stored.doc_id !== input.docId || stored.qa_corpus_id !== input.qaCorpusId) {
+      throw new V3BookQAHistoryStoreIntegrityError(
+        `Book QA history entry ownership does not match: ${targetPath}`,
+      )
     }
     return this.adapter.deleteDocument(targetPath)
   }

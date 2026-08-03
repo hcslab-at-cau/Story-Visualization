@@ -556,7 +556,7 @@ test("store paginates newest entries at 20 and decodes the next cursor", async (
   assert.ok(adapter.listQueries[1]?.cursor)
 })
 
-test("store isolates corpus scopes and deletion fails closed on missing or mismatched ownership", async () => {
+test("store isolates corpus scopes and returns false only for genuine delete misses", async () => {
   const adapter = new FakeHistoryAdapter()
   let sequence = 0
   const store = new V3BookQAHistoryStore({
@@ -574,11 +574,6 @@ test("store isolates corpus scopes and deletion fails closed on missing or misma
   })
   const scopeId = createV3BookQAHistoryScopeId(input.qaCorpusId)
   const root = `documents_v3/${input.docId}/book_qa_history/${scopeId}`
-  const entryPath = `${root}/entries/${saved.entry_id}`
-
-  adapter.documents.set(entryPath, { ...adapter.documents.get(entryPath)!, doc_id: "other-doc" })
-  assert.equal(await store.delete(deletion), false)
-  adapter.documents.set(entryPath, { ...adapter.documents.get(entryPath)!, doc_id: input.docId })
   assert.equal(await store.delete(deletion), true)
   assert.equal(await store.delete(deletion), false)
 
@@ -589,6 +584,64 @@ test("store isolates corpus scopes and deletion fails closed on missing or misma
   assert.notEqual(root, otherRoot)
   assert.equal(adapter.documents.get(root)?.qa_corpus_id, input.qaCorpusId)
   assert.equal(adapter.documents.get(otherRoot)?.qa_corpus_id, otherInput.qaCorpusId)
+})
+
+test("delete surfaces existing corrupted scope and entry ownership as integrity errors", async (t) => {
+  async function preparedStore() {
+    const adapter = new FakeHistoryAdapter()
+    const store = new V3BookQAHistoryStore({
+      adapter,
+      createEntryId: () => "corrupt-entry",
+      now: () => new Date(1_710_000_000_000),
+    })
+    const input = normalizedInput()
+    const saved = await store.save(input)
+    const deletion = normalizeV3BookQAHistoryDeleteInput({
+      source: "v3",
+      docId: input.docId,
+      qaCorpusId: input.qaCorpusId,
+      entryId: saved.entry_id,
+    })
+    const root = `documents_v3/${input.docId}/book_qa_history/${createV3BookQAHistoryScopeId(input.qaCorpusId)}`
+    return { adapter, store, deletion, root, entryPath: `${root}/entries/${saved.entry_id}` }
+  }
+
+  await t.test("corrupted scope", async () => {
+    const state = await preparedStore()
+    state.adapter.documents.set(state.root, {
+      ...state.adapter.documents.get(state.root)!,
+      doc_id: "other-doc",
+    })
+    await assert.rejects(
+      state.store.delete(state.deletion),
+      (error: unknown) => error instanceof V3BookQAHistoryStoreIntegrityError,
+    )
+  })
+
+  await t.test("corrupted entry", async () => {
+    const state = await preparedStore()
+    state.adapter.documents.set(state.entryPath, {
+      ...state.adapter.documents.get(state.entryPath)!,
+      qa_corpus_id: "other-corpus",
+    })
+    await assert.rejects(
+      state.store.delete(state.deletion),
+      (error: unknown) => error instanceof V3BookQAHistoryStoreIntegrityError,
+    )
+  })
+
+  await t.test("route maps delete corruption to 409", async () => {
+    const state = await preparedStore()
+    state.adapter.documents.set(state.entryPath, {
+      ...state.adapter.documents.get(state.entryPath)!,
+      entry_id: "other-entry",
+    })
+    const handlers = createV3BookQAHistoryRouteHandlers(routeDependencies({
+      delete: (input: Parameters<V3BookQAHistoryStore["delete"]>[0]) => state.store.delete(input),
+    }))
+    const response = await handlers.DELETE(request("DELETE", state.deletion))
+    assert.equal(response.status, 409)
+  })
 })
 
 test("store rejects mismatched scope metadata and malformed stored rows", async () => {
