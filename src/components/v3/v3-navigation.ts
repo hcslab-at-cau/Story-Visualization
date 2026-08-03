@@ -3,6 +3,15 @@ import type { V3BookReaderPosition } from "@/lib/pipeline/v3-book-qa-types"
 
 export type V3WorkbenchView = "pipeline" | "timeline" | "qa"
 
+export interface V3BookQANavigationState {
+  qaCorpusId?: string
+  readerPosition?: V3BookReaderPosition
+}
+
+export type V3BookQANavigationEvent =
+  | ({ type: "url_sync" } & V3BookQANavigationState)
+  | { type: "manual_context_change" }
+
 export function firstSearchParam(value: string | string[] | undefined): string | undefined {
   if (Array.isArray(value)) return value[0]
   return value
@@ -31,6 +40,20 @@ export function parseV3ReaderPosition(
   const pid = Number(rawPid)
   if (!Number.isSafeInteger(pid)) return undefined
   return { chapter_id: chapterId, pid }
+}
+
+export function reduceV3BookQANavigationState(
+  current: V3BookQANavigationState,
+  event: V3BookQANavigationEvent,
+): V3BookQANavigationState {
+  if (event.type === "url_sync") {
+    return {
+      ...(event.qaCorpusId ? { qaCorpusId: event.qaCorpusId } : {}),
+      ...(event.readerPosition ? { readerPosition: { ...event.readerPosition } } : {}),
+    }
+  }
+  if (!current.qaCorpusId && !current.readerPosition) return current
+  return {}
 }
 
 export function createV3WorkbenchHref(params: {

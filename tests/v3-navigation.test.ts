@@ -6,6 +6,7 @@ import {
   parseV3ReaderPosition,
   parseV3NavigationSource,
   parseV3WorkbenchView,
+  reduceV3BookQANavigationState,
 } from "../src/components/v3/v3-navigation.ts"
 
 test("createV3WorkbenchHref carries document, chapter, source, and non-default view", () => {
@@ -62,4 +63,34 @@ test("parseV3ReaderPosition accepts only a chapter and non-negative integer PID"
   assert.equal(parseV3ReaderPosition("ch02", "4.5"), undefined)
   assert.equal(parseV3ReaderPosition("ch02", "-1"), undefined)
   assert.equal(parseV3ReaderPosition(undefined, "4"), undefined)
+})
+
+test("book QA navigation state synchronizes from URL state", () => {
+  assert.deepEqual(
+    reduceV3BookQANavigationState(
+      {},
+      {
+        type: "url_sync",
+        qaCorpusId: "BOOK1_abc",
+        readerPosition: { chapter_id: "ch02", pid: 4 },
+      },
+    ),
+    {
+      qaCorpusId: "BOOK1_abc",
+      readerPosition: { chapter_id: "ch02", pid: 4 },
+    },
+  )
+})
+
+test("manual chapter or run changes clear the active book QA scope", () => {
+  assert.deepEqual(
+    reduceV3BookQANavigationState(
+      {
+        qaCorpusId: "BOOK1_abc",
+        readerPosition: { chapter_id: "ch02", pid: 4 },
+      },
+      { type: "manual_context_change" },
+    ),
+    {},
+  )
 })

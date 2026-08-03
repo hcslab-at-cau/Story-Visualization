@@ -87,6 +87,24 @@ export function isV3BookParagraphReadable(
   return pid <= readerPosition.pid
 }
 
+export function filterV3BookReadableParagraphs<T extends { pid: number }>(
+  manifest: V3BookQACorpusManifest,
+  readerPosition: V3BookReaderPosition,
+  chapterId: string,
+  paragraphs: readonly T[],
+): T[] {
+  return paragraphs.filter((paragraph) => (
+    isV3BookParagraphReadable(manifest, readerPosition, chapterId, paragraph.pid)
+  ))
+}
+
+export function createV3BookQACorpusBuildRunIds(
+  manifest?: V3BookQACorpusManifest | null,
+): Record<string, string> | undefined {
+  if (!manifest) return undefined
+  return Object.fromEntries(manifest.chapters.map((chapter) => [chapter.chapter_id, chapter.run_id]))
+}
+
 export function createV3BookCitationAction(params: {
   docId: string
   displayedChapterId: string

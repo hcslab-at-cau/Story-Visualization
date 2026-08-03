@@ -10,7 +10,11 @@ import {
   chooseVisiblePreStage,
   type PreStageId,
 } from "@/components/v3/pre-workbench-state"
-import type { V3WorkbenchView } from "@/components/v3/v3-navigation"
+import {
+  reduceV3BookQANavigationState,
+  type V3BookQANavigationState,
+  type V3WorkbenchView,
+} from "@/components/v3/v3-navigation"
 import { DEFAULT_STAGE_MODELS } from "@/config/pipeline-models"
 import {
   isV3EvidencePassId,
@@ -456,6 +460,13 @@ export default function PreMentionWorkbench({
   const [runs, setRuns] = useState<RunMeta[]>([])
   const [results, setResults] = useState<PreResults>({})
   const [workbenchView, setWorkbenchView] = useState<WorkbenchView>(initialView)
+  const [bookQANavigation, setBookQANavigation] = useState<V3BookQANavigationState>(() => (
+    reduceV3BookQANavigationState({}, {
+      type: "url_sync",
+      qaCorpusId: initialQACorpusId,
+      readerPosition: initialReaderPosition,
+    })
+  ))
   const [activeStage, setActiveStage] = useState<PreStageId>("PRE.1")
   const [runningStage, setRunningStage] = useState<PreStageId | null>(null)
   const [loadingRuns, setLoadingRuns] = useState(false)
@@ -489,6 +500,11 @@ export default function PreMentionWorkbench({
       setRunId(initialRunId ?? createTimestampRunId())
       setRuns([])
       setResults({})
+      setBookQANavigation((current) => reduceV3BookQANavigationState(current, {
+        type: "url_sync",
+        qaCorpusId: initialQACorpusId,
+        readerPosition: initialReaderPosition,
+      }))
       setActiveStage("PRE.1")
       setWorkbenchView(initialView)
       setError(null)
@@ -511,7 +527,15 @@ export default function PreMentionWorkbench({
     return () => {
       cancelled = true
     }
-  }, [initialChapterId, initialDocId, initialRunId, initialSeedSource, initialView])
+  }, [
+    initialChapterId,
+    initialDocId,
+    initialQACorpusId,
+    initialReaderPosition,
+    initialRunId,
+    initialSeedSource,
+    initialView,
+  ])
 
   const selectedChapterIndex = chapters.findIndex((chapter) => chapter.chapterId === chapterId)
   const selectedChapter = selectedChapterIndex >= 0 ? chapters[selectedChapterIndex] : undefined
@@ -592,6 +616,7 @@ export default function PreMentionWorkbench({
 
   function handleChapterChange(nextChapterId: string) {
     requestedInitialRunRef.current = {}
+    setBookQANavigation((current) => reduceV3BookQANavigationState(current, { type: "manual_context_change" }))
     setChapterId(nextChapterId)
     setRunId(createTimestampRunId([runId]))
     setResults({})
@@ -1350,6 +1375,7 @@ export default function PreMentionWorkbench({
               <button
                 type="button"
                 onClick={() => {
+                  setBookQANavigation((current) => reduceV3BookQANavigationState(current, { type: "manual_context_change" }))
                   setRunId(createTimestampRunId(runs.map((run) => run.runId)))
                   setResults({})
                   setActiveStage("PRE.1")
@@ -1365,6 +1391,7 @@ export default function PreMentionWorkbench({
               value={runExists ? runId : ""}
               onChange={(event) => {
                 if (event.target.value) {
+                  setBookQANavigation((current) => reduceV3BookQANavigationState(current, { type: "manual_context_change" }))
                   setRunId(event.target.value)
                   setResults({})
                   setActiveStage("PRE.1")
@@ -1593,8 +1620,8 @@ export default function PreMentionWorkbench({
                 contentUnits={results.pre2}
                 retrievalIndex={results.idx1}
                 semanticIndex={results.idx2}
-                qaCorpusId={initialQACorpusId}
-                readerPosition={initialReaderPosition}
+                qaCorpusId={bookQANavigation.qaCorpusId}
+                readerPosition={bookQANavigation.readerPosition}
               />
             </>
           )}

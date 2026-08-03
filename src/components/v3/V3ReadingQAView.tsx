@@ -37,9 +37,10 @@ import V3BookQAHistoryPanel from "./V3BookQAHistoryPanel"
 import V3QAHistoryPanel from "./V3QAHistoryPanel"
 import {
   createV3BookCitationAction,
+  createV3BookQACorpusBuildRunIds,
   createV3BookParagraphDomId,
   createV3BookQAReadinessViewModel,
-  isV3BookParagraphReadable,
+  filterV3BookReadableParagraphs,
 } from "./v3-book-qa-view-model"
 import { createV3WorkbenchHref } from "./v3-navigation"
 
@@ -247,9 +248,10 @@ function LegacyV3ReadingQAView({
     setCorpusBuilding(true)
     setCorpusBuildError(null)
     try {
+      const chapterRunIds = createV3BookQACorpusBuildRunIds()
       const stored = await buildV3BookQACorpus({
         docId,
-        chapterRunIds: { [chapterId]: runId },
+        ...(chapterRunIds ? { chapterRunIds } : {}),
       })
       const pinnedChapter = stored.manifest.chapters.find((item) => item.chapter_id === chapterId)
       if (!pinnedChapter) throw new Error("The current chapter is not pinned in the new BOOK.1 corpus.")
@@ -663,6 +665,13 @@ function V3BookReadingQAView({
     () => Object.fromEntries(corpus?.manifest.chapters.map((chapter) => [chapter.chapter_id, chapter.chapter_title]) ?? []),
     [corpus],
   )
+  const readableParagraphs = useMemo(
+    () => corpus && readerPosition
+      ? filterV3BookReadableParagraphs(corpus.manifest, readerPosition, chapterId, paragraphs)
+      : [],
+    [chapterId, corpus, paragraphs, readerPosition],
+  )
+  const hiddenParagraphCount = paragraphs.length - readableParagraphs.length
   const readerChapterTitle = readerPosition
     ? chapterTitles[readerPosition.chapter_id] ?? readerPosition.chapter_id
     : "Reader position missing"
@@ -689,11 +698,10 @@ function V3BookReadingQAView({
     setCorpusBuilding(true)
     setCorpusError(null)
     try {
+      const chapterRunIds = createV3BookQACorpusBuildRunIds(corpus?.manifest)
       const stored = await buildV3BookQACorpus({
         docId,
-        chapterRunIds: corpus
-          ? Object.fromEntries(corpus.manifest.chapters.map((chapter) => [chapter.chapter_id, chapter.run_id]))
-          : { [chapterId]: runId },
+        ...(chapterRunIds ? { chapterRunIds } : {}),
       })
       const displayedChapter = stored.manifest.chapters.find((item) => item.chapter_id === chapterId)
       if (!displayedChapter) throw new Error("The displayed chapter is not pinned in the rebuilt BOOK.1 corpus.")
@@ -925,26 +933,28 @@ function V3BookReadingQAView({
                 <div className="rounded-lg border border-dashed border-zinc-200 px-4 py-10 text-center text-sm text-zinc-500">
                   The pinned PRE.1/PRE.2 artifacts are not available in this displayed run.
                 </div>
+              ) : readableParagraphs.length === 0 ? (
+                <div className="rounded-lg border border-dashed border-zinc-200 px-4 py-10 text-center text-sm text-zinc-500">
+                  Paragraph text is hidden because this chapter is outside the original reader position.
+                </div>
               ) : (
-                paragraphs.map((paragraph) => {
-                  const isRead = Boolean(
-                    corpus
-                    && readerPosition
-                    && isV3BookParagraphReadable(corpus.manifest, readerPosition, chapterId, paragraph.pid),
-                  )
-                  return (
+                <>
+                  {readableParagraphs.map((paragraph) => (
                     <article
                       key={paragraph.pid}
                       id={createV3BookParagraphDomId(chapterId, paragraph.pid)}
-                      className={`w-full rounded-lg border px-3 py-2 text-left ${
-                        isRead ? "border-zinc-200 bg-white text-zinc-900" : "border-zinc-100 bg-zinc-50 text-zinc-400"
-                      }`}
+                      className="w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-left text-zinc-900"
                     >
                       <span className="font-mono text-[11px] font-semibold text-zinc-500">P{paragraph.pid}</span>
                       <span className="mt-1 line-clamp-3 block text-sm leading-6">{paragraph.text}</span>
                     </article>
-                  )
-                })
+                  ))}
+                  {hiddenParagraphCount > 0 ? (
+                    <div className="rounded-lg border border-dashed border-zinc-200 bg-zinc-50 px-3 py-3 text-center text-xs text-zinc-500">
+                      {hiddenParagraphCount} later paragraph{hiddenParagraphCount === 1 ? "" : "s"} hidden at the original reader position.
+                    </div>
+                  ) : null}
+                </>
               )}
             </div>
           </div>

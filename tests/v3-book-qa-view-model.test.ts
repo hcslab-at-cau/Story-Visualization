@@ -3,8 +3,10 @@ import test from "node:test"
 import type { V3BookQACorpusManifest } from "../src/lib/pipeline/v3-book-qa-types.ts"
 import {
   createV3BookCitationAction,
+  createV3BookQACorpusBuildRunIds,
   createV3BookParagraphDomId,
   createV3BookQAReadinessViewModel,
+  filterV3BookReadableParagraphs,
   isV3BookParagraphReadable,
 } from "../src/components/v3/v3-book-qa-view-model.ts"
 
@@ -133,4 +135,33 @@ test("book paragraph readability follows chapter order and current PID", () => {
   assert.equal(isV3BookParagraphReadable(corpus, readerPosition, "ch02", 4), true)
   assert.equal(isV3BookParagraphReadable(corpus, readerPosition, "ch02", 5), false)
   assert.equal(isV3BookParagraphReadable(corpus, readerPosition, "ch03", 1), false)
+})
+
+test("readable paragraph filtering excludes current P5+ and every future-chapter paragraph", () => {
+  const corpus = manifest()
+  const readerPosition = { chapter_id: "ch02", pid: 4 }
+  const currentChapter = [
+    { pid: 3, text: "safe" },
+    { pid: 4, text: "safe boundary" },
+    { pid: 5, text: "future current-chapter text" },
+  ]
+  const futureChapter = [{ pid: 1, text: "future chapter text" }]
+
+  assert.deepEqual(
+    filterV3BookReadableParagraphs(corpus, readerPosition, "ch02", currentChapter),
+    currentChapter.slice(0, 2),
+  )
+  assert.deepEqual(
+    filterV3BookReadableParagraphs(corpus, readerPosition, "ch03", futureChapter),
+    [],
+  )
+})
+
+test("corpus build run IDs are omitted initially and complete when rebuilding a manifest", () => {
+  assert.equal(createV3BookQACorpusBuildRunIds(), undefined)
+  assert.deepEqual(createV3BookQACorpusBuildRunIds(manifest()), {
+    ch01: "run-a",
+    ch02: "run-b",
+    ch03: "run-c",
+  })
 })
