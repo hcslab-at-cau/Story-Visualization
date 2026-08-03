@@ -38,6 +38,10 @@ const idSchema = z.string()
   .max(MAX_ID_CHARS)
   .refine((value) => value.trim() === value, "IDs must not have surrounding whitespace")
   .refine((value) => !/[\u0000-\u001f\u007f]/u.test(value), "IDs must not contain control characters")
+const pathIdSchema = idSchema.refine(
+  (value) => !value.includes("/"),
+  "Storage IDs must not contain path separators",
+)
 const questionSchema = z.string().trim().min(1).max(MAX_QUESTION_CHARS)
 const boundedTextSchema = z.string().max(MAX_TEXT_CHARS)
 const boundedLabelSchema = z.string().max(MAX_LABEL_CHARS)
@@ -130,15 +134,15 @@ const answerSnapshotSchema = z.object({
 
 const scopeRequestSchema = z.object({
   source: z.string(),
-  docId: idSchema,
-  qaCorpusId: idSchema,
+  docId: pathIdSchema,
+  qaCorpusId: pathIdSchema,
   cursor: z.string().min(1).max(2_000).optional(),
 }).strict()
 
 const createRequestSchema = z.object({
   source: z.string(),
-  docId: idSchema,
-  qaCorpusId: idSchema,
+  docId: pathIdSchema,
+  qaCorpusId: pathIdSchema,
   question: questionSchema,
   readerPosition: readerPositionSchema,
   answerSnapshot: answerSnapshotSchema,
@@ -146,21 +150,21 @@ const createRequestSchema = z.object({
 
 const deleteRequestSchema = z.object({
   source: z.string(),
-  docId: idSchema,
-  qaCorpusId: idSchema,
-  entryId: idSchema,
+  docId: pathIdSchema,
+  qaCorpusId: pathIdSchema,
+  entryId: pathIdSchema,
 }).strict()
 
 const cursorSchema = z.object({
   createdAtMs: nonNegativeIntegerSchema,
-  entryId: idSchema,
+  entryId: pathIdSchema,
 }).strict()
 
 const storedEntrySchema = z.object({
   schema_version: z.literal(V3_BOOK_QA_HISTORY_SCHEMA_VERSION),
-  entry_id: idSchema,
-  doc_id: idSchema,
-  qa_corpus_id: idSchema,
+  entry_id: pathIdSchema,
+  doc_id: pathIdSchema,
+  qa_corpus_id: pathIdSchema,
   question: questionSchema,
   reader_position: readerPositionSchema,
   answer_snapshot: answerSnapshotSchema,

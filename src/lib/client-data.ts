@@ -18,6 +18,11 @@ import type {
 import type { StoredV3BookQACorpus } from "@/lib/server/v3-book-qa-corpus-store"
 import type { V3BookQAAnswerResult } from "@/lib/pipeline/v3-book-qa-answer-types"
 import type { V3BookReaderPosition } from "@/lib/pipeline/v3-book-qa-types"
+import type {
+  V3BookQAHistoryAnswerSnapshot,
+  V3BookQAHistoryEntry,
+  V3BookQAHistoryPage,
+} from "@/lib/v3-book-qa-history-types"
 
 export { stageKey }
 
@@ -251,6 +256,46 @@ export async function answerV3BookQuestion(params: {
 }): Promise<V3BookQAAnswerResult> {
   return requestJson<V3BookQAAnswerResult>("/api/pipeline/v3-book-qa-answer", {
     method: "POST",
+    body: JSON.stringify({ source: "v3", ...params }),
+  })
+}
+
+export async function listV3BookQAHistory(params: {
+  docId: string
+  qaCorpusId: string
+  cursor?: string
+}): Promise<V3BookQAHistoryPage> {
+  const query = new URLSearchParams({
+    source: "v3",
+    docId: params.docId,
+    qaCorpusId: params.qaCorpusId,
+  })
+  if (params.cursor) query.set("cursor", params.cursor)
+  return requestJson<V3BookQAHistoryPage>(
+    `/api/v3/book-qa-history?${query.toString()}`,
+  )
+}
+
+export async function saveV3BookQAHistory(params: {
+  docId: string
+  qaCorpusId: string
+  question: string
+  readerPosition: V3BookReaderPosition
+  answerSnapshot: V3BookQAHistoryAnswerSnapshot
+}): Promise<V3BookQAHistoryEntry> {
+  return requestJson<V3BookQAHistoryEntry>("/api/v3/book-qa-history", {
+    method: "POST",
+    body: JSON.stringify({ source: "v3", ...params }),
+  })
+}
+
+export async function deleteV3BookQAHistory(params: {
+  docId: string
+  qaCorpusId: string
+  entryId: string
+}): Promise<void> {
+  await requestJson<{ ok: true }>("/api/v3/book-qa-history", {
+    method: "DELETE",
     body: JSON.stringify({ source: "v3", ...params }),
   })
 }
