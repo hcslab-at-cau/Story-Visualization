@@ -2690,8 +2690,7 @@ export default function ReaderScreen({
   const visualAvailable = Boolean(packet.visual.image_path || packet.visual.fallback_blueprint_available)
   const showVisualByDefault = visualPolicy.showImageByDefault || visualPolicy.showBlueprintByDefault
 
-  function renderVisualFrame() {
-    return (
+  const visualFrame = (
       <div
         className={`relative w-full overflow-hidden rounded-2xl border border-zinc-200 bg-zinc-100 shadow-sm ${
           packet.visual.image_path ? "" : "min-h-[420px]"
@@ -2750,8 +2749,7 @@ export default function ReaderScreen({
           </div>
         )}
       </div>
-    )
-  }
+  )
 
   return (
     <div
@@ -2998,7 +2996,7 @@ export default function ReaderScreen({
           )}
 
           {showVisualByDefault ? (
-            renderVisualFrame()
+            visualFrame
           ) : visualAvailable ? (
             <details className="rounded-2xl border border-zinc-200 bg-white shadow-sm">
               <summary className="cursor-pointer px-4 py-3 text-sm font-semibold text-zinc-700">
@@ -3013,7 +3011,7 @@ export default function ReaderScreen({
                 <p className="text-xs text-zinc-500">
                   {t.reader.visualMinimizedMessage}
                 </p>
-                {renderVisualFrame()}
+                {visualFrame}
               </div>
             </details>
           ) : (

@@ -8718,16 +8718,20 @@ export default function PipelineRunner({ docId, chapterId, runId }: Props) {
   }, [chapterId, docId, runId])
 
   useEffect(() => {
-    setStages(createInitialStageMap())
-    setResults({})
-    setSelectedStageId("PRE.1")
-    setStageModels(createInitialStageModels())
-    setStageProgress({})
-    setRunProgress(null)
+    const timeoutId = window.setTimeout(() => {
+      setStages(createInitialStageMap())
+      setResults({})
+      setSelectedStageId("PRE.1")
+      setStageModels(createInitialStageModels())
+      setStageProgress({})
+      setRunProgress(null)
+    }, 0)
+    return () => window.clearTimeout(timeoutId)
   }, [chapterId, docId])
 
   useEffect(() => {
-    void refreshResults()
+    const timeoutId = window.setTimeout(() => void refreshResults(), 0)
+    return () => window.clearTimeout(timeoutId)
   }, [refreshResults])
 
   function updateStageModel(stageId: StageId, value: string) {
