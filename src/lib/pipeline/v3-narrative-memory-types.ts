@@ -15,7 +15,8 @@ export const V3_PROGRESSIVE_MEMORY_VERSION = "v3-progressive-narrative-memory-0.
 
 export const V3_RETRIEVAL_INDEX_STAGE_ID = "IDX.1" as const
 export const V3_RETRIEVAL_INDEX_PROFILE = "v3_retrieval_index" as const
-export const V3_RETRIEVAL_INDEX_VERSION = "v3-retrieval-index-0.1" as const
+export const V3_RETRIEVAL_INDEX_LEGACY_VERSION = "v3-retrieval-index-0.1" as const
+export const V3_RETRIEVAL_INDEX_VERSION = "v3-retrieval-index-0.2" as const
 
 export type V3GoalGroundingStageId = typeof V3_GOAL_GROUNDING_STAGE_ID
 export type V3CausalEdgeStageId = typeof V3_CAUSAL_EDGE_STAGE_ID
@@ -151,12 +152,14 @@ export interface V3ProgressiveNarrativeMemoryArtifact extends ArtifactBase {
   }
 }
 
-export type V3RetrievalRecordType = "scene" | "event" | "character" | "place" | "object" | "goal" | "causal_edge"
+export type V3RetrievalRecordType = "paragraph" | "scene" | "event" | "character" | "place" | "object" | "goal" | "causal_edge"
 
 export interface V3StructuredRetrievalRecord {
   record_id: string
   record_type: V3RetrievalRecordType
   label: string
+  source_paragraph_id?: string
+  entity_refs?: string[]
   scene_id?: string
   event_id?: string
   evidence_refs: string[]
@@ -184,9 +187,11 @@ export interface V3RetrievalTextDocument {
 export interface V3RetrievalIndexArtifact extends ArtifactBase {
   stage_id: V3RetrievalIndexStageId
   method: "rule"
-  artifact_version: typeof V3_RETRIEVAL_INDEX_VERSION
+  artifact_version: typeof V3_RETRIEVAL_INDEX_LEGACY_VERSION | typeof V3_RETRIEVAL_INDEX_VERSION
   extraction_profile: typeof V3_RETRIEVAL_INDEX_PROFILE
-  source_stage_ids: ["MEM.1", "EVENT.2", "GOAL.1", "CAUS.1", "MEM.2"]
+  source_stage_ids:
+    | ["MEM.1", "EVENT.2", "GOAL.1", "CAUS.1", "MEM.2"]
+    | ["PRE.1", "PRE.2", "EVID.4", "MEM.1", "EVENT.2", "GOAL.1", "CAUS.1", "MEM.2"]
   index_stats: {
     structured_records: number
     graph_edges: number

@@ -11,6 +11,7 @@ import {
   encodeV3QAHistoryCursor,
   normalizeV3QAHistoryCreateInput,
   normalizeV3QAHistoryPage,
+  normalizeV3QAHistoryStoredEntry,
   validateV3QAHistoryCreateSource,
   V3QA_HISTORY_MAX_BYTES,
 } from "../src/lib/server/v3-qa-history.ts"
@@ -115,6 +116,57 @@ test("normalizeV3QAHistoryCreateInput accepts insufficient_evidence snapshots", 
   const normalized = normalizeV3QAHistoryCreateInput(baseCreateInput("insufficient_evidence"))
 
   assert.equal(normalized.answer_snapshot.answer.status, "insufficient_evidence")
+})
+
+test("legacy 0.1 stored history entries remain parseable unchanged", () => {
+  const fixture = {
+    schema_version: "v3-qa-history-0.1" as const,
+    entry_id: "legacy-entry",
+    doc_id: "doc-1",
+    chapter_id: "chapter-1",
+    run_id: "run-1",
+    question: validQuestion,
+    progress_end_pid: 4,
+    answer_snapshot: baseCreateInput("answered").answerSnapshot,
+    created_at: new Date(1_710_000_000_000).toISOString(),
+  }
+
+  assert.deepEqual(normalizeV3QAHistoryStoredEntry(fixture), fixture)
+})
+
+test("normalizeV3QAHistoryCreateInput accepts paragraph evidence without changing history scope", () => {
+  const base = baseCreateInput("answered")
+  const input = {
+    ...base,
+    answerSnapshot: {
+      answer: {
+        ...base.answerSnapshot.answer,
+        used_evidence: [{
+          evidence_id: "paragraph-2",
+          record_id: "PARAGRAPH_para_0002",
+          record_type: "paragraph",
+          label: "Paragraph P2",
+        }],
+      },
+      retrieval: {
+        ...base.answerSnapshot.retrieval,
+        hits: [{
+          ...base.answerSnapshot.retrieval.hits[0],
+          record_id: "PARAGRAPH_para_0002",
+          record_type: "paragraph",
+          label: "Paragraph P2",
+          text_span: { start_pid: 2, end_pid: 2 },
+        }],
+      },
+    },
+  }
+
+  const normalized = normalizeV3QAHistoryCreateInput(input)
+
+  assert.equal(normalized.chapterId, "chapter-1")
+  assert.equal(normalized.runId, "run-1")
+  assert.equal(normalized.answer_snapshot.answer.used_evidence[0]?.record_type, "paragraph")
+  assert.equal(normalized.answer_snapshot.retrieval.hits[0]?.record_type, "paragraph")
 })
 
 test("normalizeV3QAHistoryCreateInput rejects hits beyond progress boundary", () => {

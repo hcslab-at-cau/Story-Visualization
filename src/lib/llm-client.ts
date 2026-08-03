@@ -424,6 +424,17 @@ ${previousInvalidResponse.slice(0, 4000)}`,
     return this.callJson(prompt, 2, templateName)
   }
 
+  async answerV3BookQuestion(params: {
+    question: string
+    reader_position_json: string
+    source_paragraphs_json: string
+    retrieval_evidence_json: string
+  }): Promise<Record<string, unknown>> {
+    const templateName = "v3_book_qa_grounded_answer"
+    const prompt = this.promptLoader.load(templateName, params)
+    return this.callJson(prompt, 2, templateName)
+  }
+
   // ---------------------------------------------------------------------------
   // ENT.2
   // ---------------------------------------------------------------------------

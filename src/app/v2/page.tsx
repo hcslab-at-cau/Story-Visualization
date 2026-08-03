@@ -180,15 +180,11 @@ function HomeShell() {
   const [loadingRuns, setLoadingRuns] = useState(false)
   const [deletingRun, setDeletingRun] = useState(false)
   const [togglingFavorite, setTogglingFavorite] = useState(false)
-  const [runId, setRunId] = useState("")
+  const [runId, setRunId] = useState(() => createTimestampRunId())
   const [bookStateRun, setBookStateRun] = useState<BookStateRunProgress | null>(null)
   const [pipelineRefreshNonce, setPipelineRefreshNonce] = useState(0)
   const [exportingState3Unit, setExportingState3Unit] = useState<State3ExportUnit | null>(null)
   const [cleaningStorage, setCleaningStorage] = useState(false)
-
-  useEffect(() => {
-    setRunId((current) => current || createTimestampRunId())
-  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -257,12 +253,11 @@ function HomeShell() {
 
   useEffect(() => {
     if (view !== "reader" || loadingRuns) return
-    if (!preferredReaderRunId) {
-      if (runId) setRunId("")
-      return
-    }
     if (runId === preferredReaderRunId) return
-    setRunId(preferredReaderRunId)
+    const timeoutId = window.setTimeout(() => {
+      setRunId(preferredReaderRunId)
+    }, 0)
+    return () => window.clearTimeout(timeoutId)
   }, [view, loadingRuns, preferredReaderRunId, runId])
 
   async function handleDeleteRun() {
@@ -1197,12 +1192,15 @@ function ReaderView({
       return
     }
 
-    setFinal1(null)
-    setFinal2(null)
-    setBookMemory(null)
-    setReaderRunId("")
-    setLoading(false)
-    setError(null)
+    const timeoutId = window.setTimeout(() => {
+      setFinal1(null)
+      setFinal2(null)
+      setBookMemory(null)
+      setReaderRunId("")
+      setLoading(false)
+      setError(null)
+    }, 0)
+    return () => window.clearTimeout(timeoutId)
   }, [docId, chapterId, runId, source])
 
   if (loading) {

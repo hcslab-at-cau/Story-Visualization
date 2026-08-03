@@ -7,7 +7,9 @@ import {
   buildV3ProgressiveNarrativeMemory,
   buildV3RetrievalIndex,
 } from "../src/lib/pipeline/v3-narrative-memory.ts"
+import type { V3EvidenceClusteringArtifact } from "../src/lib/pipeline/v3-evidence-clustering-types.ts"
 import type { V3MemoryContractArtifact } from "../src/lib/pipeline/v3-memory-contract-types.ts"
+import type { ContentUnits, PreparedChapter } from "../src/types/schema.ts"
 
 function memoryContract(): V3MemoryContractArtifact {
   return {
@@ -205,6 +207,108 @@ function upstream() {
   return { mem0, mem1, event2 }
 }
 
+function paragraphInputs(): {
+  preparedChapter: PreparedChapter
+  contentUnits: ContentUnits
+  evidenceClusters: V3EvidenceClusteringArtifact
+} {
+  const paragraphs = [
+    { pid: 0, start: 0, end: 11, text: "Chapter One", paragraph_id: "heading_0000" },
+    { pid: 1, start: 12, end: 44, text: "Alice found the key in the hall.", paragraph_id: "para_0001" },
+    { pid: 2, start: 45, end: 75, text: "Alice opened the door to leave.", paragraph_id: "para_0002" },
+    { pid: 3, start: 76, end: 103, text: "Alice ate bread and cheese." },
+  ]
+
+  return {
+    preparedChapter: {
+      run_id: "pre1",
+      doc_id: "doc",
+      chapter_id: "ch01",
+      stage_id: "PRE.1",
+      method: "epub+rule",
+      parents: {},
+      chapter_title: "Chapter One",
+      paragraph_count: paragraphs.length,
+      char_count: paragraphs.reduce((total, paragraph) => total + paragraph.text.length, 0),
+      raw_chapter: {
+        doc_id: "doc",
+        chapter_id: "ch01",
+        title: "Chapter One",
+        text: paragraphs.map((paragraph) => paragraph.text).join("\n"),
+        paragraphs,
+      },
+    },
+    contentUnits: {
+      run_id: "pre2",
+      doc_id: "doc",
+      chapter_id: "ch01",
+      stage_id: "PRE.2",
+      parents: { "PRE.1": "pre1" },
+      units: [
+        { pid: 0, content_type: "chapter_heading", is_story_text: false },
+        { pid: 1, content_type: "narrative", is_story_text: true },
+        { pid: 2, content_type: "narrative", is_story_text: true },
+        { pid: 3, content_type: "narrative", is_story_text: true },
+      ],
+    },
+    evidenceClusters: {
+      run_id: "evid4",
+      doc_id: "doc",
+      chapter_id: "ch01",
+      stage_id: "EVID.4",
+      method: "rule",
+      parents: { "EVID.3": "evid3" },
+      extraction_profile: "v3_evidence_entity_clustering",
+      source_stage_ids: ["EVID.3"],
+      cluster_stats: {
+        input_refined_candidates: 3,
+        entity_like_candidates: 3,
+        entity_clusters: 3,
+        singleton_clusters: 3,
+        unclustered_candidates: 0,
+        by_type: { cast: 1, place: 1, object: 1 },
+      },
+      entity_clusters: [
+        {
+          cluster_id: "OBJECT_BREAD",
+          entity_type: "object",
+          canonical_label: "bread",
+          aliases: ["bread"],
+          refined_candidate_ids: ["object-bread"],
+          source_candidate_ids: ["raw-object-bread"],
+          evidence_pids: [3],
+          mention_count: 1,
+        },
+        {
+          cluster_id: "CAST_ALICE",
+          entity_type: "cast",
+          canonical_label: "Alice",
+          aliases: ["Alice"],
+          refined_candidate_ids: ["cast-alice"],
+          source_candidate_ids: ["raw-cast-alice"],
+          evidence_pids: [1, 3],
+          mention_count: 2,
+        },
+        {
+          cluster_id: "PLACE_HALL",
+          entity_type: "place",
+          canonical_label: "hall",
+          aliases: ["hall"],
+          refined_candidate_ids: ["place-hall"],
+          source_candidate_ids: ["raw-place-hall"],
+          evidence_pids: [1, 2],
+          mention_count: 2,
+        },
+      ],
+      candidate_cluster_map: {
+        "object-bread": "OBJECT_BREAD",
+        "cast-alice": "CAST_ALICE",
+        "place-hall": "PLACE_HALL",
+      },
+    },
+  }
+}
+
 test("GOAL.1 grounds goal cues to the event actor and scene", () => {
   const { mem0, mem1, event2 } = upstream()
   const goals = buildV3GroundedGoals({ docId: "doc", chapterId: "ch01", memoryContract: mem0, sceneCards: mem1, eventFrames: event2 })
@@ -229,12 +333,24 @@ test("CAUS.1 creates directed edges only when explicit cue text resolves to even
   assert.equal(causal.unresolved_cues.length, 0)
 })
 
-test("MEM.2 and IDX.1 expose progressive memory and retrieval records", () => {
+test("MEM.2 and IDX.1 expose progressive memory plus source-backed story paragraph descriptors", () => {
   const { mem0, mem1, event2 } = upstream()
+  const { preparedChapter, contentUnits, evidenceClusters } = paragraphInputs()
   const goals = buildV3GroundedGoals({ docId: "doc", chapterId: "ch01", memoryContract: mem0, sceneCards: mem1, eventFrames: event2 })
   const causal = buildV3CausalEdges({ docId: "doc", chapterId: "ch01", memoryContract: mem0, eventFrames: event2, groundedGoals: goals })
   const memory = buildV3ProgressiveNarrativeMemory({ docId: "doc", chapterId: "ch01", sceneCards: mem1, eventFrames: event2, groundedGoals: goals, causalEdges: causal })
-  const index = buildV3RetrievalIndex({ docId: "doc", chapterId: "ch01", sceneCards: mem1, eventFrames: event2, groundedGoals: goals, causalEdges: causal, progressiveMemory: memory })
+  const index = buildV3RetrievalIndex({
+    docId: "doc",
+    chapterId: "ch01",
+    preparedChapter,
+    contentUnits,
+    evidenceClusters,
+    sceneCards: mem1,
+    eventFrames: event2,
+    groundedGoals: goals,
+    causalEdges: causal,
+    progressiveMemory: memory,
+  })
 
   assert.equal(memory.stage_id, "MEM.2")
   assert.equal(memory.memory_stats.characters, 1)
@@ -242,6 +358,34 @@ test("MEM.2 and IDX.1 expose progressive memory and retrieval records", () => {
   assert.equal(memory.causal_graph.edges[0]?.edge_id, "CAUS_EV1_EV2_cause-key-door")
 
   assert.equal(index.stage_id, "IDX.1")
+  assert.equal(index.artifact_version, "v3-retrieval-index-0.2")
+  assert.deepEqual(index.source_stage_ids, [
+    "PRE.1",
+    "PRE.2",
+    "EVID.4",
+    "MEM.1",
+    "EVENT.2",
+    "GOAL.1",
+    "CAUS.1",
+    "MEM.2",
+  ])
+  assert.deepEqual(
+    index.structured_records.find((record) => record.record_id === "PARAGRAPH_ch01_3"),
+    {
+      record_id: "PARAGRAPH_ch01_3",
+      record_type: "paragraph",
+      label: "Paragraph P3",
+      source_paragraph_id: "ch01_3",
+      entity_refs: ["CAST_ALICE", "OBJECT_BREAD"],
+      evidence_refs: [],
+      progress_start: 3,
+      progress_end: 3,
+    },
+  )
+  assert.equal(
+    index.structured_records.find((record) => record.record_id === "PARAGRAPH_para_0001")?.source_paragraph_id,
+    "para_0001",
+  )
   assert.ok(index.structured_records.some((record) => record.record_id === "EV2"))
   assert.deepEqual(
     index.structured_records.find((record) => record.record_id === "C_CAST_ALICE"),
@@ -256,4 +400,7 @@ test("MEM.2 and IDX.1 expose progressive memory and retrieval records", () => {
   )
   assert.ok(index.graph_edges.some((edge) => edge.edge_id === "CAUS_EV1_EV2_cause-key-door"))
   assert.ok(index.text_documents.some((doc) => doc.doc_type === "goal" && doc.text.includes("get out")))
+  assert.equal(index.text_documents.some((doc) => doc.doc_type === "paragraph"), false)
+  assert.doesNotMatch(index.text_documents.map((document) => document.text).join(" "), /bread|cheese|food|ate/i)
+  assert.equal(JSON.stringify(index).includes("Alice ate bread and cheese."), false)
 })

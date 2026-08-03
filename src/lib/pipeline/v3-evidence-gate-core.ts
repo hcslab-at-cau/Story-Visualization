@@ -3,6 +3,7 @@ import type {
   V3EvidenceRefinementArtifact,
   V3RefinedEvidenceCandidate,
 } from "./v3-evidence-refinement-types"
+import { V3_EVIDENCE_GATE_VERSION } from "./v3-evidence-gate-types"
 import type {
   V3EvidenceGate,
   V3EvidenceGateArtifact,
@@ -172,13 +173,17 @@ export function buildV3EvidenceGateFromDecisions({
       candidate_type: candidate.candidate_type,
       gate,
       basis: normalizeBasis(decision?.basis, gate, candidate.candidate_type),
+      pid: candidate.pid,
+      span: candidate.span,
     }
+    if (candidate.normalized !== undefined) gated.normalized = candidate.normalized
     const rationale = textValue(decision?.rationale)
     if (rationale) gated.rationale = rationale
     return gated
   })
 
   return {
+    artifact_version: V3_EVIDENCE_GATE_VERSION,
     run_id: `v3_evidence_gate__${docId}__${chapterId}`,
     doc_id: docId,
     chapter_id: chapterId,

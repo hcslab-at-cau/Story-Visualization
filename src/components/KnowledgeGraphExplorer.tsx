@@ -92,13 +92,19 @@ export default function KnowledgeGraphExplorer({
   }, [chapterId, depth, docId, kind, queryText, runId, selectedNodeId])
 
   useEffect(() => {
-    setSelectedNodeId(null)
-    setGraph(null)
-    setNotice(null)
+    const timeoutId = window.setTimeout(() => {
+      setSelectedNodeId(null)
+      setGraph(null)
+      setNotice(null)
+    }, 0)
+    return () => window.clearTimeout(timeoutId)
   }, [docId, chapterId, runId])
 
   useEffect(() => {
-    void loadGraph()
+    const timeoutId = window.setTimeout(() => {
+      void loadGraph()
+    }, 0)
+    return () => window.clearTimeout(timeoutId)
   }, [loadGraph])
 
   async function handleRebuild() {

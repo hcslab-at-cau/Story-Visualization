@@ -37,6 +37,20 @@ export interface StoredSemanticVectorBlob extends StoredSourceFile {
   contentHash: string
 }
 
+export class V3SemanticVectorIntegrityError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = "V3SemanticVectorIntegrityError"
+  }
+}
+
+export interface PreparedV3SemanticVectorUpload {
+  buffer: Buffer
+  hash: string
+  fileName: string
+  storagePath: string
+}
+
 interface CanonicalStorageMetadata {
   contentType?: unknown
   metadata?: Record<string, unknown> | null
@@ -390,6 +404,30 @@ export async function uploadGeneratedImage(params: {
   })
 }
 
+export function prepareV3SemanticVectorUpload(params: {
+  docId: string
+  chapterId: string
+  runId: string
+  payload: V3SemanticVectorPayload
+  source?: StorageDataSource
+}): PreparedV3SemanticVectorUpload {
+  const buffer = gzipSync(Buffer.from(JSON.stringify(params.payload), "utf8"))
+  const hash = createHash("sha256").update(buffer).digest("hex")
+  const fileName = `${hash}.vectors.json.gz`
+  const storagePath = [
+    storagePrefixForSource(params.source),
+    sanitizePathSegment(params.docId, "document"),
+    "chapters",
+    sanitizePathSegment(params.chapterId, "chapter"),
+    "runs",
+    sanitizePathSegment(params.runId, "run"),
+    "indexes",
+    "idx2",
+    fileName,
+  ].join("/")
+  return { buffer, hash, fileName, storagePath }
+}
+
 export async function uploadV3SemanticVectors(params: {
   docId: string
   chapterId: string
@@ -398,45 +436,56 @@ export async function uploadV3SemanticVectors(params: {
   source?: StorageDataSource
 }): Promise<StoredSemanticVectorBlob> {
   return withStorageErrorContext(async () => {
-    const fileName = "vectors.json.gz"
-    const storagePath = [
-      storagePrefixForSource(params.source),
-      sanitizePathSegment(params.docId, "document"),
-      "chapters",
-      sanitizePathSegment(params.chapterId, "chapter"),
-      "runs",
-      sanitizePathSegment(params.runId, "run"),
-      "indexes",
-      "idx2",
-      fileName,
-    ].join("/")
-    const buffer = gzipSync(Buffer.from(JSON.stringify(params.payload), "utf8"))
-    const contentHash = createHash("sha256").update(buffer).digest("hex")
+    const prepared = prepareV3SemanticVectorUpload(params)
 
-    await saveBuffer({ storagePath, buffer, contentType: "application/gzip" })
+    await saveBuffer({
+      storagePath: prepared.storagePath,
+      buffer: prepared.buffer,
+      contentType: "application/gzip",
+    })
 
     return {
       bucket: bucketName(),
-      storagePath,
-      gsUri: `gs://${bucketName()}/${storagePath}`,
-      fileName,
+      storagePath: prepared.storagePath,
+      gsUri: `gs://${bucketName()}/${prepared.storagePath}`,
+      fileName: prepared.fileName,
       contentType: "application/gzip",
-      sizeBytes: buffer.byteLength,
-      contentHash,
+      sizeBytes: prepared.buffer.byteLength,
+      contentHash: prepared.hash,
     }
   })
+}
+
+export function decodeV3SemanticVectorBlob(
+  buffer: Buffer,
+  expectedContentHash: string,
+): V3SemanticVectorPayload {
+  const contentHash = createHash("sha256").update(buffer).digest("hex")
+  if (contentHash !== expectedContentHash) {
+    throw new V3SemanticVectorIntegrityError("IDX.2 vector blob content hash mismatch")
+  }
+
+  let json: string
+  try {
+    json = gunzipSync(buffer).toString("utf8")
+  } catch {
+    throw new V3SemanticVectorIntegrityError("IDX.2 vector blob gzip decoding failed")
+  }
+
+  try {
+    return JSON.parse(json) as V3SemanticVectorPayload
+  } catch {
+    throw new V3SemanticVectorIntegrityError("IDX.2 vector blob JSON decoding failed")
+  }
 }
 
 export async function downloadV3SemanticVectors(params: {
   storagePath: string
   expectedContentHash: string
 }): Promise<V3SemanticVectorPayload> {
-  return withStorageErrorContext(async () => {
+  const buffer = await withStorageErrorContext(async () => {
     const [buffer] = await getAdminStorageBucket().file(params.storagePath).download()
-    const contentHash = createHash("sha256").update(buffer).digest("hex")
-    if (contentHash !== params.expectedContentHash) {
-      throw new Error("IDX.2 vector blob content hash mismatch")
-    }
-    return JSON.parse(gunzipSync(buffer).toString("utf8")) as V3SemanticVectorPayload
+    return buffer
   })
+  return decodeV3SemanticVectorBlob(buffer, params.expectedContentHash)
 }

@@ -10,7 +10,11 @@ import {
   chooseVisiblePreStage,
   type PreStageId,
 } from "@/components/v3/pre-workbench-state"
-import type { V3WorkbenchView } from "@/components/v3/v3-navigation"
+import {
+  reduceV3BookQANavigationState,
+  type V3BookQANavigationState,
+  type V3WorkbenchView,
+} from "@/components/v3/v3-navigation"
 import { DEFAULT_STAGE_MODELS } from "@/config/pipeline-models"
 import {
   isV3EvidencePassId,
@@ -41,6 +45,7 @@ import type {
   V3SemanticIndexArtifact,
   V3SemanticIndexStageId,
 } from "@/lib/pipeline/v3-semantic-index-types"
+import type { V3BookReaderPosition } from "@/lib/pipeline/v3-book-qa-types"
 import {
   deleteStageResult,
   listRuns,
@@ -58,8 +63,11 @@ import type { ChapterMeta } from "@/types/ui"
 interface Props {
   initialDocId: string
   initialChapterId?: string
+  initialRunId?: string
   initialSeedSource?: DataSource
   initialView?: V3WorkbenchView
+  initialQACorpusId?: string
+  initialReaderPosition?: V3BookReaderPosition
 }
 
 interface PreResults {
@@ -326,6 +334,29 @@ function isV3SemanticIndexStage(stageId: PreStageId): stageId is V3SemanticIndex
   return stageId === "IDX.2"
 }
 
+const V3_RETRIEVAL_INDEX_PREREQUISITES = [
+  { stageId: "PRE.1", resultKey: "pre1" },
+  { stageId: "PRE.2", resultKey: "pre2" },
+  { stageId: "EVID.4", resultKey: "evid4" },
+  { stageId: "MEM.2", resultKey: "mem2" },
+] as const
+
+function formatStageList(stageIds: readonly string[]): string {
+  if (stageIds.length === 1) return stageIds[0]!
+  if (stageIds.length === 2) return `${stageIds[0]} and ${stageIds[1]}`
+  return `${stageIds.slice(0, -1).join(", ")}, and ${stageIds.at(-1)}`
+}
+
+function getV3RetrievalIndexBlockReason(results: PreResults): string | null {
+  const missingStages = V3_RETRIEVAL_INDEX_PREREQUISITES
+    .filter(({ resultKey }) => !results[resultKey])
+    .map(({ stageId }) => stageId)
+
+  return missingStages.length > 0
+    ? `Run ${formatStageList(missingStages)} before IDX.1.`
+    : null
+}
+
 function formatChapterLabel(chapter: ChapterMeta, index: number): string {
   return `${index + 1}. ${chapter.title}`
 }
@@ -415,17 +446,27 @@ async function runPreStage<T>(
 export default function PreMentionWorkbench({
   initialDocId,
   initialChapterId,
+  initialRunId,
   initialSeedSource = CURRENT_SOURCE,
   initialView = "pipeline",
+  initialQACorpusId,
+  initialReaderPosition,
 }: Props) {
   const [docId, setDocId] = useState(initialDocId)
   const [chapters, setChapters] = useState<ChapterMeta[]>([])
   const [chapterId, setChapterId] = useState(initialChapterId ?? "")
   const [seedSource, setSeedSource] = useState<DataSource>(initialSeedSource)
-  const [runId, setRunId] = useState("")
+  const [runId, setRunId] = useState(initialRunId ?? "")
   const [runs, setRuns] = useState<RunMeta[]>([])
   const [results, setResults] = useState<PreResults>({})
   const [workbenchView, setWorkbenchView] = useState<WorkbenchView>(initialView)
+  const [bookQANavigation, setBookQANavigation] = useState<V3BookQANavigationState>(() => (
+    reduceV3BookQANavigationState({}, {
+      type: "url_sync",
+      qaCorpusId: initialQACorpusId,
+      readerPosition: initialReaderPosition,
+    })
+  ))
   const [activeStage, setActiveStage] = useState<PreStageId>("PRE.1")
   const [runningStage, setRunningStage] = useState<PreStageId | null>(null)
   const [loadingRuns, setLoadingRuns] = useState(false)
@@ -444,10 +485,10 @@ export default function PreMentionWorkbench({
   const [scene0Model, setScene0Model] = useState(DEFAULT_STAGE_MODELS["SCENE.0"] ?? "google/gemini-3.5-flash")
   const [ent1Model, setEnt1Model] = useState(DEFAULT_STAGE_MODELS["ENT.1"] ?? "google/gemini-3.5-flash")
   const refreshResultsRequestRef = useRef(0)
-
-  useEffect(() => {
-    setRunId((current) => current || createTimestampRunId())
-  }, [])
+  const requestedInitialRunRef = useRef<{ chapterId?: string; runId?: string }>({
+    chapterId: initialChapterId,
+    runId: initialRunId,
+  })
 
   useEffect(() => {
     let cancelled = false
@@ -455,9 +496,15 @@ export default function PreMentionWorkbench({
     async function loadInitialDocument() {
       setDocId(initialDocId)
       setSeedSource(initialSeedSource)
-      setRunId(createTimestampRunId())
+      requestedInitialRunRef.current = { chapterId: initialChapterId, runId: initialRunId }
+      setRunId(initialRunId ?? createTimestampRunId())
       setRuns([])
       setResults({})
+      setBookQANavigation((current) => reduceV3BookQANavigationState(current, {
+        type: "url_sync",
+        qaCorpusId: initialQACorpusId,
+        readerPosition: initialReaderPosition,
+      }))
       setActiveStage("PRE.1")
       setWorkbenchView(initialView)
       setError(null)
@@ -480,7 +527,15 @@ export default function PreMentionWorkbench({
     return () => {
       cancelled = true
     }
-  }, [initialChapterId, initialDocId, initialSeedSource, initialView])
+  }, [
+    initialChapterId,
+    initialDocId,
+    initialQACorpusId,
+    initialReaderPosition,
+    initialRunId,
+    initialSeedSource,
+    initialView,
+  ])
 
   const selectedChapterIndex = chapters.findIndex((chapter) => chapter.chapterId === chapterId)
   const selectedChapter = selectedChapterIndex >= 0 ? chapters[selectedChapterIndex] : undefined
@@ -514,7 +569,8 @@ export default function PreMentionWorkbench({
   }, [chapterId, docId, runId])
 
   useEffect(() => {
-    void refreshResults()
+    const timeoutId = window.setTimeout(() => void refreshResults(), 0)
+    return () => window.clearTimeout(timeoutId)
   }, [refreshResults])
 
   useEffect(() => {
@@ -532,7 +588,15 @@ export default function PreMentionWorkbench({
         if (cancelled) return
 
         setRuns(nextRuns)
+        const requested = requestedInitialRunRef.current
+        const requestedRunId = requested.chapterId === chapterId
+          && requested.runId
+          && nextRuns.some((run) => run.runId === requested.runId)
+          ? requested.runId
+          : undefined
+        if (requested.chapterId === chapterId) requestedInitialRunRef.current = {}
         setRunId((current) => {
+          if (requestedRunId) return requestedRunId
           if (current && nextRuns.some((run) => run.runId === current)) return current
 
           return chooseExistingRunId(nextRuns) || createTimestampRunId(nextRuns.map((run) => run.runId))
@@ -551,6 +615,8 @@ export default function PreMentionWorkbench({
   }, [chapterId, docId])
 
   function handleChapterChange(nextChapterId: string) {
+    requestedInitialRunRef.current = {}
+    setBookQANavigation((current) => reduceV3BookQANavigationState(current, { type: "manual_context_change" }))
     setChapterId(nextChapterId)
     setRunId(createTimestampRunId([runId]))
     setResults({})
@@ -658,9 +724,12 @@ export default function PreMentionWorkbench({
       setError("Run CAUS.1 before MEM.2.")
       return
     }
-    if (isV3RetrievalIndexStage(stageId) && !results.mem2) {
-      setError("Run MEM.2 before IDX.1.")
-      return
+    if (isV3RetrievalIndexStage(stageId)) {
+      const blockReason = getV3RetrievalIndexBlockReason(results)
+      if (blockReason) {
+        setError(blockReason)
+        return
+      }
     }
     if (isV3SemanticIndexStage(stageId) && !results.idx1) {
       setError("Run IDX.1 before IDX.2.")
@@ -1146,7 +1215,7 @@ export default function PreMentionWorkbench({
     if (isV3GoalGroundingStage(stageId) && !results.event2) return "Run EVENT.2 first."
     if (isV3CausalEdgesStage(stageId) && !results.goal1) return "Run GOAL.1 first."
     if (isV3ProgressiveMemoryStage(stageId) && !results.caus1) return "Run CAUS.1 first."
-    if (isV3RetrievalIndexStage(stageId) && !results.mem2) return "Run MEM.2 first."
+    if (isV3RetrievalIndexStage(stageId)) return getV3RetrievalIndexBlockReason(results)
     if (isV3SemanticIndexStage(stageId) && !results.idx1) return "Run IDX.1 first."
     return null
   }
@@ -1306,6 +1375,7 @@ export default function PreMentionWorkbench({
               <button
                 type="button"
                 onClick={() => {
+                  setBookQANavigation((current) => reduceV3BookQANavigationState(current, { type: "manual_context_change" }))
                   setRunId(createTimestampRunId(runs.map((run) => run.runId)))
                   setResults({})
                   setActiveStage("PRE.1")
@@ -1321,6 +1391,7 @@ export default function PreMentionWorkbench({
               value={runExists ? runId : ""}
               onChange={(event) => {
                 if (event.target.value) {
+                  setBookQANavigation((current) => reduceV3BookQANavigationState(current, { type: "manual_context_change" }))
                   setRunId(event.target.value)
                   setResults({})
                   setActiveStage("PRE.1")
@@ -1549,6 +1620,8 @@ export default function PreMentionWorkbench({
                 contentUnits={results.pre2}
                 retrievalIndex={results.idx1}
                 semanticIndex={results.idx2}
+                qaCorpusId={bookQANavigation.qaCorpusId}
+                readerPosition={bookQANavigation.readerPosition}
               />
             </>
           )}

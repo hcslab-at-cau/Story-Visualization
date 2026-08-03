@@ -1,6 +1,6 @@
 # V3 현재 구현 상태
 
-Last updated: 2026-07-15
+Last updated: 2026-08-03
 
 이 문서는 현재 코드베이스에 구현된 V3만 정리한다. V2는 비교 대상이 아니라, V3가 V2와 분리되어 접근 가능하게 유지되는 지점이나 기존 `current` 데이터를 읽는 지점에서만 언급한다.
 
@@ -22,7 +22,9 @@ V3는 파일 선택 화면과 작업 화면이 분리되어 있다.
 
 - 구현 파일: `src/app/v3/page.tsx`
 - `docId`가 없으면 `/v3/library`로 리다이렉트한다.
-- `docId`, `chapterId`, `source`를 `PreMentionWorkbench`에 전달한다.
+- `docId`, `chapterId`, `runId`, `source`, `view`를 `PreMentionWorkbench`에 전달한다.
+- book QA URL은 추가로 `qaCorpusId`, `readerChapterId`, `readerPid`를 전달하며,
+  이전 챕터 citation으로 이동할 때도 이 원래 reader position을 유지한다.
 - `source`는 `current`, `legacy`, `v3`를 지원한다.
 
 ### 공통 UI
@@ -197,6 +199,12 @@ V3의 evidence 후보 타입은 `src/lib/pipeline/v3-evidence-types.ts`에 정�
 - mental/cognitive place는 강제 drop 대상이다.
 - `support`와 `drop` 후보는 timeline graph에 표시하지 않는다.
 
+새 `EVID.3` 산출물은 `v3-evidence-candidate-gate-0.2`이며, 모델 출력이
+아니라 정제 후보에서 온 `pid`, `span`, `normalized`를 보존한다. 이
+provenance가 있어야 문단 retrieval record와 전역 entity alias의 최초 공개
+위치를 복구할 수 있다. 이전 `EVID.3` 산출물은 기존 단일 챕터 QA에서는
+계속 읽을 수 있지만 `BOOK.1` 준비 완료 상태로 인정하지 않는다.
+
 ### `EVID.4`
 
 구현 파일:
@@ -328,6 +336,12 @@ V3의 evidence 후보 타입은 `src/lib/pipeline/v3-evidence-types.ts`에 정�
 
 ### `IDX.1`
 
+현재 artifact version은 `v3-retrieval-index-0.2`이다. `PRE.1`, `PRE.2`,
+`EVID.4`, `MEM.1`, `EVENT.2`, `GOAL.1`, `CAUS.1`, `MEM.2`를 입력으로 받아
+기존 structured/graph record에 story paragraph descriptor를 추가한다. 문단
+descriptor에는 안정적인 ID, 정확한 한 문단 span, entity/evidence ref만
+저장하며 원문 text는 Firestore artifact에 복제하지 않는다.
+
 구현 파일:
 
 - `src/lib/pipeline/v3-narrative-memory.ts`
@@ -339,6 +353,14 @@ V3의 evidence 후보 타입은 `src/lib/pipeline/v3-evidence-types.ts`에 정�
 - semantic index의 canonical source text를 제공한다.
 
 ### `IDX.2`
+
+현재 artifact version은 `v3-semantic-vector-index-0.2`이다. `IDX.1`의 paragraph
+descriptor를 pinned `PRE.1` 원문으로 hydrate한 뒤 전체 document fingerprint를
+계산한다. vector payload는 다음 content-addressed gzip 경로에 저장된다.
+
+```text
+documents_v3/{docId}/chapters/{chapterId}/runs/{runId}/indexes/idx2/{contentHash}.vectors.json.gz
+```
 
 구현 파일:
 
@@ -390,6 +412,39 @@ V3의 evidence 후보 타입은 `src/lib/pipeline/v3-evidence-types.ts`에 정�
 - 기록 패널은 최신 20개를 먼저 읽고, `Load more`로 20개씩 추가한다.
 - 저장 기록을 선택하면 LLM을 다시 호출하지 않고 질문, 답변, 인용, retrieval hit snapshot을 복원한다.
 - 개별 기록을 삭제할 수 있으며, 기록 저장·조회 오류는 현재 QA 답변 흐름을 막지 않는다.
+
+### Book-scoped `Reading QA`
+
+단일 챕터 QA와 별도로 `BOOK.1` corpus를 사용하는 federated path가 구현되어
+있다. corpus는 canonical chapter order, chapter별 pinned run, resolved stage
+artifact ID, deterministic fingerprint, 보수적으로 묶은 전역 entity group을
+고정한다. 동일 entity는 같은 type이며 관찰된 canonical label/alias가 정확히
+일치할 때만 묶고, 대명사·generic role·같은 챕터 안의 모호한 중복은 합치지
+않는다.
+
+검색 전에 reader position `{ chapter_id, pid }`를 적용한다. 이전 챕터는
+완전히 읽을 수 있고 현재 챕터는 PID prefix까지만 읽을 수 있으며 이후
+챕터/PID는 lexical, semantic, entity, graph expansion 전에 제거된다. 허용된
+챕터 전체의 `IDX.2`가 같은 model/dimension으로 준비되어야 하며, book path는
+단일 챕터 path와 달리 semantic fallback을 하지 않는다.
+
+답변과 히스토리는 chapter-qualified `{ chapter_id, pid }` citation을 사용한다.
+book history는 `qa_corpus_id` scope와 원래 reader position을 저장하며 legacy
+chapter/run history와 분리된다. UI의 이전 챕터 citation은 manifest의 pinned
+run으로 이동하면서 `qaCorpusId`와 reader position을 URL에 그대로 보존한다.
+
+#### 기존 run을 book-ready 상태로 재빌드하기
+
+1. 각 챕터에서 새 `EVID.3`가 `pid/span/normalized`를 보존하도록 `EVID.3`부터
+   downstream stage를 다시 실행한다.
+2. `EVID.4` 이후 memory stage와 paragraph-capable `IDX.1`, hydrated `IDX.2`까지
+   완료한다.
+3. Reading QA에서 corpus를 생성하거나 재빌드한다. 생성된 readiness 목록에
+   허용 reader-prefix의 오류가 없어야 book 질문 버튼이 활성화된다.
+
+기존 산출물과 history는 삭제하거나 변환하지 않는다. 이전 산출물은 계속
+단일 챕터 QA에서 사용할 수 있고, 새 `BOOK.1`은 content-addressed artifact를
+별도로 pin한다.
 
 ## 7. 프롬프트 구성
 
@@ -483,8 +538,8 @@ V3의 evidence 후보 타입은 `src/lib/pipeline/v3-evidence-types.ts`에 정�
 - `GOAL.1` requires `EVENT.2`, `MEM.0`, `MEM.1`
 - `CAUS.1` requires `EVENT.2`, `GOAL.1`, `MEM.0`
 - `MEM.2` requires `MEM.1`, `EVENT.2`, `GOAL.1`, `CAUS.1`
-- `IDX.1` requires `MEM.1`, `EVENT.2`, `GOAL.1`, `CAUS.1`, `MEM.2`
-- `IDX.2` requires `IDX.1`
+- `IDX.1` requires `PRE.1`, `PRE.2`, `EVID.4`, `MEM.1`, `EVENT.2`, `GOAL.1`, `CAUS.1`, `MEM.2`
+- `IDX.2` requires `IDX.1`, `PRE.1`
 
 재실행 시 downstream 결과는 삭제된다.
 
@@ -575,6 +630,16 @@ V3에서 직접 사용하거나 V3 source를 지원하는 endpoint:
   - 동일한 progress-safe retrieval을 사용해 원문 근거 답변과 서버 검증 인용을 생성
 - `GET|POST|DELETE /api/v3/qa-history`
   - V3 document/chapter/run scope의 QA 기록을 20개 단위로 조회·저장·삭제
+- `GET|POST /api/pipeline/v3-book-qa-corpus`
+  - `BOOK.1` corpus를 조회하거나 canonical chapter order와 pinned artifacts로 생성
+- `POST /api/pipeline/v3-book-qa-answer`
+  - reader position 안의 모든 허용 챕터를 한 번에 검색하고 chapter-qualified 근거 답변을 생성
+- `GET|POST|DELETE /api/v3/book-qa-history`
+  - `qa_corpus_id`와 reader position으로 분리된 book answer snapshot을 20개 단위로 관리
+- 상태 계약
+  - corpus 미존재는 `404`; 잘못된 요청·reader position·cursor는 `400`
+  - immutable/malformed corpus, readiness·index·history integrity 문제는 `409`
+  - 준비된 검색에서 읽을 수 있는 근거가 없는 경우에만 `insufficient_evidence`
 - `POST /api/pipeline/v3-mentions`
   - sidecar `ENT.1` 실행
 
@@ -596,6 +661,17 @@ V3에서 직접 사용하거나 V3 source를 지원하는 endpoint:
 - `tests/v3-semantic-index.test.ts`
 - `tests/v3-semantic-stage-registration.test.ts`
 - `tests/v3-navigation.test.ts`
+- `tests/v3-retrieval-documents.test.ts`
+- `tests/v3-semantic-vector-storage.test.ts`
+- `tests/v3-book-qa-corpus.test.ts`
+- `tests/v3-book-entity-grouping.test.ts`
+- `tests/v3-book-qa-corpus-store.test.ts`
+- `tests/v3-book-qa-corpus-service.test.ts`
+- `tests/v3-book-qa-retrieval.test.ts`
+- `tests/v3-book-qa-retrieval-service.test.ts`
+- `tests/v3-book-qa-answer.test.ts`
+- `tests/v3-book-qa-history.test.ts`
+- `tests/v3-book-qa-view-model.test.ts`
 - `tests/v3-timeline-graph-utils.test.ts`
 
 테스트가 다루는 범위:
@@ -624,7 +700,10 @@ V3에서 직접 사용하거나 V3 source를 지원하는 endpoint:
 
 ## 14. 현재 한계와 주의점
 
-- V3는 현재 chapter/run 단위다. full-book orchestration은 아직 없다.
+- `BOOK.1` 기반 full-book QA는 구현되어 있다. 다만 이전 `EVID.3`, paragraph가
+  없는 `IDX.1`, 이전 `IDX.2` 산출물은 단일 챕터 호환용으로만 읽히며 book QA를
+  사용하려면 각 챕터의 `EVID.3`부터 `IDX.2`까지 다시 실행한 뒤 corpus를
+  생성하거나 재빌드해야 한다.
 - Reading QA 답변은 저장되지만 각 항목은 독립된 단일 질문이다. 후속 질문 문맥과 streaming은 아직 없다.
 - `EVID.4`는 rule 기반이며, 완전한 LLM coreference 단계는 아니다.
 - `action`, `goal`, `causality`는 entity clustering 대상이 아니다.

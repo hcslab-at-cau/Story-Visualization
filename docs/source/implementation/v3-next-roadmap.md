@@ -1,8 +1,10 @@
 # V3 Next Roadmap Notes
 
-Last updated: 2026-07-15
+Last updated: 2026-08-03
 
-이 문서는 V3 후속 설계를 보존한다. 2026-07-15 현재 `IDX.2` Semantic Vector Index, query-time hybrid retrieval, 원문 근거 답변, 서버 검증 인용, scope별 QA 기록 저장까지 구현됐다.
+이 문서는 V3 후속 설계를 보존한다. 2026-08-03 현재 paragraph-capable
+`IDX.1`/`IDX.2`, `BOOK.1` corpus, reader-position-safe cross-chapter retrieval,
+chapter-qualified grounded answer, book-scoped history와 UI navigation까지 구현됐다.
 
 ## Current Direction
 
@@ -20,9 +22,9 @@ V3의 장기 목표는 `EVENT.1`과 `SCENE.0` 결과를 reader-progress-safe QA�
 8. `IDX.2` Semantic Vector Index
 9. `QA.R1` Progress-bounded Hybrid Evidence Retrieval
 10. `QA.A1` Grounded Answer and Citation Validation
-11. `QA.E1` Retrieval/Answer Evaluation Set
-12. `QA.R2` Evidence Reranking, only if evaluation justifies it
-13. `BOOK.1` Cross-chapter Progressive Retrieval
+11. `BOOK.1` Cross-chapter Progressive Retrieval
+12. `QA.E1` Retrieval/Answer Evaluation Set
+13. `QA.R2` Evidence Reranking, only if evaluation justifies it
 
 ## Why `MEM.0` First
 
@@ -85,25 +87,46 @@ Create progressive memory views:
 
 ### `IDX.1`
 
-Structured and graph index remains the canonical source for retrieval documents and links.
+`v3-retrieval-index-0.2` adds source paragraph descriptors to the structured and
+graph records without copying raw paragraph text into Firestore. `PRE.1`,
+`PRE.2`, and `EVID.4` are now explicit inputs.
 
 ### `IDX.2`
 
-Implemented with OpenRouter embeddings and a V3-only Firebase Storage vector blob. Firestore keeps only compact metadata and integrity fields, and the write API rejects current/legacy sources. A dedicated vector database remains deferred until chapter-level linear cosine search becomes a measured bottleneck.
+`v3-semantic-vector-index-0.2` hydrates paragraph text from pinned `PRE.1`, fingerprints
+the complete document set, and stores vectors in a content-addressed V3 Firebase
+Storage blob. Firestore keeps only compact metadata and integrity fields, and
+the write API rejects current/legacy sources. A dedicated vector database
+remains deferred until linear cosine search becomes a measured bottleneck.
 
 ### `QA.R1`
 
-Implemented as a query-time API and `Reading QA` tab, not a stored pipeline stage. Reader progress is mandatory; records beyond the cutoff or without a resolvable span fail closed. It fuses lexical and semantic ranks with RRF when `IDX.2` exists, and then expands graph neighbors only among progress-safe records. Runs without `IDX.2` use lexical fallback.
+Implemented as query-time single-chapter and federated book APIs, not stored
+pipeline stages. Reader progress is mandatory; records beyond the cutoff or
+without a resolvable span fail closed. The single-chapter path keeps lexical
+fallback when `IDX.2` is absent. The book path requires compatible `IDX.2`
+artifacts for every readable chapter, removes future chapter/PID data before
+all ranking and expansion, and applies one global RRF.
 
 ### `QA.A1`
 
-Implemented as a query-time grounded-answer API. The LLM receives only PRE.1 source paragraphs covered by progress-safe retrieval hits; its evidence text is reconstructed from those paragraphs instead of reusing generated retrieval summaries. It must return paragraph PIDs and retrieval evidence IDs; the server rejects the entire answer if any ID is unknown or paragraph/evidence associations do not match. `insufficient_evidence` model text is discarded to avoid leaking unsupported future information. The Reading QA tab shows the answer first and keeps retrieval cards below it for inspection.
+Implemented as query-time grounded-answer APIs. The LLM receives only `PRE.1`
+source paragraphs covered by progress-safe retrieval hits; evidence text is
+reconstructed instead of reusing generated summaries. Single-chapter answers
+use PIDs, while book answers use `{ chapter_id, pid }`. The server rejects the
+entire answer if any citation/evidence ID is unknown, future, or incorrectly
+associated. `insufficient_evidence` model text is discarded.
 
 ### `QA.H1`
 
-Implemented as V3-only Firestore history scoped by document, chapter, and run. The UI loads the newest 20 entries first, paginates in 20-entry batches, restores compact answer snapshots without another LLM call, and supports deletion. This is persistence for independent questions, not multi-turn conversation memory.
+Two isolated V3 histories are implemented. Legacy single-chapter entries stay
+scoped by document/chapter/run. Book entries use
+`documents_v3/{docId}/book_qa_history/{scopeId}/entries/{entryId}`, where the
+scope derives from `qa_corpus_id`, and persist the original reader position plus
+chapter-qualified hits/citations. Both paginate newest-first in 20-entry pages,
+restore snapshots without another LLM call, and support deletion.
 
-## Deferred QA Direction
+## QA Evaluation and Follow-up Direction
 
 ### `QA.E1`
 
@@ -115,6 +138,16 @@ Cross-encoder reranking remains deferred until `QA.E1` shows a concrete ranking 
 
 ### `BOOK.1`
 
-Current retrieval is chapter/run scoped. Cross-chapter QA needs a book-level progress coordinate, chapter-aware source spans, and a policy for indexing only chapters the reader has reached.
+Shipped baseline: immutable corpus manifests pin canonical chapter order, run
+and artifact revisions; conservative exact-alias grouping connects recurring
+cast/place/object entities; reader position controls the searchable chapter
+prefix; answers and history use chapter-qualified citations; the UI preserves
+the corpus and original reader position across citation navigation.
+
+Older `EVID.3`, paragraph-less `IDX.1`, and pre-0.2 `IDX.2` artifacts remain
+single-chapter compatible but require a downstream rebuild before a corpus is
+book-ready. Future `BOOK.1` work should be driven by evaluation: better
+diagnostics for large corpora, measured performance thresholds, and only then a
+dedicated vector store or reranker if needed.
 
 Follow-up question resolution, multi-turn conversation context, and streaming remain deferred until single-turn answer quality is measured.

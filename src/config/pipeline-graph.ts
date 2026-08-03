@@ -7,10 +7,13 @@ export interface PipelineStageEdge {
 
 export const PIPELINE_STAGE_EDGES: PipelineStageEdge[] = [
   { from: "PRE.1", to: "PRE.2" },
+  { from: "PRE.1", to: "IDX.1" },
+  { from: "PRE.1", to: "IDX.2" },
   { from: "PRE.2", to: "EVID.1A" },
   { from: "PRE.2", to: "EVID.1B" },
   { from: "PRE.2", to: "EVID.1C" },
   { from: "PRE.2", to: "EVID.1D" },
+  { from: "PRE.2", to: "IDX.1" },
   { from: "EVID.1A", to: "EVID.2" },
   { from: "EVID.1B", to: "EVID.2" },
   { from: "EVID.1C", to: "EVID.2" },
@@ -18,6 +21,7 @@ export const PIPELINE_STAGE_EDGES: PipelineStageEdge[] = [
   { from: "EVID.2", to: "EVID.3" },
   { from: "EVID.3", to: "EVID.4" },
   { from: "EVID.4", to: "EVENT.1" },
+  { from: "EVID.4", to: "IDX.1" },
   { from: "EVENT.1", to: "SCENE.0" },
   { from: "SCENE.0", to: "MEM.0" },
   { from: "MEM.0", to: "MEM.1" },
@@ -64,15 +68,15 @@ export const PIPELINE_STAGE_EDGES: PipelineStageEdge[] = [
 ]
 
 const DIRECT_DEPENDENTS: Partial<Record<StageId, StageId[]>> = {
-  "PRE.1": ["PRE.2"],
-  "PRE.2": ["EVID.1A", "EVID.1B", "EVID.1C", "EVID.1D", "ENT.1", "STATE.2"],
+  "PRE.1": ["PRE.2", "IDX.1", "IDX.2"],
+  "PRE.2": ["EVID.1A", "EVID.1B", "EVID.1C", "EVID.1D", "IDX.1", "ENT.1", "STATE.2"],
   "EVID.1A": ["EVID.2"],
   "EVID.1B": ["EVID.2"],
   "EVID.1C": ["EVID.2"],
   "EVID.1D": ["EVID.2"],
   "EVID.2": ["EVID.3"],
   "EVID.3": ["EVID.4"],
-  "EVID.4": ["EVENT.1"],
+  "EVID.4": ["EVENT.1", "IDX.1"],
   "EVENT.1": ["SCENE.0"],
   "SCENE.0": ["MEM.0"],
   "MEM.0": ["MEM.1"],

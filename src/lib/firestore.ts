@@ -74,7 +74,7 @@ export {
   parseFirestoreDataSource,
 }
 
-interface FirestoreReadOptions {
+export interface FirestoreReadOptions {
   source?: FirestoreDataSource
 }
 
@@ -245,8 +245,8 @@ const REQUIRED_STAGE_DEPENDENCIES: Partial<Record<StageId, StageId[]>> = {
   "GOAL.1": ["EVENT.2", "MEM.0", "MEM.1"],
   "CAUS.1": ["EVENT.2", "GOAL.1", "MEM.0"],
   "MEM.2": ["MEM.1", "EVENT.2", "GOAL.1", "CAUS.1"],
-  "IDX.1": ["MEM.1", "EVENT.2", "GOAL.1", "CAUS.1", "MEM.2"],
-  "IDX.2": ["IDX.1"],
+  "IDX.1": ["PRE.1", "PRE.2", "EVID.4", "MEM.1", "EVENT.2", "GOAL.1", "CAUS.1", "MEM.2"],
+  "IDX.2": ["IDX.1", "PRE.1"],
   "ENT.1": ["PRE.2"],
   "ENT.2": ["ENT.1"],
   "ENT.3": ["ENT.2"],
@@ -780,6 +780,27 @@ export function chapterMetaFromRawChapters(rawChapters: readonly RawChapter[]): 
   })))
 }
 
+function chapterMetaFromCanonicalOrder(rawChapters: readonly RawChapter[]): ChapterMeta[] {
+  const seenFingerprints = new Set<string>()
+
+  return rawChapters
+    .map((raw, manifestIndex) => ({
+      chapterId: raw.chapter_id,
+      title: displayChapterTitle(raw, raw.chapter_id, manifestIndex),
+      index: manifestIndex,
+      raw,
+    }))
+    .filter((chapter) => !isLikelyNonStoryChapter(chapter.raw, chapter.chapterId))
+    .filter((chapter) => {
+      const fingerprint = rawChapterDuplicateFingerprint(chapter.raw)
+      if (!fingerprint) return true
+      if (seenFingerprints.has(fingerprint)) return false
+      seenFingerprints.add(fingerprint)
+      return true
+    })
+    .map(({ chapterId, title, index }) => ({ chapterId, title, index }))
+}
+
 export async function listChapters(
   docId: string,
   options: FirestoreReadOptions = {},
@@ -880,6 +901,87 @@ export async function loadStageResult<T extends PipelineArtifact>(
 
     if (!runSnap.exists) return null
     return (runData?.[stageKeyValue] as T) ?? null
+  })
+}
+
+/**
+ * Lists chapters in the authoritative order used by immutable BOOK.1 corpora.
+ * Canonical revisions retain their manifest order; legacy embedded workspaces
+ * retain the established numeric ordering from listChapters.
+ */
+export async function listBookQAChapters(
+  docId: string,
+  options: FirestoreReadOptions = {},
+): Promise<ChapterMeta[]> {
+  return withAdminErrorContext(async () => {
+    const listing = await corpusAwareFirestoreReads.listChapters(
+      docId,
+      options.source ?? "current",
+    )
+    return listing.kind === "canonical"
+      ? chapterMetaFromCanonicalOrder(listing.chapters)
+      : chapterMetaFromCandidates(listing.chapters)
+  })
+}
+
+/**
+ * Resolves only content-addressed artifact references pinned by the requested
+ * run. Legacy inline artifacts and run-local artifact documents are
+ * intentionally excluded so callers can construct immutable corpus manifests.
+ */
+export async function resolveRunStageArtifactRefs(
+  docId: string,
+  chapterId: string,
+  runId: string,
+  options: FirestoreReadOptions = {},
+): Promise<Record<string, string>> {
+  return withAdminErrorContext(async () => {
+    const runSnapshot = await runDocRef(docId, chapterId, runId, options.source).get()
+    if (!runSnapshot.exists) return {}
+    return readStageRefs(runSnapshot.data())
+  })
+}
+
+/**
+ * Loads a shared content-addressed artifact directly, with fail-closed stage
+ * identity validation. It never falls back to a run-local or inline payload.
+ */
+export async function loadStageResultByArtifactId<T extends PipelineArtifact>(
+  docId: string,
+  chapterId: string,
+  artifactId: string,
+  expectedStageKey: string,
+  options: FirestoreReadOptions = {},
+): Promise<T | null> {
+  return withAdminErrorContext(async () => {
+    const artifactSnapshot = await sharedArtifactDocRef(
+      docId,
+      chapterId,
+      artifactId,
+      options.source,
+    ).get()
+    if (!artifactSnapshot.exists) return null
+
+    const stored = artifactSnapshot.data()
+    const payload = stored?.payload
+    const storedStageKey = stored?.stageKey
+    const storedStageId = stored?.stageId
+    const payloadStageId = payload && typeof payload === "object"
+      ? (payload as Record<string, unknown>).stage_id
+      : undefined
+
+    if (
+      storedStageKey !== expectedStageKey ||
+      typeof storedStageId !== "string" ||
+      stageKey(storedStageId as StageId) !== expectedStageKey ||
+      payloadStageId !== storedStageId
+    ) {
+      throw new Error(
+        `Shared artifact ${artifactId} does not match expected stage ${expectedStageKey}`,
+      )
+    }
+
+    return payload as T
   })
 }
 
