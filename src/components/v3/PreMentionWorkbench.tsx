@@ -41,6 +41,7 @@ import type {
   V3SemanticIndexArtifact,
   V3SemanticIndexStageId,
 } from "@/lib/pipeline/v3-semantic-index-types"
+import type { V3BookReaderPosition } from "@/lib/pipeline/v3-book-qa-types"
 import {
   deleteStageResult,
   listRuns,
@@ -58,8 +59,11 @@ import type { ChapterMeta } from "@/types/ui"
 interface Props {
   initialDocId: string
   initialChapterId?: string
+  initialRunId?: string
   initialSeedSource?: DataSource
   initialView?: V3WorkbenchView
+  initialQACorpusId?: string
+  initialReaderPosition?: V3BookReaderPosition
 }
 
 interface PreResults {
@@ -438,14 +442,17 @@ async function runPreStage<T>(
 export default function PreMentionWorkbench({
   initialDocId,
   initialChapterId,
+  initialRunId,
   initialSeedSource = CURRENT_SOURCE,
   initialView = "pipeline",
+  initialQACorpusId,
+  initialReaderPosition,
 }: Props) {
   const [docId, setDocId] = useState(initialDocId)
   const [chapters, setChapters] = useState<ChapterMeta[]>([])
   const [chapterId, setChapterId] = useState(initialChapterId ?? "")
   const [seedSource, setSeedSource] = useState<DataSource>(initialSeedSource)
-  const [runId, setRunId] = useState("")
+  const [runId, setRunId] = useState(initialRunId ?? "")
   const [runs, setRuns] = useState<RunMeta[]>([])
   const [results, setResults] = useState<PreResults>({})
   const [workbenchView, setWorkbenchView] = useState<WorkbenchView>(initialView)
@@ -467,10 +474,10 @@ export default function PreMentionWorkbench({
   const [scene0Model, setScene0Model] = useState(DEFAULT_STAGE_MODELS["SCENE.0"] ?? "google/gemini-3.5-flash")
   const [ent1Model, setEnt1Model] = useState(DEFAULT_STAGE_MODELS["ENT.1"] ?? "google/gemini-3.5-flash")
   const refreshResultsRequestRef = useRef(0)
-
-  useEffect(() => {
-    setRunId((current) => current || createTimestampRunId())
-  }, [])
+  const requestedInitialRunRef = useRef<{ chapterId?: string; runId?: string }>({
+    chapterId: initialChapterId,
+    runId: initialRunId,
+  })
 
   useEffect(() => {
     let cancelled = false
@@ -478,7 +485,8 @@ export default function PreMentionWorkbench({
     async function loadInitialDocument() {
       setDocId(initialDocId)
       setSeedSource(initialSeedSource)
-      setRunId(createTimestampRunId())
+      requestedInitialRunRef.current = { chapterId: initialChapterId, runId: initialRunId }
+      setRunId(initialRunId ?? createTimestampRunId())
       setRuns([])
       setResults({})
       setActiveStage("PRE.1")
@@ -503,7 +511,7 @@ export default function PreMentionWorkbench({
     return () => {
       cancelled = true
     }
-  }, [initialChapterId, initialDocId, initialSeedSource, initialView])
+  }, [initialChapterId, initialDocId, initialRunId, initialSeedSource, initialView])
 
   const selectedChapterIndex = chapters.findIndex((chapter) => chapter.chapterId === chapterId)
   const selectedChapter = selectedChapterIndex >= 0 ? chapters[selectedChapterIndex] : undefined
@@ -537,7 +545,8 @@ export default function PreMentionWorkbench({
   }, [chapterId, docId, runId])
 
   useEffect(() => {
-    void refreshResults()
+    const timeoutId = window.setTimeout(() => void refreshResults(), 0)
+    return () => window.clearTimeout(timeoutId)
   }, [refreshResults])
 
   useEffect(() => {
@@ -555,7 +564,15 @@ export default function PreMentionWorkbench({
         if (cancelled) return
 
         setRuns(nextRuns)
+        const requested = requestedInitialRunRef.current
+        const requestedRunId = requested.chapterId === chapterId
+          && requested.runId
+          && nextRuns.some((run) => run.runId === requested.runId)
+          ? requested.runId
+          : undefined
+        if (requested.chapterId === chapterId) requestedInitialRunRef.current = {}
         setRunId((current) => {
+          if (requestedRunId) return requestedRunId
           if (current && nextRuns.some((run) => run.runId === current)) return current
 
           return chooseExistingRunId(nextRuns) || createTimestampRunId(nextRuns.map((run) => run.runId))
@@ -574,6 +591,7 @@ export default function PreMentionWorkbench({
   }, [chapterId, docId])
 
   function handleChapterChange(nextChapterId: string) {
+    requestedInitialRunRef.current = {}
     setChapterId(nextChapterId)
     setRunId(createTimestampRunId([runId]))
     setResults({})
@@ -1575,6 +1593,8 @@ export default function PreMentionWorkbench({
                 contentUnits={results.pre2}
                 retrievalIndex={results.idx1}
                 semanticIndex={results.idx2}
+                qaCorpusId={initialQACorpusId}
+                readerPosition={initialReaderPosition}
               />
             </>
           )}

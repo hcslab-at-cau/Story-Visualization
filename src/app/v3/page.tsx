@@ -4,6 +4,7 @@ import PreMentionWorkbench from "@/components/v3/PreMentionWorkbench"
 import {
   firstSearchParam,
   parseV3NavigationSource,
+  parseV3ReaderPosition,
   parseV3WorkbenchView,
 } from "@/components/v3/v3-navigation"
 import { redirect } from "next/navigation"
@@ -12,8 +13,12 @@ interface V3PageProps {
   searchParams: Promise<{
     docId?: string | string[]
     chapterId?: string | string[]
+    runId?: string | string[]
     source?: string | string[]
     view?: string | string[]
+    qaCorpusId?: string | string[]
+    readerChapterId?: string | string[]
+    readerPid?: string | string[]
   }>
 }
 
@@ -22,8 +27,11 @@ export default async function V3Page({ searchParams }: V3PageProps) {
   const docId = firstSearchParam(params.docId)
   if (!docId) redirect("/v3/library")
   const chapterId = firstSearchParam(params.chapterId)
+  const runId = firstSearchParam(params.runId)?.trim() || undefined
   const source = parseV3NavigationSource(params.source)
   const view = parseV3WorkbenchView(params.view)
+  const qaCorpusId = firstSearchParam(params.qaCorpusId)?.trim() || undefined
+  const readerPosition = parseV3ReaderPosition(params.readerChapterId, params.readerPid)
 
   return (
     <LanguageProvider>
@@ -43,8 +51,11 @@ export default async function V3Page({ searchParams }: V3PageProps) {
           <PreMentionWorkbench
             initialDocId={docId}
             initialChapterId={chapterId}
+            initialRunId={runId}
             initialSeedSource={source}
             initialView={view}
+            initialQACorpusId={qaCorpusId}
+            initialReaderPosition={readerPosition}
           />
         </main>
       </div>
