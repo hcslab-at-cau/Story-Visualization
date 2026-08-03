@@ -16,7 +16,10 @@ import type {
   V3SemanticIndexArtifact,
   V3SemanticVectorPayload,
 } from "@/lib/pipeline/v3-semantic-index-types"
-import { downloadV3SemanticVectors } from "@/lib/storage"
+import {
+  downloadV3SemanticVectors,
+  V3SemanticVectorIntegrityError,
+} from "@/lib/storage"
 import type { PreparedChapter } from "@/types/schema"
 
 export class V3QAPrerequisiteError extends Error {
@@ -38,21 +41,30 @@ export async function loadValidatedV3SemanticVectorPayload(params: {
   downloadVectors?: typeof downloadV3SemanticVectors
 }): Promise<V3SemanticVectorPayload> {
   const downloadVectors = params.downloadVectors ?? downloadV3SemanticVectors
+  let payload: V3SemanticVectorPayload
   try {
-    const payload = await downloadVectors({
+    payload = await downloadVectors({
       storagePath: params.semanticIndex.vector_blob.storage_path,
       expectedContentHash: params.semanticIndex.vector_blob.content_hash,
     })
+  } catch (error) {
+    if (error instanceof V3SemanticVectorIntegrityError) {
+      throw invalidV3SemanticIndexError(error)
+    }
+    throw error
+  }
+
+  try {
     validateV3SemanticVectorPayload(payload, {
       model: params.semanticIndex.embedding_model,
       dimensions: params.semanticIndex.vector_stats.dimensions,
       vectorCount: params.semanticIndex.vector_stats.vectors,
       sourceTextFingerprint: params.semanticIndex.source_text_fingerprint,
     })
-    return payload
   } catch (error) {
     throw invalidV3SemanticIndexError(error)
   }
+  return payload
 }
 
 export function resolveV3QARetrievalDocuments(params: {
@@ -101,11 +113,7 @@ export async function retrieveV3QAEvidenceForRun(params: {
       model: semanticIndex.embedding_model,
       dimensions: semanticIndex.vector_stats.dimensions,
     })
-    try {
-      semanticScores = semanticScoresByRecordId(queryEmbedding.embeddings[0], vectorPayload)
-    } catch (error) {
-      throw invalidV3SemanticIndexError(error)
-    }
+    semanticScores = semanticScoresByRecordId(queryEmbedding.embeddings[0], vectorPayload)
   }
 
   return retrieveV3QAEvidence({

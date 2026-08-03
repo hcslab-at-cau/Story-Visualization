@@ -15,6 +15,7 @@ import type {
   V3SemanticIndexArtifact,
   V3SemanticVectorPayload,
 } from "../src/lib/pipeline/v3-semantic-index-types.ts"
+import { V3SemanticVectorIntegrityError } from "../src/lib/storage.ts"
 import type { PreparedChapter } from "../src/types/schema.ts"
 
 function currentIndex(): V3RetrievalIndexArtifact {
@@ -102,12 +103,26 @@ test("semantic blob download or integrity failures become rerunnable IDX.2 confl
     () => loadValidatedV3SemanticVectorPayload({
       semanticIndex: semanticIndex(),
       downloadVectors: async () => {
-        throw new Error("IDX.2 vector blob content hash mismatch")
+        throw new V3SemanticVectorIntegrityError("IDX.2 vector blob content hash mismatch")
       },
     }),
     (error) => error instanceof V3QAPrerequisiteError
       && error.status === 409
       && /IDX\.2.*(?:rerun|rebuild)/i.test(error.message),
+  )
+})
+
+test("semantic storage credential or runtime failures remain operational errors", async () => {
+  const credentialError = new Error("Firebase credentials are unavailable")
+
+  await assert.rejects(
+    () => loadValidatedV3SemanticVectorPayload({
+      semanticIndex: semanticIndex(),
+      downloadVectors: async () => {
+        throw credentialError
+      },
+    }),
+    (error) => error === credentialError && !(error instanceof V3QAPrerequisiteError),
   )
 })
 

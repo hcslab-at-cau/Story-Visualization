@@ -1,7 +1,13 @@
 import assert from "node:assert/strict"
+import { createHash } from "node:crypto"
 import test from "node:test"
+import { gzipSync } from "node:zlib"
 
-import { prepareV3SemanticVectorUpload } from "../src/lib/storage.ts"
+import {
+  decodeV3SemanticVectorBlob,
+  prepareV3SemanticVectorUpload,
+  V3SemanticVectorIntegrityError,
+} from "../src/lib/storage.ts"
 import { V3_SEMANTIC_VECTOR_VERSION } from "../src/lib/pipeline/v3-semantic-index-types.ts"
 
 function vectorPayload(embedding: number[]) {
@@ -35,5 +41,24 @@ test("semantic vector uploads use deterministic content-addressed paths without 
   assert.equal(
     first.storagePath,
     `documents_v3/doc/chapters/ch01/runs/run-1/indexes/idx2/${first.hash}.vectors.json.gz`,
+  )
+})
+
+test("semantic vector decoding classifies malformed gzip and JSON as integrity failures", () => {
+  const malformedGzip = Buffer.from("not-gzip", "utf8")
+  const malformedJson = gzipSync(Buffer.from("{not-json", "utf8"))
+  const hash = (buffer: Buffer) => createHash("sha256").update(buffer).digest("hex")
+
+  assert.throws(
+    () => decodeV3SemanticVectorBlob(malformedJson, "wrong-content-hash"),
+    (error) => error instanceof V3SemanticVectorIntegrityError && /hash/i.test(error.message),
+  )
+  assert.throws(
+    () => decodeV3SemanticVectorBlob(malformedGzip, hash(malformedGzip)),
+    (error) => error instanceof V3SemanticVectorIntegrityError && /gzip/i.test(error.message),
+  )
+  assert.throws(
+    () => decodeV3SemanticVectorBlob(malformedJson, hash(malformedJson)),
+    (error) => error instanceof V3SemanticVectorIntegrityError && /JSON/i.test(error.message),
   )
 })

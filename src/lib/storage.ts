@@ -37,6 +37,13 @@ export interface StoredSemanticVectorBlob extends StoredSourceFile {
   contentHash: string
 }
 
+export class V3SemanticVectorIntegrityError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = "V3SemanticVectorIntegrityError"
+  }
+}
+
 export interface PreparedV3SemanticVectorUpload {
   buffer: Buffer
   hash: string
@@ -449,16 +456,36 @@ export async function uploadV3SemanticVectors(params: {
   })
 }
 
+export function decodeV3SemanticVectorBlob(
+  buffer: Buffer,
+  expectedContentHash: string,
+): V3SemanticVectorPayload {
+  const contentHash = createHash("sha256").update(buffer).digest("hex")
+  if (contentHash !== expectedContentHash) {
+    throw new V3SemanticVectorIntegrityError("IDX.2 vector blob content hash mismatch")
+  }
+
+  let json: string
+  try {
+    json = gunzipSync(buffer).toString("utf8")
+  } catch {
+    throw new V3SemanticVectorIntegrityError("IDX.2 vector blob gzip decoding failed")
+  }
+
+  try {
+    return JSON.parse(json) as V3SemanticVectorPayload
+  } catch {
+    throw new V3SemanticVectorIntegrityError("IDX.2 vector blob JSON decoding failed")
+  }
+}
+
 export async function downloadV3SemanticVectors(params: {
   storagePath: string
   expectedContentHash: string
 }): Promise<V3SemanticVectorPayload> {
-  return withStorageErrorContext(async () => {
+  const buffer = await withStorageErrorContext(async () => {
     const [buffer] = await getAdminStorageBucket().file(params.storagePath).download()
-    const contentHash = createHash("sha256").update(buffer).digest("hex")
-    if (contentHash !== params.expectedContentHash) {
-      throw new Error("IDX.2 vector blob content hash mismatch")
-    }
-    return JSON.parse(gunzipSync(buffer).toString("utf8")) as V3SemanticVectorPayload
+    return buffer
   })
+  return decodeV3SemanticVectorBlob(buffer, params.expectedContentHash)
 }
