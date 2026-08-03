@@ -53,7 +53,10 @@ export default function ExistingDocumentsPicker({
   }, [source, t.documents.loadFailed])
 
   useEffect(() => {
-    void loadDocuments()
+    const timeoutId = window.setTimeout(() => {
+      void loadDocuments()
+    }, 0)
+    return () => window.clearTimeout(timeoutId)
   }, [loadDocuments])
 
   async function handleSelect(docId: string) {

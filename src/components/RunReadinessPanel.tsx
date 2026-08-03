@@ -46,7 +46,10 @@ export default function RunReadinessPanel({
   }, [chapterId, docId, runId])
 
   useEffect(() => {
-    void refresh()
+    const timeoutId = window.setTimeout(() => {
+      void refresh()
+    }, 0)
+    return () => window.clearTimeout(timeoutId)
   }, [refresh])
 
   async function handleRebuildProjection() {
