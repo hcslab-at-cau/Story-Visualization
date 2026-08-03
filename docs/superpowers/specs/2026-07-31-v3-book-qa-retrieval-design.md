@@ -97,6 +97,12 @@ PIDs remain chapter-local. All book-scoped spans and citations therefore use
 
 ## Paragraph Retrieval
 
+New `EVID.3` artifacts use `v3-evidence-candidate-gate-0.2` and preserve the
+source-controlled `pid`, `span`, and `normalized` fields needed to recover
+paragraph provenance. Older `EVID.3` artifacts remain readable by the legacy
+single-chapter path, but they are not eligible for a `BOOK.1` corpus and must
+be rebuilt before book-scoped QA can become ready.
+
 ### Lightweight `IDX.1` descriptors
 
 `V3RetrievalRecordType` gains `paragraph`. The `IDX.1` builder receives the
@@ -122,21 +128,27 @@ The exact paragraph text is not copied into the Firestore `IDX.1` artifact.
 This avoids duplicating a potentially large chapter and preserves the
 canonical source as the text authority.
 
-The `IDX.1` artifact version is bumped. Its source-stage contract includes
-`PRE.1`, `PRE.2`, and `EVID.4` so paragraph story filtering, text hydration,
-and entity references are reproducible.
+The `IDX.1` artifact version is `v3-retrieval-index-0.2`. Its source-stage
+contract includes `PRE.1`, `PRE.2`, and `EVID.4` so paragraph story filtering,
+text hydration, and entity references are reproducible.
 
 ### Hydrated `IDX.2` documents
 
 The semantic-index builder hydrates paragraph descriptors from `PRE.1`, while
 continuing to use existing `IDX.1.text_documents` for scene, event, goal, and
 causal records. The source fingerprint covers both sets in deterministic
-record-ID order. The `IDX.2` artifact version is bumped and its source-stage
+record-ID order. The `IDX.2` artifact version is
+`v3-semantic-vector-index-0.2` and its source-stage
 contract includes both `IDX.1` and `PRE.1`.
 
 At query time, the server reconstructs the same hydrated document set and
 rejects stale `IDX.2` metadata or vectors. Paragraph vectors stay in the
-existing chapter-scoped gzip vector blob; raw paragraph text does not.
+chapter-scoped, content-addressed gzip vector blob; raw paragraph text does
+not. The storage path is:
+
+```text
+documents_v3/{docId}/chapters/{chapterId}/runs/{runId}/indexes/idx2/{contentHash}.vectors.json.gz
+```
 
 Lexical search uses the hydrated paragraph text in memory. A paragraph hit has
 an exact one-paragraph span, so it can enter the grounded answer context even
@@ -277,10 +289,12 @@ its lexical fallback.
 
 ## Grounded Answer Contract
 
-A new book answer endpoint keeps the single-chapter contract stable:
+The book endpoints keep the single-chapter contracts stable:
 
 ```text
+GET|POST /api/pipeline/v3-book-qa-corpus
 POST /api/pipeline/v3-book-qa-answer
+GET|POST|DELETE /api/v3/book-qa-history
 ```
 
 Its request includes `docId`, `qaCorpusId`, `question`, and
@@ -320,13 +334,19 @@ legacy chapter/run history remains readable and unchanged.
 
 ## Errors and Diagnostics
 
-- Unknown corpus or fingerprint mismatch: `409`, rebuild the QA corpus.
+- Unknown corpus: `404`; create or select a `BOOK.1` corpus.
+- Immutable identity mismatch, malformed corpus, or fingerprint mismatch:
+  `409`; rebuild the QA corpus.
 - Reader chapter absent from the corpus or invalid PID: `400`.
 - Allowed chapter missing required `PRE.1`, `PRE.2`, `EVID.3`, `EVID.4`,
   `IDX.1`, or `IDX.2`: `409` with chapter and stage diagnostics.
 - Stale or corrupt vector payload: `409` with the affected chapter.
 - Mixed embedding model or vector dimensions: `409` with the incompatible
   chapters.
+- Invalid history cursor or malformed answer snapshot: `400`; an answer that
+  contains future or corrupt evidence is rejected before any history write.
+- Corrupt book-history scope or entry ownership: `409`; a genuine missing
+  history entry remains `404`.
 - No matching readable evidence after a ready search:
   `insufficient_evidence`.
 - Future-only matches are counted as blocked diagnostics but never returned.
