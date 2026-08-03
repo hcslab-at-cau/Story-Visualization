@@ -6,6 +6,7 @@ import {
   normalizeV3BookQAGroundedAnswer,
 } from "@/lib/pipeline/v3-book-qa-answer"
 import type {
+  V3BookQAAnswerContext,
   V3BookQAAnswerChapterParagraphInput,
   V3BookQAAnswerResult,
 } from "@/lib/pipeline/v3-book-qa-answer-types"
@@ -37,9 +38,24 @@ const REQUEST_KEYS = new Set([
   "model",
 ])
 
-interface V3BookQAAnswerRequest extends V3BookQARetrievalRequest {
+export interface V3BookQAAnswerRequest extends V3BookQARetrievalRequest {
   source: "v3"
   model?: string
+}
+
+export interface V3BookQAAnswerRouteDependencies {
+  retrieve(request: V3BookQARetrievalRequest): Promise<Awaited<ReturnType<typeof retrieveV3BookQAEvidenceForCorpus>>>
+  loadCorpus(docId: string, qaCorpusId: string): Promise<StoredV3BookQACorpus | null>
+  loadExactPRE1(params: {
+    docId: string
+    chapterId: string
+    runId: string
+    artifactId: string
+  }): Promise<PreparedChapter | null>
+  answerModel(params: {
+    request: V3BookQAAnswerRequest
+    context: V3BookQAAnswerContext
+  }): Promise<Record<string, unknown>>
 }
 
 function requestError(status: 400 | 404 | 409, code: string, message: string): V3BookQARequestError {
@@ -154,6 +170,7 @@ function validatePreparedChapter(params: {
 }
 
 async function loadNeededChapterParagraphs(params: {
+  dependencies: V3BookQAAnswerRouteDependencies
   request: V3BookQAAnswerRequest
   stored: StoredV3BookQACorpus
   hits: V3BookQARetrievalHit[]
@@ -178,13 +195,12 @@ async function loadNeededChapterParagraphs(params: {
     }
     let prepared: PreparedChapter | null
     try {
-      prepared = await loadStageResultByArtifactId<PreparedChapter>(
-        params.request.docId,
-        chapter.chapter_id,
+      prepared = await params.dependencies.loadExactPRE1({
+        docId: params.request.docId,
+        chapterId: chapter.chapter_id,
+        runId: chapter.run_id,
         artifactId,
-        stageKey("PRE.1"),
-        { source: "v3" },
-      )
+      })
     } catch (error) {
       if (error instanceof Error && /does not match expected stage/i.test(error.message)) {
         throw requestError(409, "pre1_integrity_mismatch", error.message)
@@ -232,6 +248,34 @@ async function loadNeededChapterParagraphs(params: {
   return result
 }
 
+function defaultDependencies(): V3BookQAAnswerRouteDependencies {
+  const store = createV3BookQACorpusStore()
+  return {
+    retrieve: retrieveV3BookQAEvidenceForCorpus,
+    loadCorpus: (docId, qaCorpusId) => store.load(docId, qaCorpusId),
+    loadExactPRE1: ({ docId, chapterId, artifactId }) =>
+      loadStageResultByArtifactId<PreparedChapter>(
+        docId,
+        chapterId,
+        artifactId,
+        stageKey("PRE.1"),
+        { source: "v3" },
+      ),
+    answerModel: ({ request, context }) => createLLMClient({
+      docId: request.docId,
+      chapterId: request.readerPosition.chapter_id,
+      runId: request.qaCorpusId,
+      source: "v3",
+      model: request.model,
+    }).answerV3BookQuestion({
+      question: request.question,
+      reader_position_json: formatJsonParam(request.readerPosition),
+      source_paragraphs_json: formatJsonParam(context.paragraphs),
+      retrieval_evidence_json: formatJsonParam(context.evidence),
+    }),
+  }
+}
+
 function errorResponse(error: unknown): Response {
   if (error instanceof SyntaxError) {
     return Response.json({ error: error.message, code: "invalid_json" }, { status: 400 })
@@ -251,64 +295,64 @@ function errorResponse(error: unknown): Response {
   }, { status: 500 })
 }
 
-export async function POST(request: Request): Promise<Response> {
-  try {
-    const body = parseV3BookQAAnswerRequest(await request.json())
-    const retrieval = await retrieveV3BookQAEvidenceForCorpus({
-      docId: body.docId,
-      qaCorpusId: body.qaCorpusId,
-      question: body.question,
-      readerPosition: body.readerPosition,
-      limit: body.limit,
-    })
-    if (retrieval.hits.length === 0) {
+export function createV3BookQAAnswerPostHandler(
+  dependencies: V3BookQAAnswerRouteDependencies = defaultDependencies(),
+): (request: Request) => Promise<Response> {
+  return async function postV3BookQAAnswer(request: Request): Promise<Response> {
+    try {
+      const body = parseV3BookQAAnswerRequest(await request.json())
+      const retrieval = await dependencies.retrieve({
+        docId: body.docId,
+        qaCorpusId: body.qaCorpusId,
+        question: body.question,
+        readerPosition: body.readerPosition,
+        limit: body.limit,
+      })
+      if (retrieval.hits.length === 0) {
+        const result: V3BookQAAnswerResult = {
+          retrieval,
+          answer: insufficientV3BookQAGroundedAnswer(),
+        }
+        return Response.json(result)
+      }
+
+      const stored = await dependencies.loadCorpus(body.docId, body.qaCorpusId)
+      if (!stored) throw requestError(404, "corpus_not_found", "BOOK.1 corpus was not found")
+      const chapterParagraphs = await loadNeededChapterParagraphs({
+        dependencies,
+        request: body,
+        stored,
+        hits: retrieval.hits,
+      })
+      const context = buildV3BookQAAnswerContext({
+        question: body.question,
+        manifest: stored.manifest,
+        readerPosition: body.readerPosition,
+        chapterParagraphs,
+        hits: retrieval.hits,
+      })
+      if (context.paragraphs.length === 0 || context.evidence.length === 0) {
+        const result: V3BookQAAnswerResult = {
+          retrieval,
+          answer: insufficientV3BookQAGroundedAnswer(),
+        }
+        return Response.json(result)
+      }
+
+      const raw = await dependencies.answerModel({ request: body, context })
       const result: V3BookQAAnswerResult = {
         retrieval,
-        answer: insufficientV3BookQAGroundedAnswer(),
+        answer: normalizeV3BookQAGroundedAnswer({ raw, context }),
       }
       return Response.json(result)
+    } catch (error) {
+      return errorResponse(error)
     }
-
-    const stored = await createV3BookQACorpusStore().load(body.docId, body.qaCorpusId)
-    if (!stored) throw requestError(404, "corpus_not_found", "BOOK.1 corpus was not found")
-    const chapterParagraphs = await loadNeededChapterParagraphs({
-      request: body,
-      stored,
-      hits: retrieval.hits,
-    })
-    const context = buildV3BookQAAnswerContext({
-      question: body.question,
-      manifest: stored.manifest,
-      readerPosition: body.readerPosition,
-      chapterParagraphs,
-      hits: retrieval.hits,
-    })
-    if (context.paragraphs.length === 0 || context.evidence.length === 0) {
-      const result: V3BookQAAnswerResult = {
-        retrieval,
-        answer: insufficientV3BookQAGroundedAnswer(),
-      }
-      return Response.json(result)
-    }
-
-    const raw = await createLLMClient({
-      docId: body.docId,
-      chapterId: body.readerPosition.chapter_id,
-      runId: body.qaCorpusId,
-      source: "v3",
-      model: body.model,
-    }).answerV3BookQuestion({
-      question: body.question,
-      reader_position_json: formatJsonParam(body.readerPosition),
-      source_paragraphs_json: formatJsonParam(context.paragraphs),
-      retrieval_evidence_json: formatJsonParam(context.evidence),
-    })
-    const result: V3BookQAAnswerResult = {
-      retrieval,
-      answer: normalizeV3BookQAGroundedAnswer({ raw, context }),
-    }
-    return Response.json(result)
-  } catch (error) {
-    return errorResponse(error)
   }
+}
+
+const defaultPostHandler = createV3BookQAAnswerPostHandler()
+
+export async function POST(request: Request): Promise<Response> {
+  return defaultPostHandler(request)
 }

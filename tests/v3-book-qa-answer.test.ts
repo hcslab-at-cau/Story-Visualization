@@ -6,8 +6,14 @@ import {
 } from "../src/lib/pipeline/v3-book-qa-answer.ts"
 import { buildV3BookQACorpusManifest } from "../src/lib/pipeline/v3-book-qa-corpus.ts"
 import type { V3BookQARetrievalHit } from "../src/lib/pipeline/v3-book-qa-retrieval.ts"
-import { parseV3BookQAAnswerRequest } from "../src/app/api/pipeline/v3-book-qa-answer/route.ts"
+import {
+  createV3BookQAAnswerPostHandler,
+  parseV3BookQAAnswerRequest,
+} from "../src/app/api/pipeline/v3-book-qa-answer/route.ts"
 import { V3BookQARequestError } from "../src/lib/server/v3-book-qa-retrieval-service.ts"
+import type { V3BookQARetrievalResult } from "../src/lib/pipeline/v3-book-qa-retrieval.ts"
+import type { StoredV3BookQACorpus } from "../src/lib/server/v3-book-qa-corpus-store.ts"
+import type { PreparedChapter } from "../src/types/schema.ts"
 
 function manifest() {
   return buildV3BookQACorpusManifest({
@@ -290,4 +296,250 @@ test("accepts only the exact v3 book-answer request contract", () => {
       (error: unknown) => error instanceof V3BookQARequestError && error.status === 400,
     )
   }
+})
+
+function routeRequest(body: unknown): Request {
+  return new Request("http://localhost/api/pipeline/v3-book-qa-answer", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: typeof body === "string" ? body : JSON.stringify(body),
+  })
+}
+
+function validRouteBody() {
+  return {
+    source: "v3",
+    docId: "doc-one",
+    qaCorpusId: "BOOK1_route",
+    question: "What did Alice eat?",
+    readerPosition: { chapter_id: "ch-one", pid: 0 },
+  }
+}
+
+function routeRetrieval(hits: V3BookQARetrievalHit[]): V3BookQARetrievalResult {
+  return {
+    artifact_version: "v3-book-qa-retrieval-0.1",
+    extraction_profile: "v3_book_qa_retrieval",
+    qa_corpus_id: "BOOK1_route",
+    retrieval_mode: "hybrid",
+    query: {
+      question: "What did Alice eat?",
+      normalized_terms: ["alice", "eat"],
+      reader_position: { chapter_id: "ch-one", pid: 0 },
+    },
+    stats: {
+      readable_chapters: 1,
+      total_records: hits.length,
+      searched_records: hits.length,
+      blocked_ahead_records: 0,
+      direct_hits: hits.length,
+      lexical_hits: hits.length,
+      semantic_hits: hits.length,
+      entity_group_hits: 0,
+      graph_neighbor_hits: 0,
+      returned_hits: hits.length,
+    },
+    hits,
+    graph_edges: [],
+  }
+}
+
+function routeCorpus(pre1ArtifactId: string | null = "pre1-content-id"): StoredV3BookQACorpus {
+  return {
+    manifest: buildV3BookQACorpusManifest({
+      docId: "doc-one",
+      chapters: [{
+        chapter_id: "ch-one",
+        chapter_title: "Chapter One",
+        chapter_index: 1,
+        run_id: "run-one",
+        progress_end_pid: 1,
+        artifact_ids: pre1ArtifactId ? { "PRE.1": pre1ArtifactId } : {},
+      }],
+    }),
+    groups: [],
+  }
+}
+
+function routePrepared(overrides: Partial<PreparedChapter> = {}): PreparedChapter {
+  return {
+    artifact_id: "pre1-content-id",
+    doc_id: "doc-one",
+    chapter_id: "ch-one",
+    run_id: "run-one",
+    stage_id: "PRE.1",
+    method: "epub+rule",
+    parents: {},
+    chapter_title: "Chapter One",
+    paragraph_count: 1,
+    char_count: 16,
+    raw_chapter: {
+      doc_id: "doc-one",
+      chapter_id: "ch-one",
+      title: "Chapter One",
+      text: "Alice ate cake.",
+      paragraphs: [{ pid: 0, start: 0, end: 15, text: "Alice ate cake." }],
+    },
+    ...overrides,
+  }
+}
+
+const routeHit = hit({
+  chapterId: "ch-one",
+  chapterTitle: "Chapter One",
+  chapterIndex: 1,
+  localId: "cake",
+  startPid: 0,
+})
+
+async function responseJson(response: Response): Promise<Record<string, unknown>> {
+  return await response.json() as Record<string, unknown>
+}
+
+test("POST returns 200 insufficient without loading corpus or calling the model when retrieval has no hits", async () => {
+  let modelCalls = 0
+  const post = createV3BookQAAnswerPostHandler({
+    retrieve: async () => routeRetrieval([]),
+    loadCorpus: async () => { throw new Error("must not load corpus") },
+    loadExactPRE1: async () => { throw new Error("must not load PRE.1") },
+    answerModel: async () => { modelCalls += 1; return {} },
+  })
+
+  const response = await post(routeRequest(validRouteBody()))
+  const body = await responseJson(response)
+  assert.equal(response.status, 200)
+  assert.equal((body.answer as { status: string }).status, "insufficient_evidence")
+  assert.equal(modelCalls, 0)
+})
+
+test("POST maps absent corpus and missing or corrupt pinned PRE.1 to 404/409", async (t) => {
+  await t.test("missing corpus", async () => {
+    const post = createV3BookQAAnswerPostHandler({
+      retrieve: async () => routeRetrieval([routeHit]),
+      loadCorpus: async () => null,
+      loadExactPRE1: async () => routePrepared(),
+      answerModel: async () => ({}),
+    })
+    assert.equal((await post(routeRequest(validRouteBody()))).status, 404)
+  })
+
+  await t.test("missing pinned PRE.1 reference", async () => {
+    const post = createV3BookQAAnswerPostHandler({
+      retrieve: async () => routeRetrieval([routeHit]),
+      loadCorpus: async () => routeCorpus(null),
+      loadExactPRE1: async () => routePrepared(),
+      answerModel: async () => ({}),
+    })
+    assert.equal((await post(routeRequest(validRouteBody()))).status, 409)
+  })
+
+  await t.test("mismatched PRE.1 identity", async () => {
+    const post = createV3BookQAAnswerPostHandler({
+      retrieve: async () => routeRetrieval([routeHit]),
+      loadCorpus: async () => routeCorpus(),
+      loadExactPRE1: async () => routePrepared({ run_id: "wrong-run" }),
+      answerModel: async () => ({}),
+    })
+    assert.equal((await post(routeRequest(validRouteBody()))).status, 409)
+  })
+
+  await t.test("corrupt PRE.1 paragraphs", async () => {
+    const validPrepared = routePrepared()
+    const post = createV3BookQAAnswerPostHandler({
+      retrieve: async () => routeRetrieval([routeHit]),
+      loadCorpus: async () => routeCorpus(),
+      loadExactPRE1: async () => ({
+        ...validPrepared,
+        raw_chapter: {
+          ...validPrepared.raw_chapter,
+          paragraphs: [
+            ...validPrepared.raw_chapter.paragraphs,
+            { pid: 0, start: 0, end: 15, text: "duplicate" },
+          ],
+        },
+      }),
+      answerModel: async () => ({}),
+    })
+    assert.equal((await post(routeRequest(validRouteBody()))).status, 409)
+  })
+
+  await t.test("missing PRE.1 payload", async () => {
+    const post = createV3BookQAAnswerPostHandler({
+      retrieve: async () => routeRetrieval([routeHit]),
+      loadCorpus: async () => routeCorpus(),
+      loadExactPRE1: async () => null,
+      answerModel: async () => ({}),
+    })
+    assert.equal((await post(routeRequest(validRouteBody()))).status, 409)
+  })
+})
+
+test("POST returns 200 insufficient without the model when progress-safe loading yields no valid context", async () => {
+  let modelCalls = 0
+  const mismatchedHit = { ...routeHit, record_id: "other-chapter:cake" }
+  const post = createV3BookQAAnswerPostHandler({
+    retrieve: async () => routeRetrieval([mismatchedHit]),
+    loadCorpus: async () => routeCorpus(),
+    loadExactPRE1: async () => routePrepared(),
+    answerModel: async () => { modelCalls += 1; return {} },
+  })
+
+  const response = await post(routeRequest(validRouteBody()))
+  const body = await responseJson(response)
+  assert.equal(response.status, 200)
+  assert.equal((body.answer as { status: string }).status, "insufficient_evidence")
+  assert.equal(modelCalls, 0)
+})
+
+test("POST maps unexpected retrieval, storage, and model failures to 500", async (t) => {
+  await t.test("retrieval", async () => {
+    const post = createV3BookQAAnswerPostHandler({
+      retrieve: async () => { throw new Error("retrieval unavailable") },
+      loadCorpus: async () => routeCorpus(),
+      loadExactPRE1: async () => routePrepared(),
+      answerModel: async () => ({}),
+    })
+    assert.equal((await post(routeRequest(validRouteBody()))).status, 500)
+  })
+
+  await t.test("storage", async () => {
+    const post = createV3BookQAAnswerPostHandler({
+      retrieve: async () => routeRetrieval([routeHit]),
+      loadCorpus: async () => { throw new Error("storage unavailable") },
+      loadExactPRE1: async () => routePrepared(),
+      answerModel: async () => ({}),
+    })
+    assert.equal((await post(routeRequest(validRouteBody()))).status, 500)
+  })
+
+  await t.test("pinned artifact storage", async () => {
+    const post = createV3BookQAAnswerPostHandler({
+      retrieve: async () => routeRetrieval([routeHit]),
+      loadCorpus: async () => routeCorpus(),
+      loadExactPRE1: async () => { throw new Error("artifact storage unavailable") },
+      answerModel: async () => ({}),
+    })
+    assert.equal((await post(routeRequest(validRouteBody()))).status, 500)
+  })
+
+  await t.test("model", async () => {
+    const post = createV3BookQAAnswerPostHandler({
+      retrieve: async () => routeRetrieval([routeHit]),
+      loadCorpus: async () => routeCorpus(),
+      loadExactPRE1: async () => routePrepared(),
+      answerModel: async () => { throw new Error("model unavailable") },
+    })
+    assert.equal((await post(routeRequest(validRouteBody()))).status, 500)
+  })
+})
+
+test("POST maps invalid JSON and malformed bodies to 400", async () => {
+  const post = createV3BookQAAnswerPostHandler({
+    retrieve: async () => routeRetrieval([]),
+    loadCorpus: async () => routeCorpus(),
+    loadExactPRE1: async () => routePrepared(),
+    answerModel: async () => ({}),
+  })
+  assert.equal((await post(routeRequest("{"))).status, 400)
+  assert.equal((await post(routeRequest({ ...validRouteBody(), extra: true }))).status, 400)
 })
