@@ -66,6 +66,30 @@ test("BOOK.1 manifest identity is deterministic and ignores readiness wording", 
   assert.equal(cloned.qa_corpus_id, first.qa_corpus_id)
 })
 
+test("BOOK.1 canonicalizes returned artifact IDs independently of caller property order", () => {
+  const canonicalOrder = chapter("chapter-one", 1, {
+    artifact_ids: {
+      "PRE.1": "chapter-one-pre1",
+      "EVID.3": "chapter-one-evid3",
+      "IDX.1": "chapter-one-idx1",
+    },
+  })
+  const reverseInsertionOrder = chapter("chapter-one", 1, {
+    artifact_ids: {
+      "IDX.1": "chapter-one-idx1",
+      "EVID.3": "chapter-one-evid3",
+      "PRE.1": "chapter-one-pre1",
+    },
+  })
+
+  const first = buildV3BookQACorpusManifest({ docId: "doc-1", chapters: [canonicalOrder] })
+  const second = buildV3BookQACorpusManifest({ docId: "doc-1", chapters: [reverseInsertionOrder] })
+
+  assert.deepEqual(first, second)
+  assert.equal(JSON.stringify(first), JSON.stringify(second))
+  assert.deepEqual(Object.keys(first.chapters[0].artifact_ids), ["PRE.1", "EVID.3", "IDX.1"])
+})
+
 test("BOOK.1 identity changes for every pinned reference and ordered chapter identity field", () => {
   const original = [chapter("chapter-ten", 10), chapter("chapter-two", 20)]
   const baseline = buildV3BookQACorpusManifest({ docId: "doc-1", chapters: original }).fingerprint

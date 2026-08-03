@@ -62,6 +62,17 @@ function identityArtifactEntries(
   return V3_BOOK_QA_PINNED_STAGE_IDS.map((stageId) => [stageId, artifactIds[stageId] ?? null])
 }
 
+function canonicalArtifactIds(
+  artifactIds: V3BookQAChapterRef["artifact_ids"],
+): V3BookQAChapterRef["artifact_ids"] {
+  const canonical: V3BookQAChapterRef["artifact_ids"] = {}
+  for (const stageId of V3_BOOK_QA_PINNED_STAGE_IDS) {
+    const artifactId = artifactIds[stageId]
+    if (artifactId !== undefined) canonical[stageId] = artifactId
+  }
+  return canonical
+}
+
 export function serializeV3BookQACorpusIdentity(
   docId: string,
   chapters: V3BookQAChapterRef[],
@@ -126,7 +137,7 @@ export function buildV3BookQACorpusManifest(params: {
   assertValidChapterOrder(params.chapters)
   const chapters = params.chapters.map((chapter) => ({
     ...chapter,
-    artifact_ids: { ...chapter.artifact_ids },
+    artifact_ids: canonicalArtifactIds(chapter.artifact_ids),
   }))
   const fingerprint = fingerprintV3BookQACorpus(params.docId, chapters)
   const chapterOrder = new Map(chapters.map((chapter, index) => [chapter.chapter_id, index]))

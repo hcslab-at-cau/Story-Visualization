@@ -31,6 +31,10 @@ const DENIED_IDENTITY_KEYS = new Set([
 
 interface ProvenancedOccurrence {
   pid: number
+  span: string
+  span_key: string
+  normalized?: string
+  normalized_key?: string
   keys: Set<string>
 }
 
@@ -85,12 +89,22 @@ function validOccurrence(candidate: V3GatedEvidenceCandidate): candidate is V3Ga
     && candidate.span.trim().length > 0
 }
 
-function occurrenceKeys(candidate: V3GatedEvidenceCandidate & { span: string }): Set<string> {
-  return new Set(
-    [candidate.span, candidate.normalized]
-      .flatMap((value) => typeof value === "string" ? [normalizeV3BookEntityIdentityKey(value)] : [])
-      .filter(Boolean),
-  )
+function provenancedOccurrence(
+  candidate: V3GatedEvidenceCandidate & { pid: number; span: string },
+): ProvenancedOccurrence {
+  const spanKey = normalizeV3BookEntityIdentityKey(candidate.span)
+  const normalized = typeof candidate.normalized === "string" && candidate.normalized.trim()
+    ? candidate.normalized
+    : undefined
+  const normalizedKey = normalized ? normalizeV3BookEntityIdentityKey(normalized) : undefined
+  return {
+    pid: candidate.pid,
+    span: candidate.span,
+    span_key: spanKey,
+    normalized,
+    normalized_key: normalizedKey,
+    keys: new Set([spanKey, normalizedKey].filter((key): key is string => Boolean(key))),
+  }
 }
 
 function makeNodeId(chapterId: string, clusterId: string): string {
@@ -199,7 +213,7 @@ function buildMemberDrafts(
       }
 
       const occurrences = occurrencesByCluster.get(clusterId) ?? []
-      occurrences.push({ pid: candidate.pid, keys: occurrenceKeys(candidate) })
+      occurrences.push(provenancedOccurrence(candidate))
       occurrencesByCluster.set(clusterId, occurrences)
     }
 
@@ -207,13 +221,23 @@ function buildMemberDrafts(
       const occurrences = occurrencesByCluster.get(cluster.cluster_id) ?? []
       const aliases: V3BookEntityAlias[] = []
       const keyPids = new Map<string, number[]>()
+      const declaredAliasesByKey = new Map<string, string[]>()
 
       for (const alias of uniqueStrings([cluster.canonical_label, ...cluster.aliases])) {
         const key = normalizeV3BookEntityIdentityKey(alias)
+        const declaredAliases = declaredAliasesByKey.get(key) ?? []
+        declaredAliases.push(alias)
+        declaredAliasesByKey.set(key, declaredAliases)
+      }
+
+      for (const [key, declaredAliases] of [...declaredAliasesByKey.entries()]
+        .sort(([left], [right]) => compareText(left, right))) {
+        const matchingOccurrences = occurrences.filter((occurrence) => occurrence.keys.has(key))
         const evidencePids = uniqueSortedNumbers(
-          occurrences.flatMap((occurrence) => occurrence.keys.has(key) ? [occurrence.pid] : []),
+          matchingOccurrences.map((occurrence) => occurrence.pid),
         )
         if (evidencePids.length === 0) {
+          const alias = [...declaredAliases].sort(compareText)[0]
           diagnostics.push({
             code: "unprovenanced_alias",
             message: `Alias ${JSON.stringify(alias)} has no mapped EVID.3 occurrence.`,
@@ -226,8 +250,16 @@ function buildMemberDrafts(
           })
           continue
         }
+        const spanSurfaces = matchingOccurrences
+          .filter((occurrence) => occurrence.span_key === key)
+          .map((occurrence) => ({ pid: occurrence.pid, value: occurrence.span }))
+        const normalizedSurfaces = matchingOccurrences
+          .filter((occurrence) => occurrence.normalized_key === key && occurrence.normalized)
+          .map((occurrence) => ({ pid: occurrence.pid, value: occurrence.normalized as string }))
+        const surfaces = spanSurfaces.length > 0 ? spanSurfaces : normalizedSurfaces
+        surfaces.sort((left, right) => left.pid - right.pid || compareText(left.value, right.value))
         aliases.push({
-          value: alias,
+          value: surfaces[0].value,
           evidence_pids: evidencePids,
           available_from_pid: evidencePids[0],
         })

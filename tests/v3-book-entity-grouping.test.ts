@@ -315,6 +315,31 @@ test("alias and link positions come only from mapped EVID.3 occurrences", () => 
   )
 })
 
+test("visible aliases use only observed EVID.3 surfaces and collapse normalized variants", () => {
+  const result = buildV3BookEntityGroups({
+    qaCorpusId: "BOOK1_alias_surfaces",
+    chapters: [
+      chapterInput("ch01", 1, [
+        entity("alice-1", "cast", "...Alice", ["...Alice", "Alice"],
+          { id: "alice-1", pid: 2, span: "Alice", normalized: "Alice" }),
+      ]),
+      chapterInput("ch02", 2, [
+        entity("alice-2", "cast", "Alice", ["Alice"],
+          { id: "alice-2", pid: 3, span: "Alice", normalized: "Alice" }),
+      ]),
+    ],
+  })
+
+  assert.deepEqual(result.groups[0].members[0].aliases, [
+    { value: "Alice", evidence_pids: [2], available_from_pid: 2 },
+  ])
+  assert.equal(
+    visibleV3BookEntityGroup(result.groups[0], { chapter_id: "ch01", pid: 2 })?.label,
+    "Alice",
+  )
+  assert.equal(JSON.stringify(result.groups[0].members[0].aliases).includes("...Alice"), false)
+})
+
 test("visible groups hide unavailable current aliases, links, and all future member labels", () => {
   const result = buildV3BookEntityGroups({
     qaCorpusId: "BOOK1_visibility",
