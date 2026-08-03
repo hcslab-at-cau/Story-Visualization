@@ -2,6 +2,7 @@ import { parseFirestoreDataSource } from "@/lib/data-source"
 import { loadStageResult, saveStageResult, stageKey } from "@/lib/firestore"
 import { errorResponse, okResponse, type BaseRequestBody } from "@/lib/api-utils"
 import { buildV3RetrievalIndex } from "@/lib/pipeline/v3-narrative-memory"
+import type { V3EvidenceClusteringArtifact } from "@/lib/pipeline/v3-evidence-clustering-types"
 import type { V3EventFramesArtifact, V3SceneSituationCardsArtifact } from "@/lib/pipeline/v3-memory-frames-types"
 import type {
   V3CausalEdgesArtifact,
@@ -9,6 +10,7 @@ import type {
   V3ProgressiveNarrativeMemoryArtifact,
   V3RetrievalIndexArtifact,
 } from "@/lib/pipeline/v3-narrative-memory-types"
+import type { ContentUnits, PreparedChapter } from "@/types/schema"
 
 export const maxDuration = 300
 
@@ -17,6 +19,15 @@ export async function POST(request: Request): Promise<Response> {
     const body = (await request.json()) as BaseRequestBody
     const { docId, chapterId, runId, parents = {} } = body
     const source = parseFirestoreDataSource(body.source)
+
+    const preparedChapter = await loadStageResult<PreparedChapter>(docId, chapterId, runId, stageKey("PRE.1"), { source })
+    if (!preparedChapter) return errorResponse("PRE.1 result not found - run PRE.1 first", 400)
+
+    const contentUnits = await loadStageResult<ContentUnits>(docId, chapterId, runId, stageKey("PRE.2"), { source })
+    if (!contentUnits) return errorResponse("PRE.2 result not found - run PRE.2 first", 400)
+
+    const evidenceClusters = await loadStageResult<V3EvidenceClusteringArtifact>(docId, chapterId, runId, stageKey("EVID.4"), { source })
+    if (!evidenceClusters) return errorResponse("EVID.4 result not found - run EVID.4 first", 400)
 
     const sceneCards = await loadStageResult<V3SceneSituationCardsArtifact>(docId, chapterId, runId, stageKey("MEM.1"), { source })
     if (!sceneCards) return errorResponse("MEM.1 result not found - run MEM.1 first", 400)
@@ -37,6 +48,9 @@ export async function POST(request: Request): Promise<Response> {
       docId,
       chapterId,
       parents,
+      preparedChapter,
+      contentUnits,
+      evidenceClusters,
       sceneCards,
       eventFrames,
       groundedGoals,

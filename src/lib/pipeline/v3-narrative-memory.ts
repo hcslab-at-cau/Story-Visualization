@@ -1,19 +1,23 @@
 import type { V3MemoryContractArtifact, V3MemoryEvidenceRef } from "./v3-memory-contract-types"
 import type { V3EventFrame, V3EventFramesArtifact, V3SceneSituationCardsArtifact } from "./v3-memory-frames-types"
-import type {
-  V3CausalEdge,
-  V3CausalEdgesArtifact,
-  V3CharacterMemory,
-  V3GoalGroundingArtifact,
-  V3GroundedGoal,
-  V3ObjectMemory,
-  V3PlaceMemory,
-  V3ProgressiveNarrativeMemoryArtifact,
-  V3RetrievalGraphEdge,
-  V3RetrievalIndexArtifact,
-  V3RetrievalTextDocument,
-  V3StructuredRetrievalRecord,
+import type { V3EvidenceClusteringArtifact } from "./v3-evidence-clustering-types"
+import { buildV3ParagraphRetrievalRecords } from "./v3-retrieval-documents"
+import {
+  V3_RETRIEVAL_INDEX_VERSION,
+  type V3CausalEdge,
+  type V3CausalEdgesArtifact,
+  type V3CharacterMemory,
+  type V3GoalGroundingArtifact,
+  type V3GroundedGoal,
+  type V3ObjectMemory,
+  type V3PlaceMemory,
+  type V3ProgressiveNarrativeMemoryArtifact,
+  type V3RetrievalGraphEdge,
+  type V3RetrievalIndexArtifact,
+  type V3RetrievalTextDocument,
+  type V3StructuredRetrievalRecord,
 } from "./v3-narrative-memory-types"
+import type { ContentUnits, PreparedChapter } from "@/types/schema"
 
 const V3_GOAL_GROUNDING_STAGE_ID = "GOAL.1"
 const V3_GOAL_GROUNDING_PROFILE = "v3_goal_grounding"
@@ -26,7 +30,6 @@ const V3_PROGRESSIVE_MEMORY_PROFILE = "v3_progressive_narrative_memory"
 const V3_PROGRESSIVE_MEMORY_VERSION = "v3-progressive-narrative-memory-0.1"
 const V3_RETRIEVAL_INDEX_STAGE_ID = "IDX.1"
 const V3_RETRIEVAL_INDEX_PROFILE = "v3_retrieval_index"
-const V3_RETRIEVAL_INDEX_VERSION = "v3-retrieval-index-0.1"
 
 interface BaseBuildParams {
   docId: string
@@ -54,6 +57,9 @@ interface BuildV3ProgressiveNarrativeMemoryParams extends BaseBuildParams {
 }
 
 interface BuildV3RetrievalIndexParams extends BaseBuildParams {
+  preparedChapter: PreparedChapter
+  contentUnits: ContentUnits
+  evidenceClusters: V3EvidenceClusteringArtifact
   sceneCards: V3SceneSituationCardsArtifact
   eventFrames: V3EventFramesArtifact
   groundedGoals: V3GoalGroundingArtifact
@@ -353,13 +359,21 @@ export function buildV3RetrievalIndex({
   docId,
   chapterId,
   parents = {},
+  preparedChapter,
+  contentUnits,
+  evidenceClusters,
   sceneCards,
   eventFrames,
   groundedGoals,
   causalEdges,
   progressiveMemory,
 }: BuildV3RetrievalIndexParams): V3RetrievalIndexArtifact {
-  const structuredRecords: V3StructuredRetrievalRecord[] = []
+  const structuredRecords: V3StructuredRetrievalRecord[] = buildV3ParagraphRetrievalRecords({
+    chapterId,
+    preparedChapter,
+    contentUnits,
+    evidenceClusters,
+  })
   const graphEdges: V3RetrievalGraphEdge[] = []
   const textDocuments: V3RetrievalTextDocument[] = []
 
@@ -508,7 +522,7 @@ export function buildV3RetrievalIndex({
     parents,
     artifact_version: V3_RETRIEVAL_INDEX_VERSION,
     extraction_profile: V3_RETRIEVAL_INDEX_PROFILE,
-    source_stage_ids: ["MEM.1", "EVENT.2", "GOAL.1", "CAUS.1", "MEM.2"],
+    source_stage_ids: ["PRE.1", "PRE.2", "EVID.4", "MEM.1", "EVENT.2", "GOAL.1", "CAUS.1", "MEM.2"],
     index_stats: {
       structured_records: structuredRecords.length,
       graph_edges: graphEdges.length,

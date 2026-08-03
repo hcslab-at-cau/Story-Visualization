@@ -326,6 +326,29 @@ function isV3SemanticIndexStage(stageId: PreStageId): stageId is V3SemanticIndex
   return stageId === "IDX.2"
 }
 
+const V3_RETRIEVAL_INDEX_PREREQUISITES = [
+  { stageId: "PRE.1", resultKey: "pre1" },
+  { stageId: "PRE.2", resultKey: "pre2" },
+  { stageId: "EVID.4", resultKey: "evid4" },
+  { stageId: "MEM.2", resultKey: "mem2" },
+] as const
+
+function formatStageList(stageIds: readonly string[]): string {
+  if (stageIds.length === 1) return stageIds[0]!
+  if (stageIds.length === 2) return `${stageIds[0]} and ${stageIds[1]}`
+  return `${stageIds.slice(0, -1).join(", ")}, and ${stageIds.at(-1)}`
+}
+
+function getV3RetrievalIndexBlockReason(results: PreResults): string | null {
+  const missingStages = V3_RETRIEVAL_INDEX_PREREQUISITES
+    .filter(({ resultKey }) => !results[resultKey])
+    .map(({ stageId }) => stageId)
+
+  return missingStages.length > 0
+    ? `Run ${formatStageList(missingStages)} before IDX.1.`
+    : null
+}
+
 function formatChapterLabel(chapter: ChapterMeta, index: number): string {
   return `${index + 1}. ${chapter.title}`
 }
@@ -658,9 +681,12 @@ export default function PreMentionWorkbench({
       setError("Run CAUS.1 before MEM.2.")
       return
     }
-    if (isV3RetrievalIndexStage(stageId) && !results.mem2) {
-      setError("Run MEM.2 before IDX.1.")
-      return
+    if (isV3RetrievalIndexStage(stageId)) {
+      const blockReason = getV3RetrievalIndexBlockReason(results)
+      if (blockReason) {
+        setError(blockReason)
+        return
+      }
     }
     if (isV3SemanticIndexStage(stageId) && !results.idx1) {
       setError("Run IDX.1 before IDX.2.")
@@ -1146,7 +1172,7 @@ export default function PreMentionWorkbench({
     if (isV3GoalGroundingStage(stageId) && !results.event2) return "Run EVENT.2 first."
     if (isV3CausalEdgesStage(stageId) && !results.goal1) return "Run GOAL.1 first."
     if (isV3ProgressiveMemoryStage(stageId) && !results.caus1) return "Run CAUS.1 first."
-    if (isV3RetrievalIndexStage(stageId) && !results.mem2) return "Run MEM.2 first."
+    if (isV3RetrievalIndexStage(stageId)) return getV3RetrievalIndexBlockReason(results)
     if (isV3SemanticIndexStage(stageId) && !results.idx1) return "Run IDX.1 first."
     return null
   }
