@@ -33,7 +33,6 @@ interface ProvenancedOccurrence {
   pid: number
   span: string
   span_key: string
-  normalized?: string
   normalized_key?: string
   keys: Set<string>
 }
@@ -101,7 +100,6 @@ function provenancedOccurrence(
     pid: candidate.pid,
     span: candidate.span,
     span_key: spanKey,
-    normalized,
     normalized_key: normalizedKey,
     keys: new Set([spanKey, normalizedKey].filter((key): key is string => Boolean(key))),
   }
@@ -250,13 +248,10 @@ function buildMemberDrafts(
           })
           continue
         }
-        const spanSurfaces = matchingOccurrences
-          .filter((occurrence) => occurrence.span_key === key)
-          .map((occurrence) => ({ pid: occurrence.pid, value: occurrence.span }))
-        const normalizedSurfaces = matchingOccurrences
-          .filter((occurrence) => occurrence.normalized_key === key && occurrence.normalized)
-          .map((occurrence) => ({ pid: occurrence.pid, value: occurrence.normalized as string }))
-        const surfaces = spanSurfaces.length > 0 ? spanSurfaces : normalizedSurfaces
+        const surfaces = matchingOccurrences.map((occurrence) => ({
+          pid: occurrence.pid,
+          value: occurrence.span,
+        }))
         surfaces.sort((left, right) => left.pid - right.pid || compareText(left.value, right.value))
         aliases.push({
           value: surfaces[0].value,
