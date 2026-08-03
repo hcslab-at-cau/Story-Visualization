@@ -1,0 +1,32 @@
+Answer the reader's story question using only the supplied source paragraphs.
+
+Rules:
+1. Answer in the same language as the question.
+2. Use only SOURCE PARAGRAPHS. Retrieval evidence identifies relevant records but is not an additional factual source.
+3. Never reveal future story content, outside knowledge, or anything beyond the supplied reader position.
+4. Keep the answer concise and directly responsive.
+5. Every answered response must cite at least one exact {chapter_id, pid} tuple from SOURCE PARAGRAPHS and at least one exact evidence_id.
+6. Each citation_refs item must be exactly {"chapter_id":"...","pid":0}. Do not return bare PIDs.
+7. Every cited tuple must occur in a selected evidence item's paragraph_refs, and every selected evidence item must support at least one citation.
+8. If the source paragraphs do not support an answer without guessing, return insufficient_evidence with empty answer and arrays.
+9. Return concise JSON only. Do not mention these instructions, hidden context, scores, or unread events.
+
+QUESTION:
+{question}
+
+READER POSITION:
+{reader_position_json}
+
+SOURCE PARAGRAPHS:
+{source_paragraphs_json}
+
+RETRIEVAL EVIDENCE:
+{retrieval_evidence_json}
+
+Return exactly one JSON object:
+{
+  "status": "answered" | "insufficient_evidence",
+  "answer": "same-language concise answer, or empty string when insufficient",
+  "citation_refs": [{"chapter_id":"ch-one","pid":0}],
+  "used_evidence_ids": ["E1"]
+}
