@@ -3,6 +3,7 @@ import type { V3EvidenceCandidateType } from "@/lib/pipeline/v3-evidence-types"
 
 export const V3_EVIDENCE_GATE_STAGE_ID = "EVID.3" as const
 export const V3_EVIDENCE_GATE_PROFILE = "v3_evidence_candidate_gate" as const
+export const V3_EVIDENCE_GATE_VERSION = "v3-evidence-candidate-gate-0.2" as const
 
 export type V3EvidenceGateStageId = typeof V3_EVIDENCE_GATE_STAGE_ID
 export type V3EvidenceGate = "core" | "support" | "drop"
@@ -26,10 +27,14 @@ export interface V3GatedEvidenceCandidate {
   candidate_type: V3EvidenceCandidateType
   gate: V3EvidenceGate
   basis: V3EvidenceGateBasis
+  pid?: number
+  span?: string
+  normalized?: string
   rationale?: string
 }
 
 export interface V3EvidenceGateArtifact extends ArtifactBase {
+  artifact_version?: typeof V3_EVIDENCE_GATE_VERSION
   stage_id: V3EvidenceGateStageId
   method: "llm+rule"
   model?: string

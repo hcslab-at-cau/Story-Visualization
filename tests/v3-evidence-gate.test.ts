@@ -88,6 +88,69 @@ test("EVID.3 candidate gate preserves core/support/drop decisions without scores
   )
 })
 
+test("EVID.3 candidate gate preserves refined alias provenance and emits its artifact version", () => {
+  const alice = candidate("REF_ALICE", "cast", "kept_core")
+  alice.pid = 7
+  alice.span = "Alice"
+  alice.normalized = "Alice"
+
+  const modelDecision = {
+    refined_candidate_id: "REF_ALICE",
+    gate: "core",
+    basis: "event_participant",
+    pid: 99,
+    span: "Not Alice",
+    normalized: "Model Alias",
+  }
+
+  const result = buildV3EvidenceGateFromDecisions({
+    docId: "doc",
+    chapterId: "ch01",
+    evidenceRefinement: {
+      run_id: "evid2",
+      doc_id: "doc",
+      chapter_id: "ch01",
+      stage_id: "EVID.2",
+      method: "llm+rule",
+      parents: {},
+      extraction_profile: "v3_evidence_candidate_refinement",
+      source_stage_ids: ["EVID.1A", "EVID.1B", "EVID.1C", "EVID.1D"],
+      prompt_template: "v3_evid2_candidate_refine",
+      refinement_stats: {
+        input_candidates: 1,
+        refined_candidates: 1,
+        kept_core: 1,
+        kept_context: 0,
+        corrected: 0,
+        merged_sources: 0,
+        rejected_candidates: 0,
+        rejected_by_reason: {
+          span_not_in_text: 0,
+          wrong_pid: 0,
+          hallucinated_or_not_in_paragraph: 0,
+          not_a_candidate_record: 0,
+          not_objective_rejection: 0,
+        },
+        by_type: { cast: 1 },
+      },
+      refined_candidates: [alice],
+      rejected_candidates: [],
+    },
+    decisions: [modelDecision],
+  })
+
+  assert.deepEqual(
+    result.gated_candidates.map(({ refined_candidate_id, pid, span, normalized }) => ({
+      refined_candidate_id,
+      pid,
+      span,
+      normalized,
+    })),
+    [{ refined_candidate_id: "REF_ALICE", pid: 7, span: "Alice", normalized: "Alice" }],
+  )
+  assert.equal(result.artifact_version, "v3-evidence-candidate-gate-0.2")
+})
+
 test("EVID.3 artifact guard rejects stale pre-renumbered entity cluster results", () => {
   const staleClusterArtifact = {
     run_id: "old-evid3",
@@ -103,6 +166,38 @@ test("EVID.3 artifact guard rejects stale pre-renumbered entity cluster results"
   }
 
   assert.equal(isV3EvidenceGateArtifact(staleClusterArtifact), false)
+})
+
+test("EVID.3 artifact guard accepts legacy gate artifacts without version or provenance", () => {
+  const legacyGateArtifact = {
+    run_id: "legacy-evid3",
+    doc_id: "doc",
+    chapter_id: "ch01",
+    stage_id: "EVID.3",
+    method: "llm+rule",
+    parents: {},
+    extraction_profile: "v3_evidence_candidate_gate",
+    source_stage_ids: ["EVID.2"],
+    prompt_template: "v3_evid3_candidate_gate",
+    gate_stats: {
+      input_refined_candidates: 1,
+      core_candidates: 1,
+      support_candidates: 0,
+      dropped_candidates: 0,
+      by_gate: { core: 1, support: 0, drop: 0 },
+      by_type: { cast: 1 },
+    },
+    gated_candidates: [{
+      refined_candidate_id: "REF_ALICE",
+      source_candidate_ids: ["RAW_ALICE"],
+      candidate_type: "cast",
+      gate: "core",
+      basis: "event_participant",
+    }],
+    gate_map: { REF_ALICE: "core" },
+  }
+
+  assert.equal(isV3EvidenceGateArtifact(legacyGateArtifact), true)
 })
 
 test("EVID.3 candidate gate drops non-participant cast placeholders and mental-space places", () => {
