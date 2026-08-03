@@ -12,13 +12,46 @@ import {
   semanticScoresByRecordId,
   validateV3SemanticVectorPayload,
 } from "@/lib/pipeline/v3-semantic-index"
-import type { V3SemanticIndexArtifact } from "@/lib/pipeline/v3-semantic-index-types"
+import type {
+  V3SemanticIndexArtifact,
+  V3SemanticVectorPayload,
+} from "@/lib/pipeline/v3-semantic-index-types"
 import { downloadV3SemanticVectors } from "@/lib/storage"
 import type { PreparedChapter } from "@/types/schema"
 
 export class V3QAPrerequisiteError extends Error {
   constructor(message: string, readonly status = 400) {
     super(message)
+  }
+}
+
+function invalidV3SemanticIndexError(error: unknown): V3QAPrerequisiteError {
+  const detail = error instanceof Error ? error.message : String(error)
+  return new V3QAPrerequisiteError(
+    `IDX.2 semantic vectors are invalid or unavailable; rerun IDX.2 to rebuild the semantic index. ${detail}`,
+    409,
+  )
+}
+
+export async function loadValidatedV3SemanticVectorPayload(params: {
+  semanticIndex: V3SemanticIndexArtifact
+  downloadVectors?: typeof downloadV3SemanticVectors
+}): Promise<V3SemanticVectorPayload> {
+  const downloadVectors = params.downloadVectors ?? downloadV3SemanticVectors
+  try {
+    const payload = await downloadVectors({
+      storagePath: params.semanticIndex.vector_blob.storage_path,
+      expectedContentHash: params.semanticIndex.vector_blob.content_hash,
+    })
+    validateV3SemanticVectorPayload(payload, {
+      model: params.semanticIndex.embedding_model,
+      dimensions: params.semanticIndex.vector_stats.dimensions,
+      vectorCount: params.semanticIndex.vector_stats.vectors,
+      sourceTextFingerprint: params.semanticIndex.source_text_fingerprint,
+    })
+    return payload
+  } catch (error) {
+    throw invalidV3SemanticIndexError(error)
   }
 }
 
@@ -63,21 +96,16 @@ export async function retrieveV3QAEvidenceForRun(params: {
     if (currentFingerprint !== semanticIndex.source_text_fingerprint) {
       throw new V3QAPrerequisiteError("IDX.2 is stale for the current IDX.1 result - rerun IDX.2", 409)
     }
-    const vectorPayload = await downloadV3SemanticVectors({
-      storagePath: semanticIndex.vector_blob.storage_path,
-      expectedContentHash: semanticIndex.vector_blob.content_hash,
-    })
-    validateV3SemanticVectorPayload(vectorPayload, {
-      model: semanticIndex.embedding_model,
-      dimensions: semanticIndex.vector_stats.dimensions,
-      vectorCount: semanticIndex.vector_stats.vectors,
-      sourceTextFingerprint: semanticIndex.source_text_fingerprint,
-    })
+    const vectorPayload = await loadValidatedV3SemanticVectorPayload({ semanticIndex })
     const queryEmbedding = await embedTexts([question], {
       model: semanticIndex.embedding_model,
       dimensions: semanticIndex.vector_stats.dimensions,
     })
-    semanticScores = semanticScoresByRecordId(queryEmbedding.embeddings[0], vectorPayload)
+    try {
+      semanticScores = semanticScoresByRecordId(queryEmbedding.embeddings[0], vectorPayload)
+    } catch (error) {
+      throw invalidV3SemanticIndexError(error)
+    }
   }
 
   return retrieveV3QAEvidence({

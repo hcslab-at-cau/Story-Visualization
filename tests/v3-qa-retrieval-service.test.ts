@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import test from "node:test"
 
 import {
+  loadValidatedV3SemanticVectorPayload,
   V3QAPrerequisiteError,
   resolveV3QARetrievalDocuments,
 } from "../src/lib/server/v3-qa-retrieval-service.ts"
@@ -10,6 +11,10 @@ import {
   V3_RETRIEVAL_INDEX_VERSION,
   type V3RetrievalIndexArtifact,
 } from "../src/lib/pipeline/v3-narrative-memory-types.ts"
+import type {
+  V3SemanticIndexArtifact,
+  V3SemanticVectorPayload,
+} from "../src/lib/pipeline/v3-semantic-index-types.ts"
 import type { PreparedChapter } from "../src/types/schema.ts"
 
 function currentIndex(): V3RetrievalIndexArtifact {
@@ -64,6 +69,67 @@ function preparedChapter(): PreparedChapter {
     },
   }
 }
+
+function semanticIndex(): V3SemanticIndexArtifact {
+  return {
+    run_id: "idx2",
+    doc_id: "doc",
+    chapter_id: "ch01",
+    stage_id: "IDX.2",
+    method: "embedding",
+    parents: { "IDX.1": "idx1", "PRE.1": "pre1" },
+    artifact_version: "v3-semantic-vector-index-0.2",
+    extraction_profile: "v3_semantic_vector_index",
+    source_stage_ids: ["IDX.1", "PRE.1"],
+    embedding_provider: "openrouter",
+    embedding_model: "openai/text-embedding-3-small",
+    source_text_fingerprint: "fingerprint",
+    vector_stats: { vectors: 1, dimensions: 2, prompt_tokens: 4 },
+    vector_blob: {
+      bucket: "bucket",
+      storage_path: "documents_v3/doc/chapters/ch01/runs/run/indexes/idx2/hash.vectors.json.gz",
+      gs_uri: "gs://bucket/documents_v3/doc/chapters/ch01/runs/run/indexes/idx2/hash.vectors.json.gz",
+      file_name: "hash.vectors.json.gz",
+      content_type: "application/gzip",
+      size_bytes: 100,
+      content_hash: "hash",
+    },
+  }
+}
+
+test("semantic blob download or integrity failures become rerunnable IDX.2 conflicts", async () => {
+  await assert.rejects(
+    () => loadValidatedV3SemanticVectorPayload({
+      semanticIndex: semanticIndex(),
+      downloadVectors: async () => {
+        throw new Error("IDX.2 vector blob content hash mismatch")
+      },
+    }),
+    (error) => error instanceof V3QAPrerequisiteError
+      && error.status === 409
+      && /IDX\.2.*(?:rerun|rebuild)/i.test(error.message),
+  )
+})
+
+test("semantic payload metadata or version failures become rerunnable IDX.2 conflicts", async () => {
+  const invalidPayload = {
+    artifact_version: "v3-semantic-vectors-9.9",
+    model: "wrong-model",
+    dimensions: 2,
+    source_text_fingerprint: "fingerprint",
+    vectors: [{ text_doc_id: "TEXT_EV1", embedding: [1, 0] }],
+  } as unknown as V3SemanticVectorPayload
+
+  await assert.rejects(
+    () => loadValidatedV3SemanticVectorPayload({
+      semanticIndex: semanticIndex(),
+      downloadVectors: async () => invalidPayload,
+    }),
+    (error) => error instanceof V3QAPrerequisiteError
+      && error.status === 409
+      && /IDX\.2.*(?:rerun|rebuild)/i.test(error.message),
+  )
+})
 
 test("0.2 retrieval service documents hydrate PRE.1 paragraph text", () => {
   const documents = resolveV3QARetrievalDocuments({
