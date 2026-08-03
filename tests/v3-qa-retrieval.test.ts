@@ -1,9 +1,14 @@
 import test from "node:test"
 import assert from "node:assert/strict"
 import { retrieveV3QAEvidence } from "../src/lib/pipeline/v3-qa-retrieval.ts"
+import { hydrateV3RetrievalDocuments } from "../src/lib/pipeline/v3-retrieval-documents.ts"
 import type { V3MemoryContractArtifact } from "../src/lib/pipeline/v3-memory-contract-types.ts"
 import type { V3EventFramesArtifact, V3SceneSituationCardsArtifact } from "../src/lib/pipeline/v3-memory-frames-types.ts"
-import type { V3RetrievalIndexArtifact } from "../src/lib/pipeline/v3-narrative-memory-types.ts"
+import {
+  V3_RETRIEVAL_INDEX_VERSION,
+  type V3RetrievalIndexArtifact,
+} from "../src/lib/pipeline/v3-narrative-memory-types.ts"
+import type { PreparedChapter } from "../src/types/schema.ts"
 
 function sceneCards(): V3SceneSituationCardsArtifact {
   return {
@@ -318,4 +323,71 @@ test("QA retrieval fails closed for records without a resolvable progress span",
   assert.equal(result.hits.some((hit) => hit.record_id === "PLACE_FUTURE"), false)
   assert.equal(result.stats.semantic_hits, 0)
   assert.ok(result.stats.blocked_ahead_records >= 2)
+})
+
+test("QA retrieval searches hydrated paragraph text and blocks that paragraph before its PID", () => {
+  const index: V3RetrievalIndexArtifact = {
+    ...retrievalIndex(),
+    artifact_version: V3_RETRIEVAL_INDEX_VERSION,
+    source_stage_ids: ["PRE.1", "PRE.2", "EVID.4", "MEM.1", "EVENT.2", "GOAL.1", "CAUS.1", "MEM.2"],
+    structured_records: [
+      ...retrievalIndex().structured_records,
+      {
+        record_id: "PARAGRAPH_para_0002",
+        record_type: "paragraph",
+        label: "Paragraph P2",
+        source_paragraph_id: "para_0002",
+        evidence_refs: [],
+        progress_start: 2,
+        progress_end: 2,
+      },
+    ],
+    index_stats: { structured_records: 6, graph_edges: 2, text_documents: 5 },
+  }
+  const preparedChapter: PreparedChapter = {
+    run_id: "pre1",
+    doc_id: "doc",
+    chapter_id: "ch01",
+    stage_id: "PRE.1",
+    method: "epub+rule",
+    parents: {},
+    chapter_title: "Chapter One",
+    paragraph_count: 2,
+    char_count: 52,
+    raw_chapter: {
+      doc_id: "doc",
+      chapter_id: "ch01",
+      title: "Chapter One",
+      text: "Opening.\nAlice ate marmalade bread at supper, her only food.",
+      paragraphs: [
+        { pid: 1, start: 0, end: 8, text: "Opening.", paragraph_id: "para_0001" },
+        { pid: 2, start: 9, end: 59, text: "Alice ate marmalade bread at supper, her only food.", paragraph_id: "para_0002" },
+      ],
+    },
+  }
+  const hydratedDocuments = hydrateV3RetrievalDocuments({ retrievalIndex: index, preparedChapter })
+  assert.ok(index.text_documents.every((document) => !/marmalade|supper|food/i.test(document.text)))
+
+  const available = retrieveV3QAEvidence({
+    question: "What food did Alice eat at supper?",
+    progressEndPid: 2,
+    retrievalIndex: index,
+    textDocuments: hydratedDocuments,
+    sceneCards: sceneCards(),
+    eventFrames: eventFrames(),
+    memoryContract: memoryContract(),
+  })
+  const blocked = retrieveV3QAEvidence({
+    question: "What food did Alice eat at supper?",
+    progressEndPid: 1,
+    retrievalIndex: index,
+    textDocuments: hydratedDocuments,
+    sceneCards: sceneCards(),
+    eventFrames: eventFrames(),
+    memoryContract: memoryContract(),
+  })
+
+  assert.ok(available.hits.some((hit) => hit.record_id === "PARAGRAPH_para_0002" && hit.record_type === "paragraph"))
+  assert.equal(blocked.hits.some((hit) => hit.record_id === "PARAGRAPH_para_0002"), false)
+  assert.ok(blocked.stats.blocked_ahead_records > available.stats.blocked_ahead_records)
 })

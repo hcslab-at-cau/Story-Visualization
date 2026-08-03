@@ -1,14 +1,15 @@
 import { createHash } from "node:crypto"
 import type { V3RetrievalTextDocument } from "./v3-narrative-memory-types"
-import type {
-  V3SemanticIndexArtifact,
-  V3SemanticVectorPayload,
+import {
+  V3_SEMANTIC_INDEX_PROFILE,
+  V3_SEMANTIC_INDEX_STAGE_ID,
+  V3_SEMANTIC_INDEX_VERSION,
+  V3_SEMANTIC_VECTOR_LEGACY_VERSION,
+  V3_SEMANTIC_VECTOR_VERSION,
+  type V3SemanticIndexArtifact,
+  type V3SemanticVectorPayload,
+  type V3SemanticVectorVersion,
 } from "./v3-semantic-index-types"
-
-const V3_SEMANTIC_INDEX_STAGE_ID = "IDX.2"
-const V3_SEMANTIC_INDEX_PROFILE = "v3_semantic_vector_index"
-const V3_SEMANTIC_INDEX_VERSION = "v3-semantic-vector-index-0.1"
-const V3_SEMANTIC_VECTOR_VERSION = "v3-semantic-vectors-0.1"
 
 interface StoredVectorBlobInput {
   bucket: string
@@ -39,9 +40,7 @@ interface VectorPayloadExpectation {
   sourceTextFingerprint: string
 }
 
-export function retrievalRecordIdForTextDocument(document: Pick<V3RetrievalTextDocument, "text_doc_id" | "event_id" | "scene_id">): string {
-  if (document.event_id) return document.event_id
-  if (document.scene_id) return document.scene_id
+export function retrievalRecordIdForTextDocument<T extends Pick<V3RetrievalTextDocument, "text_doc_id">>(document: T): string {
   return document.text_doc_id.replace(/^TEXT_/, "")
 }
 
@@ -104,7 +103,7 @@ export function buildV3SemanticIndexArtifact({
     parents,
     artifact_version: V3_SEMANTIC_INDEX_VERSION,
     extraction_profile: V3_SEMANTIC_INDEX_PROFILE,
-    source_stage_ids: ["IDX.1"],
+    source_stage_ids: ["IDX.1", "PRE.1"],
     embedding_provider: "openrouter",
     embedding_model: model,
     source_text_fingerprint: sourceTextFingerprint,
@@ -129,7 +128,11 @@ export function validateV3SemanticVectorPayload(
   payload: V3SemanticVectorPayload,
   expected: VectorPayloadExpectation,
 ): void {
-  if (payload.artifact_version !== V3_SEMANTIC_VECTOR_VERSION) {
+  const knownVersions = new Set<V3SemanticVectorVersion>([
+    V3_SEMANTIC_VECTOR_LEGACY_VERSION,
+    V3_SEMANTIC_VECTOR_VERSION,
+  ])
+  if (!knownVersions.has(payload.artifact_version)) {
     throw new Error(`Unsupported semantic vector version: ${payload.artifact_version}`)
   }
   if (payload.model !== expected.model) throw new Error("Semantic vector model does not match IDX.2 metadata")

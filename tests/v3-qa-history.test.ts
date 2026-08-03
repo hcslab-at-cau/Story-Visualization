@@ -117,6 +117,41 @@ test("normalizeV3QAHistoryCreateInput accepts insufficient_evidence snapshots", 
   assert.equal(normalized.answer_snapshot.answer.status, "insufficient_evidence")
 })
 
+test("normalizeV3QAHistoryCreateInput accepts paragraph evidence without changing history scope", () => {
+  const base = baseCreateInput("answered")
+  const input = {
+    ...base,
+    answerSnapshot: {
+      answer: {
+        ...base.answerSnapshot.answer,
+        used_evidence: [{
+          evidence_id: "paragraph-2",
+          record_id: "PARAGRAPH_para_0002",
+          record_type: "paragraph",
+          label: "Paragraph P2",
+        }],
+      },
+      retrieval: {
+        ...base.answerSnapshot.retrieval,
+        hits: [{
+          ...base.answerSnapshot.retrieval.hits[0],
+          record_id: "PARAGRAPH_para_0002",
+          record_type: "paragraph",
+          label: "Paragraph P2",
+          text_span: { start_pid: 2, end_pid: 2 },
+        }],
+      },
+    },
+  }
+
+  const normalized = normalizeV3QAHistoryCreateInput(input)
+
+  assert.equal(normalized.chapterId, "chapter-1")
+  assert.equal(normalized.runId, "run-1")
+  assert.equal(normalized.answer_snapshot.answer.used_evidence[0]?.record_type, "paragraph")
+  assert.equal(normalized.answer_snapshot.retrieval.hits[0]?.record_type, "paragraph")
+})
+
 test("normalizeV3QAHistoryCreateInput rejects hits beyond progress boundary", () => {
   const input = baseCreateInput("answered")
   input.answerSnapshot.retrieval.hits[1].text_span.end_pid = 6

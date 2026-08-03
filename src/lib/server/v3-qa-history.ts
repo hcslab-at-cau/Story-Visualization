@@ -25,7 +25,7 @@ const citationSchema = z.object({
 const usedEvidenceSchema = z.object({
   evidence_id: idSchema,
   record_id: idSchema,
-  record_type: z.enum(["scene", "event", "character", "place", "object", "goal", "causal_edge"]),
+  record_type: z.enum(["paragraph", "scene", "event", "character", "place", "object", "goal", "causal_edge"]),
   label: z.string().max(4_000),
 })
 
@@ -49,7 +49,7 @@ const retrievalStatsSchema = z.object({
 
 const retrievalHitSchema = z.object({
   record_id: idSchema,
-  record_type: z.enum(["scene", "event", "character", "place", "object", "goal", "causal_edge"]),
+  record_type: z.enum(["paragraph", "scene", "event", "character", "place", "object", "goal", "causal_edge"]),
   label: z.string().max(4_000),
   text: boundedText,
   score: z.number().finite(),

@@ -5,7 +5,9 @@ import type {
   V3RetrievalRecordType,
   V3RetrievalTextDocument,
 } from "./v3-narrative-memory-types"
+import { rankV3QARecords } from "./v3-qa-ranking"
 import type { V3QARetrievalHit, V3QARetrievalResult } from "./v3-qa-retrieval-types"
+import { retrievalRecordIdForTextDocument } from "./v3-semantic-index"
 
 const V3_QA_RETRIEVAL_PROFILE = "v3_qa_retrieval"
 const V3_QA_RETRIEVAL_VERSION = "v3-qa-retrieval-0.1"
@@ -17,6 +19,7 @@ interface RetrieveV3QAEvidenceParams {
   sceneCards: V3SceneSituationCardsArtifact
   eventFrames: V3EventFramesArtifact
   memoryContract: V3MemoryContractArtifact
+  textDocuments?: V3RetrievalTextDocument[]
   limit?: number
   semanticScores?: Record<string, number>
 }
@@ -30,37 +33,6 @@ interface SearchRecord {
   event_id?: string
   evidence_refs: string[]
   text_span?: V3MemoryTextSpan
-}
-
-const STOP_TERMS = new Set([
-  "a",
-  "an",
-  "and",
-  "did",
-  "do",
-  "does",
-  "for",
-  "help",
-  "how",
-  "is",
-  "it",
-  "of",
-  "the",
-  "to",
-  "what",
-  "when",
-  "where",
-  "who",
-  "why",
-  "with",
-])
-
-function normalizeText(value: string): string {
-  return value.toLowerCase().replace(/[^\p{Letter}\p{Number}\s]/gu, " ").replace(/\s+/g, " ").trim()
-}
-
-function queryTerms(question: string): string[] {
-  return Array.from(new Set(normalizeText(question).split(" ").filter((term) => term.length > 1 && !STOP_TERMS.has(term))))
 }
 
 function spanAllowed(span: V3MemoryTextSpan | undefined, progressEndPid: number): boolean {
@@ -104,6 +76,7 @@ function spanForRecord(
 
 function buildSearchRecords(
   retrievalIndex: V3RetrievalIndexArtifact,
+  textDocuments: V3RetrievalTextDocument[],
   sceneCards: V3SceneSituationCardsArtifact,
   eventFrames: V3EventFramesArtifact,
   memoryContract: V3MemoryContractArtifact,
@@ -125,8 +98,8 @@ function buildSearchRecords(
     })
   }
 
-  for (const doc of retrievalIndex.text_documents) {
-    const recordId = recordIdForTextDocument(doc)
+  for (const doc of textDocuments) {
+    const recordId = retrievalRecordIdForTextDocument(doc)
     const current = byId.get(recordId)
     const textSpan = spanForRecord(doc, sceneSpan, eventSpan)
     byId.set(recordId, {
@@ -144,28 +117,12 @@ function buildSearchRecords(
   return [...byId.values()]
 }
 
-function recordIdForTextDocument(doc: V3RetrievalTextDocument): string {
-  if (doc.event_id) return doc.event_id
-  if (doc.scene_id) return doc.scene_id
-  return doc.text_doc_id.replace(/^TEXT_/, "")
-}
-
 function unique(values: string[]): string[] {
   return Array.from(new Set(values.filter(Boolean)))
 }
 
 function uniqueText(values: Array<string | undefined>): string[] {
   return unique(values.map((value) => value?.trim() ?? "").filter(Boolean))
-}
-
-function scoreRecord(record: SearchRecord, terms: string[]): { score: number; matchedTerms: string[] } {
-  const haystack = normalizeText(`${record.label} ${record.text}`)
-  const matchedTerms = terms.filter((term) => haystack.includes(term))
-  const exactBonus = terms.length > 0 && haystack.includes(terms.join(" ")) ? 20 : 0
-  return {
-    score: matchedTerms.length * 10 + exactBonus,
-    matchedTerms,
-  }
 }
 
 function toHit(
@@ -192,12 +149,6 @@ function toHit(
   }
 }
 
-const RRF_K = 60
-
-function reciprocalRank(rank: number): number {
-  return 1 / (RRF_K + rank + 1)
-}
-
 export function retrieveV3QAEvidence({
   question,
   progressEndPid,
@@ -205,58 +156,28 @@ export function retrieveV3QAEvidence({
   sceneCards,
   eventFrames,
   memoryContract,
+  textDocuments = retrievalIndex.text_documents,
   limit = 8,
   semanticScores,
 }: RetrieveV3QAEvidenceParams): V3QARetrievalResult {
-  const terms = queryTerms(question)
-  const records = buildSearchRecords(retrievalIndex, sceneCards, eventFrames, memoryContract)
+  const records = buildSearchRecords(retrievalIndex, textDocuments, sceneCards, eventFrames, memoryContract)
   const available = records.filter((record) => spanAllowed(record.text_span, progressEndPid))
   const blockedAhead = records.length - available.length
-
-  const directHits = available
-    .map((record) => {
-      const { score, matchedTerms } = scoreRecord(record, terms)
-      return { record, score, matchedTerms }
-    })
-    .filter((hit) => hit.score > 0)
-    .sort((a, b) => b.score - a.score || a.record.record_id.localeCompare(b.record.record_id))
-
-  const semanticHits = semanticScores === undefined
-    ? []
-    : available
-      .flatMap((record) => {
-        const similarity = semanticScores[record.record_id]
-        return Number.isFinite(similarity) ? [{ record, similarity }] : []
-      })
-      .sort((a, b) => b.similarity - a.similarity || a.record.record_id.localeCompare(b.record.record_id))
-
-  const lexicalById = new Map(directHits.map((hit, rank) => [hit.record.record_id, { ...hit, rank }]))
-  const semanticById = new Map(semanticHits.map((hit, rank) => [hit.record.record_id, { ...hit, rank }]))
-  const rankedIds = semanticScores === undefined
-    ? directHits.map((hit) => hit.record.record_id)
-    : unique([...lexicalById.keys(), ...semanticById.keys()]).sort((left, right) => {
-      const leftScore = (lexicalById.has(left) ? reciprocalRank(lexicalById.get(left)?.rank ?? 0) : 0)
-        + (semanticById.has(left) ? reciprocalRank(semanticById.get(left)?.rank ?? 0) : 0)
-      const rightScore = (lexicalById.has(right) ? reciprocalRank(lexicalById.get(right)?.rank ?? 0) : 0)
-        + (semanticById.has(right) ? reciprocalRank(semanticById.get(right)?.rank ?? 0) : 0)
-      return rightScore - leftScore || left.localeCompare(right)
-    })
+  const ranking = rankV3QARecords({ question, records: available, semanticScores })
 
   const availableById = new Map(available.map((record) => [record.record_id, record]))
   const hitMap = new Map<string, V3QARetrievalHit>()
-  for (const recordId of rankedIds) {
-    const record = availableById.get(recordId)
-    if (!record) continue
-    const lexical = lexicalById.get(recordId)
-    const semantic = semanticById.get(recordId)
-    const matchKind = lexical && semantic ? "hybrid" : semantic ? "semantic" : "lexical"
-    const score = semanticScores === undefined
-      ? (lexical?.score ?? 0)
-      : (lexical ? reciprocalRank(lexical.rank) : 0) + (semantic ? reciprocalRank(semantic.rank) : 0)
-    hitMap.set(recordId, toHit(record, score, lexical?.matchedTerms ?? [], matchKind, semantic?.similarity))
+  for (const ranked of ranking.rankedRecords) {
+    hitMap.set(ranked.record.record_id, toHit(
+      ranked.record,
+      ranked.score,
+      ranked.matchedTerms,
+      ranked.matchKind,
+      ranked.semanticSimilarity,
+    ))
   }
 
-  const directIds = new Set(rankedIds)
+  const directIds = new Set(ranking.rankedRecords.map((ranked) => ranked.record.record_id))
   const graphEdges = retrievalIndex.graph_edges.filter((edge) => directIds.has(edge.from) || directIds.has(edge.to))
 
   for (const edge of graphEdges) {
@@ -278,16 +199,16 @@ export function retrieveV3QAEvidence({
     retrieval_mode: semanticScores === undefined ? "lexical_fallback" : "hybrid",
     query: {
       question,
-      normalized_terms: terms,
+      normalized_terms: ranking.normalizedTerms,
       progress_end_pid: progressEndPid,
     },
     stats: {
       total_records: records.length,
       searched_records: available.length,
       blocked_ahead_records: blockedAhead,
-      direct_hits: directHits.length,
-      lexical_hits: directHits.length,
-      semantic_hits: semanticHits.length,
+      direct_hits: ranking.lexicalHits.length,
+      lexical_hits: ranking.lexicalHits.length,
+      semantic_hits: ranking.semanticHits.length,
       graph_neighbor_hits: hits.filter((hit) => hit.match_kind === "graph_neighbor").length,
       returned_hits: hits.length,
     },
