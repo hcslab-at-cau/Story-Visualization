@@ -262,9 +262,21 @@ function buildMemberDrafts(
       }
 
       aliases.sort((left, right) => compareText(left.value, right.value))
+      const entityType = cluster.entity_type
+      if (!isBookEntityType(entityType)) {
+        diagnostics.push({
+          code: "excluded_entity_type",
+          message: `Cluster ${JSON.stringify(cluster.cluster_id)} uses unsupported entity type ${JSON.stringify(entityType)}.`,
+          chapter_id: chapter.chapterId,
+          run_id: chapter.runId,
+          local_cluster_id: cluster.cluster_id,
+          entity_type: entityType,
+        })
+        continue
+      }
       drafts.push({
         node_id: makeNodeId(chapter.chapterId, cluster.cluster_id),
-        entity_type: cluster.entity_type,
+        entity_type: entityType,
         chapter_id: chapter.chapterId,
         chapter_index: chapter.chapterIndex,
         run_id: chapter.runId,

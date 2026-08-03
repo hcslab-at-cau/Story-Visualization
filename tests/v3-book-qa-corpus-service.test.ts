@@ -326,13 +326,18 @@ test("records deterministic readiness diagnostics for missing and incompatible p
     refsBySelection: { "chapter:run-chapter": selectedRefs },
     mutateArtifact(value, stageId) {
       if (stageId === "PRE.2") return null
-      if (stageId === "EVID.3") return { ...value, artifact_version: "v3-evidence-candidate-gate-0.1" } as PipelineArtifact
+      if (stageId === "EVID.3") {
+        return {
+          ...value,
+          artifact_version: "v3-evidence-candidate-gate-0.1",
+        } as unknown as PipelineArtifact
+      }
       if (stageId === "IDX.1") {
         return {
           ...value,
           artifact_version: "v3-retrieval-index-0.1",
           structured_records: [],
-        } as PipelineArtifact
+        } as unknown as PipelineArtifact
       }
       return value
     },
@@ -352,5 +357,14 @@ test("records deterministic readiness diagnostics for missing and incompatible p
   assert.equal(corpus.groups.length, 0)
   assert.deepEqual(Object.keys(corpus.manifest.chapters[0].artifact_ids),
     V3_BOOK_QA_PINNED_STAGE_IDS.filter((stageId) => stageId !== "MEM.1" && stageId !== "IDX.2"))
-  assert.equal(REQUIRED_STAGE_IDS.includes("IDX.2"), false)
+  assert.deepEqual(REQUIRED_STAGE_IDS, [
+    "PRE.1",
+    "PRE.2",
+    "EVID.3",
+    "EVID.4",
+    "MEM.0",
+    "MEM.1",
+    "EVENT.2",
+    "IDX.1",
+  ])
 })
